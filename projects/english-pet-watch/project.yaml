@@ -1,0 +1,43 @@
+# 项目元数据：供索引、脚本与统计读取
+# 修改后请同步 projects/README.md 的索引表
+id: "06"
+slug: "english-pet-watch"
+name: "英语宠物怀表"
+name_en: "English Pet Watch"
+status: "UI 原型（真机验证）"
+direction: ["语音交互", "大模型", "儿童英语", "可穿戴"]
+created: "2026-11-13"
+updated: "2026-11-16"
+owner: ""
+
+platform:
+  mcu: "ESP32-S3（QFN56 rev v0.2，双核 240MHz，32MB Flash / 8MB 内置 Octal PSRAM；实测 Waveshare ESP32-S3-Touch-AMOLED-1.75C）"
+  host: "macOS / Windows 10+ / Linux（ESP-IDF 6.0.2；服务端可用 Docker）"
+  runtime: "自研 ESP-IDF 固件（V0.1 Wi-Fi + OTA；UI Demo 已上真机）+ xiaozhi-esp32-server"
+
+external:
+  repo: "https://github.com/78/xiaozhi-esp32"
+  wiki: "https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75C"
+  video: ""
+
+board:
+  sku: "esp32-s3-touch-amoled-1.75c"
+  detected: "2026-11-16"
+  chip: "ESP32-S3 (QFN56) rev v0.2"
+  flash: "32MB（GigaDevice c8/4019，Quad，3.3V）"
+  psram: "8MB 内置 Octal PSRAM（AP_3v3）"
+  mac: "7c:0c:5f:48:02:98"
+  crystal: "40MHz"
+  usb: "USB-Serial/JTAG（/dev/cu.usbmodem1101）"
+  display: "1.75 英寸 AMOLED 466×466 圆屏，CO5300"
+  touch: "CST9217 电容触摸"
+  boot_firmware_before_flash: "xiaozhi 2.6.0 出厂固件（整片备份于 /tmp/epw-xiaozhi-2.6.0-backup.bin）"
+
+license:
+  hardware: "开发板为商品；本项目自绘外壳与文档建议 CERN-OHL-W-2.0（待定）"
+  software: "xiaozhi-esp32：MIT；xiaozhi-esp32-server：MIT（均以仓库 LICENSE 为准）"
+  note: "保留上游版权声明；不引入来源不明的模型权重"
+
+cost:
+  total: "￥300–450（硬件，参考价，以下单页为准）"
+  note: "云端 ASR/LLM/TTS 另计，按每天 10–20 分钟估算约 ￥20–80/月；价格随供应商与模型变化，标待验证"

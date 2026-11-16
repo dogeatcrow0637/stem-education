@@ -1,0 +1,42 @@
+menu "English Pet Watch"
+
+config EPW_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+    help
+      2.4GHz Wi-Fi 名称。ESP32-S3 不支持 5GHz。
+      手机热点请打开 2.4GHz 兼容模式。
+
+config EPW_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+    help
+      Wi-Fi 密码。不要提交到 git；本仓库只保存固件源码与模板。
+
+config EPW_DEVICE_MODEL
+    string "Device model (OTA file prefix)"
+    default "epw-watch-175"
+    help
+      服务端 data/bin 里的固件文件名格式为 {model}_{version}.bin。
+      本值必须与文件名前缀完全一致，否则服务端不会下发固件。
+
+config EPW_DEVICE_NAME
+    string "Device display name"
+    default "English Pet Watch"
+
+config EPW_OTA_URL
+    string "OTA check URL"
+    default "http://192.168.1.100:8003/xiaozhi/ota/"
+    help
+      xiaozhi-server 的 OTA 端点。
+      局域网：http://<服务器局域网IP>:8003/xiaozhi/ota/
+      公网：https://<域名>/xiaozhi/ota/
+
+config EPW_OTA_CHECK_INTERVAL_S
+    int "OTA check interval (seconds)"
+    range 60 86400
+    default 300
+    help
+      开机检查一次，之后按这个间隔轮询。
+
+endmenu

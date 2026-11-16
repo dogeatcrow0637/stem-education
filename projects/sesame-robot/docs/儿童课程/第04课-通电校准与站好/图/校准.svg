@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">校准 = 对中位</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">90° 时压上髋盘</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <path d="M280 380 A260 260 0 0 1 800 380" stroke="#DDE7E7" stroke-width="24" fill="none"/>
+  <path d="M540 380 L760 300" stroke="#E4572E" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="540" cy="380" r="18" fill="#233"/>
+  <text x="300" y="310" font-size="30">0°</text>
+  <text x="520" y="180" font-size="30">90°</text>
+  <text x="780" y="310" font-size="30">180°</text>
+  <text x="400" y="600" font-size="28">先对平行，再锁螺丝</text>
+  </g>
+</svg>

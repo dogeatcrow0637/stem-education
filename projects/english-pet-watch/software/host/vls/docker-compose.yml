@@ -1,0 +1,21 @@
+# 英语宠物怀表 · vls 最小部署（VAD / ASR / TTS）
+# 只绑回环，公网入口由 nginx 5801 负责；先不暴露。
+services:
+  xiaozhi-esp32-server:
+    image: ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:server_latest
+    container_name: xiaozhi-esp32-server
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "127.0.0.1:8000:8000"   # WebSocket
+      - "127.0.0.1:8003:8003"   # OTA / HTTP
+    volumes:
+      - ./data:/opt/xiaozhi-esp32-server/data
+      - ./models/SenseVoiceSmall/model.pt:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt
+    # 和游戏 API 同机：给语音服务设上限，避免 FunASR 把内存吃满
+    # 3g 实测会在 ASR 模型加载时 OOM；5g 起步，仍留约 2.5g 给系统/游戏
+    mem_limit: 5g
+    memswap_limit: 5g

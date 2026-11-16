@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sesame Robot · 第 2 课</title><style>
+:root{--bg:#0f1220;--fg:#f7f8fb;--dim:#9aa3b8;--accent:#ffd166;--accent2:#4cc9f0;--ok:#63e6be;}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#000;color:var(--fg);
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif}
+#deck{position:relative;width:100vw;height:100vh;overflow:hidden;background:var(--bg)}
+.slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
+  padding:5vh 6vw;gap:1.4vh}
+.slide.on{display:flex}
+h1{font-size:7.2vh;line-height:1.15;margin:0 0 1vh}
+h2{font-size:5.4vh;line-height:1.2;margin:0 0 2vh}
+h3{font-size:3.6vh;margin:0 0 1vh;color:var(--accent2)}
+p,li{font-size:4vh;line-height:1.45}
+ul,ol{margin:0;padding-left:1.2em}
+li{margin:.6vh 0}
+strong{color:var(--accent)}
+code{background:#ffffff1a;padding:.1em .35em;border-radius:.3em;font-size:.9em}
+img{max-width:100%;max-height:58vh;object-fit:contain;border-radius:1.2vh;display:block;margin:0 auto}
+.callout{font-size:4.2vh;padding:1.6vh 2vw;border-left:.8vw solid var(--accent);
+  background:#ffffff12;border-radius:1vh}
+.slide[data-layout=title]{align-items:center;text-align:center}
+.slide[data-layout=title] img{max-height:34vh}
+.slide[data-layout=title] p{color:var(--dim);font-size:2.8vh}
+.slide[data-layout=big]{align-items:center;text-align:center}
+.slide[data-layout=big] h1,.slide[data-layout=big] p{font-size:9vh;color:var(--accent)}
+.slide[data-layout=image]{align-items:center;text-align:center}
+.slide[data-layout=image] img{max-height:66vh}
+.cols{display:flex;gap:3vw;align-items:flex-start}
+.cols>div{flex:1;min-width:0}
+.notes{display:none}
+body.notes-on .notes{display:block;position:fixed;left:0;right:0;bottom:0;max-height:32vh;overflow:auto;
+  background:#000000e6;border-top:.4vh solid var(--accent2);padding:1.6vh 3vw;font-size:2.3vh;color:#dbe4f0}
+body.notes-on .slide{padding-bottom:34vh}
+#bar{position:fixed;top:0;left:0;height:.7vh;background:var(--accent);width:0;transition:width .15s;z-index:5}
+#num{position:fixed;right:1.6vw;bottom:1.2vh;font-size:2.2vh;color:var(--dim);z-index:5}
+#hint{position:fixed;left:1.6vw;bottom:1.2vh;font-size:2vh;color:#6b7488;z-index:5}
+@media print{
+  @page{size:297mm 167mm;margin:0}
+  html,body{background:#fff}
+  #bar,#num,#hint,.notes{display:none!important}
+  #deck{width:auto;height:auto;background:var(--bg)}
+  .slide{display:flex!important;position:relative;inset:auto;width:297mm;height:167mm;
+    page-break-after:always;break-after:page}
+  body{color:var(--fg);background:var(--bg)}
+}
+</style></head>
+<body>
+<div id="bar"></div>
+<div id="deck">
+<section class="slide on" data-layout="title"><h1>Sesame Robot · 第 2 课</h1>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7pm7bku7blhajlrrbnpo88L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPuWFiOeCueaVsO+8jOWGjeWKqOaJizwvdGV4dD4KICA8ZyBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsIE1pY3Jvc29mdCBZYUhlaSwgTm90byBTYW5zIENKSyBTQywgc2Fucy1zZXJpZiI+CgogIDxnIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSI1Ij4KICAgIDxyZWN0IHg9IjE1MCIgeT0iMTkwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgcng9IjE2IiBmaWxsPSIjRjNFM0M4Ii8+CiAgICA8cmVjdCB4PSIzOTAiIHk9IjE5MCIgd2lkdGg9IjIwMCIgaGVpZ2h0PSIxMjAiIHJ4PSIxNiIgZmlsbD0iI0YzRTNDOCIvPgogICAgPHJlY3QgeD0iNjMwIiB5PSIxOTAiIHdpZHRoPSIyMDAiIGhlaWdodD0iMTIwIiByeD0iMTYiIGZpbGw9IiNGM0UzQzgiLz4KICAgIDxyZWN0IHg9Ijg3MCIgeT0iMTkwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgcng9IjE2IiBmaWxsPSIjRjNFM0M4Ii8+CiAgICA8cmVjdCB4PSIxNTAiIHk9IjM1MCIgd2lkdGg9IjIwMCIgaGVpZ2h0PSIxMjAiIHJ4PSIxNiIgZmlsbD0iI0RERTdFNyIvPgogICAgPHJlY3QgeD0iMzkwIiB5PSIzNTAiIHdpZHRoPSIyMDAiIGhlaWdodD0iMTIwIiByeD0iMTYiIGZpbGw9IiNEREU3RTciLz4KICAgIDxyZWN0IHg9IjYzMCIgeT0iMzUwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgcng9IjE2IiBmaWxsPSIjRERFN0U3Ii8+CiAgPC9nPgogIDx0ZXh0IHg9IjE5MCIgeT0iMjY1IiBmb250LXNpemU9IjMwIj7moYbmnrY8L3RleHQ+PHRleHQgeD0iNDMwIiB5PSIyNjUiIGZvbnQtc2l6ZT0iMzAiPuW6leebljwvdGV4dD4KICA8dGV4dCB4PSI2NzAiIHk9IjI2NSIgZm9udC1zaXplPSIzMCI+6aG255uWPC90ZXh0Pjx0ZXh0IHg9IjkxMCIgeT0iMjY1IiBmb250LXNpemU9IjMwIj7lhbPoioIgw5c4PC90ZXh0PgogIDx0ZXh0IHg9IjE5MCIgeT0iNDI1IiBmb250LXNpemU9IjMwIj7oiLXmnLogw5cxMDwvdGV4dD48dGV4dCB4PSI0MzAiIHk9IjQyNSIgZm9udC1zaXplPSIzMCI+6J665LidPC90ZXh0PgogIDx0ZXh0IHg9IjY3MCIgeT0iNDI1IiBmb250LXNpemU9IjMwIj5PTEVEPC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==" alt="零件">
+<p>今天：把四条腿装出来</p><div class="notes">备注：开场先看零件全家福，告诉孩子今天只做"装腿"，不接线、不通电。</div></section>
+<section class="slide" data-layout="image"><h2>先点数</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7pm7bku7blhajlrrbnpo88L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPuWFiOeCueaVsO+8jOWGjeWKqOaJizwvdGV4dD4KICA8ZyBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsIE1pY3Jvc29mdCBZYUhlaSwgTm90byBTYW5zIENKSyBTQywgc2Fucy1zZXJpZiI+CgogIDxnIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSI1Ij4KICAgIDxyZWN0IHg9IjE1MCIgeT0iMTkwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgcng9IjE2IiBmaWxsPSIjRjNFM0M4Ii8+CiAgICA8cmVjdCB4PSIzOTAiIHk9IjE5MCIgd2lkdGg9IjIwMCIgaGVpZ2h0PSIxMjAiIHJ4PSIxNiIgZmlsbD0iI0YzRTNDOCIvPgogICAgPHJlY3QgeD0iNjMwIiB5PSIxOTAiIHdpZHRoPSIyMDAiIGhlaWdodD0iMTIwIiByeD0iMTYiIGZpbGw9IiNGM0UzQzgiLz4KICAgIDxyZWN0IHg9Ijg3MCIgeT0iMTkwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgcng9IjE2IiBmaWxsPSIjRjNFM0M4Ii8+CiAgICA8cmVjdCB4PSIxNTAiIHk9IjM1MCIgd2lkdGg9IjIwMCIgaGVpZ2h0PSIxMjAiIHJ4PSIxNiIgZmlsbD0iI0RERTdFNyIvPgogICAgPHJlY3QgeD0iMzkwIiB5PSIzNTAiIHdpZHRoPSIyMDAiIGhlaWdodD0iMTIwIiByeD0iMTYiIGZpbGw9IiNEREU3RTciLz4KICAgIDxyZWN0IHg9IjYzMCIgeT0iMzUwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgcng9IjE2IiBmaWxsPSIjRERFN0U3Ii8+CiAgPC9nPgogIDx0ZXh0IHg9IjE5MCIgeT0iMjY1IiBmb250LXNpemU9IjMwIj7moYbmnrY8L3RleHQ+PHRleHQgeD0iNDMwIiB5PSIyNjUiIGZvbnQtc2l6ZT0iMzAiPuW6leebljwvdGV4dD4KICA8dGV4dCB4PSI2NzAiIHk9IjI2NSIgZm9udC1zaXplPSIzMCI+6aG255uWPC90ZXh0Pjx0ZXh0IHg9IjkxMCIgeT0iMjY1IiBmb250LXNpemU9IjMwIj7lhbPoioIgw5c4PC90ZXh0PgogIDx0ZXh0IHg9IjE5MCIgeT0iNDI1IiBmb250LXNpemU9IjMwIj7oiLXmnLogw5cxMDwvdGV4dD48dGV4dCB4PSI0MzAiIHk9IjQyNSIgZm9udC1zaXplPSIzMCI+6J665LidPC90ZXh0PgogIDx0ZXh0IHg9IjY3MCIgeT0iNDI1IiBmb250LXNpemU9IjMwIj5PTEVEPC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==" alt="零件"><div class="notes">备注：11 个打印件 + 10 个舵机 + 螺丝，逐项点数；缺件先记下。</div></section>
+<section class="slide" data-layout="image"><h2>11 个打印件</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj4zRCDmiZPljbDku7Y8L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPlBMQSDCtyAwLjJtbSDlsYLpq5ggwrcg5riF5pSv5pKRPC90ZXh0PgogIDxnIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj4KCiAgPGcgc3Ryb2tlPSIjMjMzIiBzdHJva2Utd2lkdGg9IjYiIGZpbGw9Im5vbmUiPgogICAgPHBhdGggZD0iTTM4MCA1NjAgTDM4MCAzMDAgUTM4MCAyNjAgNDIwIDI2MCBMODYwIDI2MCBROTAwIDI2MCA5MDAgMzAwIEw5MDAgNTYwIi8+CiAgICA8cGF0aCBkPSJNMzgwIDM4MCBMOTAwIDM4MCIvPjxwYXRoIGQ9Ik0zODAgNDcwIEw5MDAgNDcwIi8+CiAgPC9nPgogIDxnIGZpbGw9IiNGM0UzQzgiIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSI1Ij4KICAgIDxyZWN0IHg9IjQzMCIgeT0iNDAwIiB3aWR0aD0iMTEwIiBoZWlnaHQ9IjU1IiByeD0iOCIvPgogICAgPHJlY3QgeD0iNTcwIiB5PSI0MDAiIHdpZHRoPSIxMTAiIGhlaWdodD0iNTUiIHJ4PSI4Ii8+CiAgICA8cmVjdCB4PSI3MTAiIHk9IjQwMCIgd2lkdGg9IjExMCIgaGVpZ2h0PSI1NSIgcng9IjgiLz4KICA8L2c+CiAgPHRleHQgeD0iNDMwIiB5PSIzMzAiIGZvbnQtc2l6ZT0iMjgiPuS4gOWxguS4gOWxguWghuWHuuadpTwvdGV4dD4KICA8dGV4dCB4PSI0MzAiIHk9IjYyMCIgZm9udC1zaXplPSIyNiIgZmlsbD0iI0U0NTcyRSI+5pSv5pKR6KaB5riF5bmy5YeA77yM5a2U5omN6KOF5b6X6L+bPC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==" alt="打印件"><div class="notes">备注：框架 1、上下盖各 1、关节 8；让孩子先清支撑，再按 L/R 分堆。</div></section>
+<section class="slide" data-layout="image"><h2>左右要分清</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7lt6blj7PopoHliIbmuIU8L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPkwg5bemIC8gUiDlj7PvvIzliKvoo4Xlj408L3RleHQ+CiAgPGcgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPgoKICA8ZyBzdHJva2U9IiMyMzMiIHN0cm9rZS13aWR0aD0iMTIiIGZpbGw9Im5vbmUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMzMwIDIyMCBMMzMwIDQwMCBMMjUwIDU2MCIvPgogICAgPHBhdGggZD0iTTk1MCAyMjAgTDk1MCA0MDAgTDEwMzAgNTYwIi8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjMzMCIgY3k9IjQwMCIgcj0iMzQiIGZpbGw9IiMzRTdDN0IiLz48Y2lyY2xlIGN4PSI5NTAiIGN5PSI0MDAiIHI9IjM0IiBmaWxsPSIjM0U3QzdCIi8+CiAgPHRleHQgeD0iMjcwIiB5PSIxODAiIGZvbnQtc2l6ZT0iNjAiIGZpbGw9IiNFNDU3MkUiPkw8L3RleHQ+CiAgPHRleHQgeD0iOTAwIiB5PSIxODAiIGZvbnQtc2l6ZT0iNjAiIGZpbGw9IiNFNDU3MkUiPlI8L3RleHQ+CiAgPHRleHQgeD0iMjQwIiB5PSI2NTAiIGZvbnQtc2l6ZT0iMjgiPumVnOWDj+S7tjwvdGV4dD48dGV4dCB4PSI5MDAiIHk9IjY1MCIgZm9udC1zaXplPSIyOCI+6ZWc5YOP5Lu2PC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==" alt="左右"><div class="notes">备注：镜像件长得像但装法相反；贴 L/R 标签，装反了后面走路会歪。</div></section>
+<section class="slide" data-layout="big"><h2>猜一猜</h2>
+<p>舵机轴朝哪边？</p><div class="notes">备注：让孩子先指方向再动手；答错不纠正，装的时候自己会发现。</div></section>
+<section class="slide" data-layout="image"><h2>轴朝外，线走槽</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7oiLXmnLrovbTmnJ3lpJY8L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPue6v+S7juS+p+anveepv+WHuuadpTwvdGV4dD4KICA8ZyBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsIE1pY3Jvc29mdCBZYUhlaSwgTm90byBTYW5zIENKSyBTQywgc2Fucy1zZXJpZiI+CgogIDxwYXRoIGQ9Ik00MDAgMjMwIEw0MDAgNTYwIEw4ODAgNTYwIEw4ODAgMjMwIiBzdHJva2U9IiMyMzMiIHN0cm9rZS13aWR0aD0iOCIgZmlsbD0iI0YzRTNDOCIvPgogIDxyZWN0IHg9IjU0MCIgeT0iMzAwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgcng9IjE0IiBmaWxsPSIjNEM4QkY1IiBzdHJva2U9IiMyMzMiIHN0cm9rZS13aWR0aD0iNSIvPgogIDxjaXJjbGUgY3g9IjY0MCIgY3k9IjMwMCIgcj0iMjQiIGZpbGw9IiNGMkIxMzQiIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSI0Ii8+CiAgPHBhdGggZD0iTTc0MCAzNjAgUTgyMCAzNjAgODQwIDQzMCIgc3Ryb2tlPSIjRTQ1NzJFIiBzdHJva2Utd2lkdGg9IjgiIGZpbGw9Im5vbmUiLz4KICA8dGV4dCB4PSI0NzAiIHk9IjIyMCIgZm9udC1zaXplPSIzMCI+6L205pyd5aSWPC90ZXh0PgogIDx0ZXh0IHg9Ijc2MCIgeT0iMzAwIiBmb250LXNpemU9IjI2IiBmaWxsPSIjRTQ1NzJFIj7nur/otbDkvqfmp708L3RleHQ+CiAgPC9nPgo8L3N2Zz4K" alt="轴朝外"><div class="notes">备注：舵机轴朝壳体外面，线从侧槽穿出；不要压线，不要暴力塞。</div></section>
+<section class="slide" data-layout="image"><h2>螺丝轻轻拧</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj5NMiDonrrkuJ3ovbvovbvmi6c8L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPuaLp+WIsOS4jeaZg+WwseWBnDwvdGV4dD4KICA8ZyBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsIE1pY3Jvc29mdCBZYUhlaSwgTm90byBTYW5zIENKSyBTQywgc2Fucy1zZXJpZiI+CgogIDxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDY0MCwzNjApIj4KICAgIDxyZWN0IHg9Ii0xODAiIHk9Ii0yMCIgd2lkdGg9IjI0MCIgaGVpZ2h0PSI0MCIgcng9IjgiIGZpbGw9IiNCOUM2QzYiIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSI0Ii8+CiAgICA8cmVjdCB4PSI2MCIgeT0iLTYwIiB3aWR0aD0iNzAiIGhlaWdodD0iMTIwIiByeD0iMTIiIGZpbGw9IiM4QTlBOUEiIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSI0Ii8+CiAgICA8cGF0aCBkPSJNMTMwIC00MCBMMjEwIC02MCBMMjEwIDYwIEwxMzAgNDAgWiIgZmlsbD0iIzhBOUE5QSIgc3Ryb2tlPSIjMjMzIiBzdHJva2Utd2lkdGg9IjQiLz4KICAgIDxwYXRoIGQ9Ik0tMTUwIC02IEwtMTUwIDYgTS0xMjAgLTYgTC0xMjAgNiBNLTkwIC02IEwtOTAgNiIgc3Ryb2tlPSIjMjMzIiBzdHJva2Utd2lkdGg9IjQiLz4KICA8L2c+CiAgPHRleHQgeD0iNDUwIiB5PSI1NjAiIGZvbnQtc2l6ZT0iMzAiIGZpbGw9IiNFNDU3MkUiPuWhkeaWmeWtlO+8mua7keeJmeWwseWBnDwvdGV4dD4KICA8L2c+Cjwvc3ZnPgo=" alt="螺丝"><div class="notes">备注：M2 自攻螺丝拧到不晃就停；塑料孔滑牙就停，不能靠蛮力。</div></section>
+<section class="slide" data-layout="image"><h2>四条腿排好队</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7lm5vmnaHohb/mjpLlpb3pmJ88L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPuavj+adoeiFv+mDveiDvemhuua7kei9rOWKqDwvdGV4dD4KICA8ZyBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsIE1pY3Jvc29mdCBZYUhlaSwgTm90byBTYW5zIENKSyBTQywgc2Fucy1zZXJpZiI+CgogIDxnIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSIxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0yNjAgMjMwIEwyNjAgNDIwIEwxOTAgNTYwIi8+PHBhdGggZD0iTTQ2MCAyMzAgTDQ2MCA0MjAgTDUzMCA1NjAiLz4KICAgIDxwYXRoIGQ9Ik03NjAgMjMwIEw3NjAgNDIwIEw2OTAgNTYwIi8+PHBhdGggZD0iTTk2MCAyMzAgTDk2MCA0MjAgTDEwMzAgNTYwIi8+CiAgPC9nPgogIDxnIGZpbGw9IiMzRTdDN0IiPjxjaXJjbGUgY3g9IjI2MCIgY3k9IjQyMCIgcj0iMjgiLz48Y2lyY2xlIGN4PSI0NjAiIGN5PSI0MjAiIHI9IjI4Ii8+PGNpcmNsZSBjeD0iNzYwIiBjeT0iNDIwIiByPSIyOCIvPjxjaXJjbGUgY3g9Ijk2MCIgY3k9IjQyMCIgcj0iMjgiLz48L2c+CiAgPHRleHQgeD0iMjEwIiB5PSI2NjAiIGZvbnQtc2l6ZT0iMjYiPkwxPC90ZXh0Pjx0ZXh0IHg9IjQxMCIgeT0iNjYwIiBmb250LXNpemU9IjI2Ij5MMjwvdGV4dD4KICA8dGV4dCB4PSI3MTAiIHk9IjY2MCIgZm9udC1zaXplPSIyNiI+UjM8L3RleHQ+PHRleHQgeD0iOTEwIiB5PSI2NjAiIGZvbnQtc2l6ZT0iMjYiPlI0PC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==" alt="四条腿"><div class="notes">备注：每装好一条腿，手动转一下关节，确认顺滑、不夹线。</div></section>
+<section class="slide" data-layout="big"><h2>通关条件</h2>
+<p>4 条腿都不晃</p><div class="notes">备注：让孩子自己晃一晃验收；过关盖章，称号「装配员」。</div></section>
+<section class="slide" data-layout="two-col"><div class="cols"><div><h3>我们发现的</h3><ul>
+<li>左腿和右腿是镜像</li>
+<li>螺丝不能硬拧</li>
+</ul></div><div><h3>记下的线索</h3><ul>
+<li>舵机轴朝外</li>
+</ul></div></div><div class="notes">备注：收尾 3 问；提醒下一课要接线，危险步骤由家长做。</div></section>
+<section class="slide" data-layout="title"><h1>恭喜过关</h1>
+<p>你是「装配员」</p><div class="notes">备注：发知识卡 04/05，预告下一课：电源、信号线和屏幕。</div></section>
+</div>
+<div id="num"></div><div id="hint">← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 导出 PDF</div>
+<script>
+const slides=[...document.querySelectorAll('.slide')];
+let i=0;
+function show(n){
+  i=Math.max(0,Math.min(slides.length-1,n));
+  slides.forEach((s,k)=>s.classList.toggle('on',k===i));
+  document.getElementById('bar').style.width=((i+1)/slides.length*100)+'%';
+  document.getElementById('num').textContent=(i+1)+' / '+slides.length;
+  history.replaceState(null,'','#'+(i+1));
+}
+function toggleNotes(){document.body.classList.toggle('notes-on');}
+addEventListener('keydown',e=>{
+  const k=e.key;
+  if(k==='ArrowRight'||k===' '||k==='PageDown'||k==='j'){show(i+1);e.preventDefault();}
+  else if(k==='ArrowLeft'||k==='PageUp'||k==='k'){show(i-1);e.preventDefault();}
+  else if(k==='Home'){show(0);} else if(k==='End'){show(slides.length-1);}
+  else if(k==='n'||k==='N'){toggleNotes();}
+  else if(k==='f'||k==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+  else if(k==='?'||k==='/'){alert('← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 打印成 PDF');}
+});
+addEventListener('click',e=>{show(i+(e.clientX>innerWidth/2?1:-1));});
+show(parseInt(location.hash.slice(1)||'1',10)-1);
+</script>
+</body></html>

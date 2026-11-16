@@ -1,0 +1,69 @@
+# ---- 编辑与系统杂项 ----
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+
+# ---- ESP-IDF 本地生成配置（可能含 WiFi 账号密码）----
+**/sdkconfig
+**/sdkconfig.old
+**/sdkconfig.local
+
+# ---- ESP-IDF 组件管理器下载的第三方依赖（由 idf_component.yml + dependencies.lock 还原）----
+**/managed_components/
+
+# ---- 3D 打印中间产物（可由 step/stl + 切片参数重新生成）----
+*.gcode
+*.bgcode
+*.gcode.3mf
+# 若需要归档切片文件，删除上面三行即可
+
+# ---- 三维软件临时/备份文件 ----
+*.stl.bak
+*.STEP.bak
+*.f3d~
+*.3mf.bak
+**/__MACOSX/
+
+# ---- 固件与嵌入式构建产物 ----
+**/build/
+**/Debug/
+**/Release/
+*.hex
+*.bin
+*.elf
+*.map
+*.o
+*.d
+*.axf
+*.uf2
+**/.pio/
+**/.vscode/.browse.c_cpp.db*
+
+# ---- 上位机 / 工具链构建产物 ----
+**/node_modules/
+**/dist/
+**/target/
+**/.venv/
+**/venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# ---- 仿真与训练产物（体积大、可复现）----
+**/datasets/*.hdf5
+**/datasets/*.mp4
+**/checkpoints/
+**/runs/
+**/wandb/
+**/logs/
+
+# ---- 本地私有配置（避免误提交账号、IP、密钥）----
+**/.env
+**/.env.local
+**/local.yaml
+**/secrets/
+*.pem
+*.key

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif">
+<rect width="960" height="540" fill="#0f1220"/>
+<text x="480" y="44" fill="#ffd166" font-size="30" text-anchor="middle" font-weight="700">三桶水，别搞混</text>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ffd166"/></marker><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4cc9f0"/></marker></defs>
+<path d="M120 130 h140 v150 a70 70 0 0 1 -140 0 z" fill="#12243a" stroke="#4cc9f0" stroke-width="3"/>
+<text x="190" y="215" fill="#4cc9f0" font-size="24" text-anchor="middle" font-weight="700">纯水 RO</text>
+<text x="190" y="250" fill="#9aa3b8" font-size="16" text-anchor="middle" font-weight="400">不含盐</text>
+<text x="190" y="350" fill="#f7f8fb" font-size="19" text-anchor="middle" font-weight="400">蒸发只补这个</text>
+<path d="M400 130 h140 v150 a70 70 0 0 1 -140 0 z" fill="#12243a" stroke="#ffd166" stroke-width="3"/>
+<text x="470" y="215" fill="#ffd166" font-size="24" text-anchor="middle" font-weight="700">盐水</text>
+<text x="470" y="250" fill="#9aa3b8" font-size="16" text-anchor="middle" font-weight="400">水和盐配好</text>
+<text x="470" y="350" fill="#f7f8fb" font-size="19" text-anchor="middle" font-weight="400">换水才用它</text>
+<path d="M680 130 h140 v150 a70 70 0 0 1 -140 0 z" fill="#12243a" stroke="#63e6be" stroke-width="3"/>
+<text x="750" y="215" fill="#63e6be" font-size="24" text-anchor="middle" font-weight="700">缸水</text>
+<text x="750" y="250" fill="#9aa3b8" font-size="16" text-anchor="middle" font-weight="400">已经养着鱼</text>
+<text x="750" y="350" fill="#f7f8fb" font-size="19" text-anchor="middle" font-weight="400">鱼住在这里</text>
+</svg>

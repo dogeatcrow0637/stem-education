@@ -1,0 +1,60 @@
+# 英语宠物怀表 · vls 冒烟配置（只验证 VAD / ASR / TTS）
+# LLM 先用占位：服务能启动、ASR/TTS 能自检，但真正对话会失败。
+# 拿到豆包 Key 后，换成 ../configs/doubao-llm-only.config.yaml 的 LLM 段。
+
+server:
+  websocket: ws://<服务器IP>:5801/xiaozhi/v1/
+  port: 8000
+  http_port: 8003
+  # OTA 下载地址由这个字段替换路径得到；Docker 里必须写公网/局域网地址，
+  # 否则服务端会下发容器内网 IP，设备下载 404。
+  vision_explain: http://<服务器IP>:5801/mcp/vision/explain
+  timezone_offset: +8
+  auth:
+    enabled: false
+
+selected_module:
+  VAD: SileroVAD
+  ASR: FunASR
+  LLM: ChatGLMLLM
+  TTS: EdgeTTS
+  Memory: nomem
+  Intent: nointent
+
+VAD:
+  SileroVAD:
+    type: silero
+    threshold: 0.5
+    threshold_low: 0.3
+    model_dir: models/snakers4_silero-vad
+    min_silence_duration_ms: 900
+
+ASR:
+  FunASR:
+    type: fun_local
+    model_dir: models/SenseVoiceSmall
+    output_dir: tmp/
+    language: auto
+
+LLM:
+  ChatGLMLLM:
+    type: openai
+    model_name: glm-4-flash
+    url: https://open.bigmodel.cn/api/paas/v4/
+    api_key: 占位-仅用于启动-不参与自检
+    temperature: 0.4
+    max_tokens: 200
+
+TTS:
+  EdgeTTS:
+    type: edge
+    voice: en-US-JennyNeural
+    output_dir: tmp/
+    rate: -10
+    pitch: 0
+    volume: 50
+    language: "英语"
+
+prompt: |
+  你是 Pico，一只住在怀表里的英语小宠物，陪 6–10 岁的中国孩子练英语。
+  规则：每次最多 2 句；先用英语，再用一句简短中文提示；不批评孩子；不聊成人话题。

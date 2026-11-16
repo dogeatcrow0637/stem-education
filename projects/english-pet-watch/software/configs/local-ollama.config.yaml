@@ -1,0 +1,67 @@
+# 英语宠物怀表 · 方案 0：完全零申请（本地 Ollama，不需要任何 API Key）
+# 适用：不想注册云账号 / 不想实名 / 先验证链路
+# 需要：电脑装 Ollama 并拉模型；服务端与 Ollama 在同一台电脑或同局域网
+# 代价：本地模型回答质量与速度不如云端；电脑要常开（待实测）
+
+selected_module:
+  VAD: SileroVAD
+  ASR: FunASR                   # 本地模型，免费
+  LLM: OllamaLLM                # 本地模型，免费、无 Key
+  TTS: EdgeTTS                  # 免费、无 Key
+  Memory: mem_local_short       # 本地记忆，免费
+  Intent: function_call
+
+VAD:
+  SileroVAD:
+    type: silero
+    threshold: 0.5
+    threshold_low: 0.3
+    min_silence_duration_ms: 900
+
+ASR:
+  FunASR:
+    type: fun_local
+    model_dir: models/SenseVoiceSmall
+    output_dir: tmp/
+    language: auto
+
+LLM:
+  OllamaLLM:
+    type: ollama
+    # 先执行：ollama pull qwen2.5:3b
+    # 内存 ≥8GB 可用 3b；≥16GB 可换 qwen2.5:7b（更聪明但更慢）
+    model_name: qwen2.5:3b
+    # 服务端跑在 Docker 里时，不能写 localhost（那是容器自己）：
+    #   macOS / Windows Docker Desktop: http://host.docker.internal:11434
+    #   Linux: http://<宿主机局域网IP>:11434
+    # 服务端直接跑在宿主机: http://localhost:11434
+    base_url: http://host.docker.internal:11434
+
+TTS:
+  EdgeTTS:
+    type: edge
+    voice: en-US-AnaNeural        # 英语儿童音色；音色名以 Edge TTS 当期列表为准
+    language: "英语"
+    output_dir: tmp/
+
+Memory:
+  mem_local_short:
+    type: mem_local_short
+    llm: OllamaLLM               # 用同一个本地模型做总结
+
+Intent:
+  function_call:
+    type: function_call
+    functions:
+      - change_role
+
+prompt: |
+  你是 Pico，一只住在怀表里的英语小宠物，陪 6–10 岁的中国孩子练英语。
+  规则：
+  1. 先用 1 句简单英语问候，再用 1 句中文提示；每次最多 2 个新单词。
+  2. 孩子说错时不要批评，用正确的说法重复一遍，再让他跟读。
+  3. 每次回答不超过 2 句话，语速慢，句子短。
+  4. 不聊暴力、恐怖、成人话题；被问到就转回英语小游戏。
+  5. 每 3 轮做一次小复习；结束时说一句鼓励的话。
+
+system_error_response: "Pico 现在有点困啦，我们等一下再试试。"

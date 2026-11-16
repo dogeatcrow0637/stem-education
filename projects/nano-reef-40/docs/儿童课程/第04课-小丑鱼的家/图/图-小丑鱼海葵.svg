@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif">
+<rect width="960" height="540" fill="#0f1220"/>
+<text x="480" y="44" fill="#ffd166" font-size="30" text-anchor="middle" font-weight="700">住在一起的两个好朋友</text>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ffd166"/></marker><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4cc9f0"/></marker></defs>
+<rect x="120" y="150" width="300" height="220" rx="10" fill="#151a2b" stroke="#ffd166" stroke-width="2"/>
+<text x="270.0" y="258.0" fill="#ffd166" font-size="22" text-anchor="middle" font-weight="600">小丑鱼</text>
+<text x="270.0" y="286.0" fill="#9aa3b8" font-size="17" text-anchor="middle" font-weight="400">身上有黏液保护</text>
+<rect x="540" y="150" width="300" height="220" rx="10" fill="#151a2b" stroke="#63e6be" stroke-width="2"/>
+<text x="690.0" y="258.0" fill="#63e6be" font-size="22" text-anchor="middle" font-weight="600">海葵 / 珊瑚</text>
+<text x="690.0" y="286.0" fill="#9aa3b8" font-size="17" text-anchor="middle" font-weight="400">提供安全的家</text>
+<line x1="430" y1="240" x2="530" y2="240" stroke="#4cc9f0" stroke-width="3" marker-end="url(#b)"/>
+<line x1="530" y1="290" x2="430" y2="290" stroke="#63e6be" stroke-width="3" marker-end="url(#a)"/>
+<text x="480" y="420" fill="#f7f8fb" font-size="19" text-anchor="middle" font-weight="400">它帮我挡住天敌</text>
+<text x="480" y="456" fill="#f7f8fb" font-size="19" text-anchor="middle" font-weight="400">我帮它带食物、赶走小偷</text>
+<text x="480" y="506" fill="#ffd166" font-size="24" text-anchor="middle" font-weight="700">这叫 共生</text>
+</svg>

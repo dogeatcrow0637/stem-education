@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">Studio 摆三帧</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">拖一拖，生成 C++</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <rect x="200" y="200" width="880" height="400" rx="20" fill="#FFFFFF" stroke="#233" stroke-width="6"/>
+  <g stroke="#233" stroke-width="5" fill="#DDE7E7">
+    <rect x="250" y="260" width="220" height="200" rx="14"/>
+    <rect x="530" y="260" width="220" height="200" rx="14"/>
+    <rect x="810" y="260" width="220" height="200" rx="14"/>
+  </g>
+  <g font-size="26" text-anchor="middle" fill="#233">
+    <text x="360" y="500">第 1 帧</text><text x="640" y="500">第 2 帧</text><text x="920" y="500">第 3 帧</text>
+  </g>
+  <text x="250" y="620" font-size="26" fill="#E4572E">摆姿势 → 串起来 → 复制角度</text>
+  </g>
+</svg>

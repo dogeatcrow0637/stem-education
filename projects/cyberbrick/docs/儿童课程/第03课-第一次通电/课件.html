@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>拓竹 CyberBrick · 第 3 课</title><style>
+:root{--bg:#0f1220;--fg:#f7f8fb;--dim:#9aa3b8;--accent:#ffd166;--accent2:#4cc9f0;--ok:#63e6be;}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#000;color:var(--fg);
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif}
+#deck{position:relative;width:100vw;height:100vh;overflow:hidden;background:var(--bg)}
+.slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
+  padding:5vh 6vw;gap:1.4vh}
+.slide.on{display:flex}
+h1{font-size:7.2vh;line-height:1.15;margin:0 0 1vh}
+h2{font-size:5.4vh;line-height:1.2;margin:0 0 2vh}
+h3{font-size:3.6vh;margin:0 0 1vh;color:var(--accent2)}
+p,li{font-size:4vh;line-height:1.45}
+ul,ol{margin:0;padding-left:1.2em}
+li{margin:.6vh 0}
+strong{color:var(--accent)}
+code{background:#ffffff1a;padding:.1em .35em;border-radius:.3em;font-size:.9em}
+img{max-width:100%;max-height:58vh;object-fit:contain;border-radius:1.2vh;display:block;margin:0 auto}
+.callout{font-size:4.2vh;padding:1.6vh 2vw;border-left:.8vw solid var(--accent);
+  background:#ffffff12;border-radius:1vh}
+.slide[data-layout=title]{align-items:center;text-align:center}
+.slide[data-layout=title] img{max-height:34vh}
+.slide[data-layout=title] p{color:var(--dim);font-size:2.8vh}
+.slide[data-layout=big]{align-items:center;text-align:center}
+.slide[data-layout=big] h1,.slide[data-layout=big] p{font-size:9vh;color:var(--accent)}
+.slide[data-layout=image]{align-items:center;text-align:center}
+.slide[data-layout=image] img{max-height:66vh}
+.cols{display:flex;gap:3vw;align-items:flex-start}
+.cols>div{flex:1;min-width:0}
+.notes{display:none}
+body.notes-on .notes{display:block;position:fixed;left:0;right:0;bottom:0;max-height:32vh;overflow:auto;
+  background:#000000e6;border-top:.4vh solid var(--accent2);padding:1.6vh 3vw;font-size:2.3vh;color:#dbe4f0}
+body.notes-on .slide{padding-bottom:34vh}
+#bar{position:fixed;top:0;left:0;height:.7vh;background:var(--accent);width:0;transition:width .15s;z-index:5}
+#num{position:fixed;right:1.6vw;bottom:1.2vh;font-size:2.2vh;color:var(--dim);z-index:5}
+#hint{position:fixed;left:1.6vw;bottom:1.2vh;font-size:2vh;color:#6b7488;z-index:5}
+@media print{
+  @page{size:297mm 167mm;margin:0}
+  html,body{background:#fff}
+  #bar,#num,#hint,.notes{display:none!important}
+  #deck{width:auto;height:auto;background:var(--bg)}
+  .slide{display:flex!important;position:relative;inset:auto;width:297mm;height:167mm;
+    page-break-after:always;break-after:page}
+  body{color:var(--fg);background:var(--bg)}
+}
+</style></head>
+<body>
+<div id="bar"></div>
+<div id="deck">
+<section class="slide on" data-layout="title"><h1>拓竹 CyberBrick · 第 3 课</h1>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MDAgNjAwIiB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBIaXJhZ2lubyBTYW5zIEdCLCBNaWNyb3NvZnQgWWFIZWksIHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTAxNTI4Ii8+CiAgPHRleHQgeD0iNDAwIiB5PSI1MiIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuadv+S4iueahOeBr+S8muivtOivnTwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iMTQwIiBjeT0iMjAwIiByPSI1MiIgZmlsbD0iIzYzZTZiZSIvPgogIDx0ZXh0IHg9IjE0MCIgeT0iMjkwIiBmaWxsPSIjNjNlNmJlIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7nu7/nga/luLjkuq48L3RleHQ+CiAgPHRleHQgeD0iMTQwIiB5PSIzMjIiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuetiei/nuaOpTwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iMzQwIiBjeT0iMjAwIiByPSI1MiIgZmlsbD0iIzRjYzlmMCIvPgogIDx0ZXh0IHg9IjM0MCIgeT0iMjkwIiBmaWxsPSIjNGNjOWYwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7ok53nga/luLjkuq48L3RleHQ+CiAgPHRleHQgeD0iMzQwIiB5PSIzMjIiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuaJi+acuui/nuS4iuS6hjwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iNTQwIiBjeT0iMjAwIiByPSI1MiIgZmlsbD0iI2ZmZTA2NiIvPgogIDx0ZXh0IHg9IjU0MCIgeT0iMjkwIiBmaWxsPSIjZmZlMDY2IiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7pu4Tnga/luLjkuq48L3RleHQ+CiAgPHRleHQgeD0iNTQwIiB5PSIzMjIiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPumBpeaOp+i/nuS4iuS6hjwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iNzAwIiBjeT0iMjAwIiByPSI0MCIgZmlsbD0iI2ZmZmZmZiIvPgogIDx0ZXh0IHg9IjcwMCIgeT0iMjcwIiBmaWxsPSIjZmZmZmZmIiBmb250LXNpemU9IjIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7nmb3nga88L3RleHQ+CiAgPHRleHQgeD0iNzAwIiB5PSIzMDAiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMTgiIHRleHQtYW5jaG9yPSJtaWRkbGUiPueUtea6kC/ljYfnuqc8L3RleHQ+CgogIDx0ZXh0IHg9IjQwMCIgeT0iNDQwIiBmaWxsPSIjOWFhM2I4IiBmb250LXNpemU9IjIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7pu4Tnga/kuq4gPSDlj6/ku6XlvIDovabkuoY8L3RleHQ+CiAgPHRleHQgeD0iNDAwIiB5PSI1MDAiIGZpbGw9IiNmZjZiNmIiIGZvbnQtc2l6ZT0iMjIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPueZveeBr+mXquaXtue7neS4jeiDveaWreeUtTwvdGV4dD4KPC9zdmc+Cg==" alt="核心板上的灯">
+<p>第一次通电：灯在跟我说话</p><div class="notes">备注：开场 30 秒：今天只做一件事——让它亮起来、连上手机。</div></section>
+<section class="slide" data-layout="image"><h2>先看一样东西</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MDAgNjAwIiB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBIaXJhZ2lubyBTYW5zIEdCLCBNaWNyb3NvZnQgWWFIZWksIHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTAxNTI4Ii8+CiAgPHRleHQgeD0iNDAwIiB5PSI1MiIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuadv+S4iueahOeBr+S8muivtOivnTwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iMTQwIiBjeT0iMjAwIiByPSI1MiIgZmlsbD0iIzYzZTZiZSIvPgogIDx0ZXh0IHg9IjE0MCIgeT0iMjkwIiBmaWxsPSIjNjNlNmJlIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7nu7/nga/luLjkuq48L3RleHQ+CiAgPHRleHQgeD0iMTQwIiB5PSIzMjIiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuetiei/nuaOpTwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iMzQwIiBjeT0iMjAwIiByPSI1MiIgZmlsbD0iIzRjYzlmMCIvPgogIDx0ZXh0IHg9IjM0MCIgeT0iMjkwIiBmaWxsPSIjNGNjOWYwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7ok53nga/luLjkuq48L3RleHQ+CiAgPHRleHQgeD0iMzQwIiB5PSIzMjIiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuaJi+acuui/nuS4iuS6hjwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iNTQwIiBjeT0iMjAwIiByPSI1MiIgZmlsbD0iI2ZmZTA2NiIvPgogIDx0ZXh0IHg9IjU0MCIgeT0iMjkwIiBmaWxsPSIjZmZlMDY2IiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7pu4Tnga/luLjkuq48L3RleHQ+CiAgPHRleHQgeD0iNTQwIiB5PSIzMjIiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPumBpeaOp+i/nuS4iuS6hjwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iNzAwIiBjeT0iMjAwIiByPSI0MCIgZmlsbD0iI2ZmZmZmZiIvPgogIDx0ZXh0IHg9IjcwMCIgeT0iMjcwIiBmaWxsPSIjZmZmZmZmIiBmb250LXNpemU9IjIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7nmb3nga88L3RleHQ+CiAgPHRleHQgeD0iNzAwIiB5PSIzMDAiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMTgiIHRleHQtYW5jaG9yPSJtaWRkbGUiPueUtea6kC/ljYfnuqc8L3RleHQ+CgogIDx0ZXh0IHg9IjQwMCIgeT0iNDQwIiBmaWxsPSIjOWFhM2I4IiBmb250LXNpemU9IjIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7pu4Tnga/kuq4gPSDlj6/ku6XlvIDovabkuoY8L3RleHQ+CiAgPHRleHQgeD0iNDAwIiB5PSI1MDAiIGZpbGw9IiNmZjZiNmIiIGZvbnQtc2l6ZT0iMjIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPueZveeBr+mXquaXtue7neS4jeiDveaWreeUtTwvdGV4dD4KPC9zdmc+Cg==" alt="板上的小灯"><div class="notes">备注：先看 10 秒，问"灯有几种颜色"，不提示。</div></section>
+<section class="slide" data-layout="big"><h2>猜一猜</h2>
+<p>灯为什么会变颜色？</p><div class="notes">备注：让孩子先猜。不同颜色 = 不同状态，这就是"灯语"。</div></section>
+<section class="slide" data-layout="bullets"><h2>动手（3 步）</h2>
+<ol>
+<li>核对电池方向</li>
+<li>清空再送电</li>
+<li>手机连上它</li>
+</ol>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MDAgNjAwIiB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBIaXJhZ2lubyBTYW5zIEdCLCBNaWNyb3NvZnQgWWFIZWksIHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTAxNTI4Ii8+CiAgPHRleHQgeD0iNDAwIiB5PSI1MiIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuWFiOiuqeWug+S7rOeJteS4iuaJizwvdGV4dD4KCiAgPCEtLSBwaG9uZSAtLT4KICA8cmVjdCB4PSI5MCIgeT0iMTUwIiB3aWR0aD0iMTMwIiBoZWlnaHQ9IjIzMCIgcng9IjIwIiBmaWxsPSIjM2EzZjVjIiBzdHJva2U9IiM0Y2M5ZjAiIHN0cm9rZS13aWR0aD0iNiIvPgogIDx0ZXh0IHg9IjE1NSIgeT0iMjc1IiBmaWxsPSIjNGNjOWYwIiBmb250LXNpemU9IjIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7miYvmnLo8L3RleHQ+CiAgPHRleHQgeD0iMTU1IiB5PSI0MzAiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPueUqOiTneeJmemFjee9rjwvdGV4dD4KCiAgPCEtLSBjYXIgLS0+CiAgPHJlY3QgeD0iMzMwIiB5PSIzMzAiIHdpZHRoPSIyMDAiIGhlaWdodD0iNzAiIHJ4PSIxNCIgZmlsbD0iIzYzZTZiZSIvPgogIDxjaXJjbGUgY3g9IjM3MCIgY3k9IjQxNSIgcj0iMzQiIGZpbGw9IiMyYjJmNDUiIHN0cm9rZT0iI2Y0YTI2MSIgc3Ryb2tlLXdpZHRoPSI2Ii8+CiAgPGNpcmNsZSBjeD0iNDkwIiBjeT0iNDE1IiByPSIzNCIgZmlsbD0iIzJiMmY0NSIgc3Ryb2tlPSIjZjRhMjYxIiBzdHJva2Utd2lkdGg9IjYiLz4KICA8dGV4dCB4PSI0MzAiIHk9IjQ3MCIgZmlsbD0iIzlhYTNiOCIgZm9udC1zaXplPSIyMCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+6L2mPC90ZXh0PgoKICA8IS0tIHJlbW90ZSAtLT4KICA8cmVjdCB4PSI2MjAiIHk9IjE4MCIgd2lkdGg9IjExMCIgaGVpZ2h0PSIxNzAiIHJ4PSIxOCIgZmlsbD0iIzNhM2Y1YyIvPgogIDxjaXJjbGUgY3g9IjY3NSIgY3k9IjIzNSIgcj0iMjQiIGZpbGw9IiNmZmQxNjYiLz4KICA8dGV4dCB4PSI2NzUiIHk9IjQwMCIgZmlsbD0iIzlhYTNiOCIgZm9udC1zaXplPSIyMCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+6YGl5o6nPC90ZXh0PgoKICA8IS0tIGxpbmtzIC0tPgogIDxwYXRoIGQ9Ik0yMjUgMjQwIHE2MCAtMzAgMTAwIDQwIiBzdHJva2U9IiM0Y2M5ZjAiIHN0cm9rZS13aWR0aD0iNSIgZmlsbD0ibm9uZSIgc3Ryb2tlLWRhc2hhcnJheT0iMTAgOCIvPgogIDx0ZXh0IHg9IjI1NSIgeT0iMjA1IiBmaWxsPSIjNGNjOWYwIiBmb250LXNpemU9IjIwIj7ok53niZk8L3RleHQ+CiAgPHBhdGggZD0iTTYyMCAyNTAgcS05MCAtMTAgLTEyMCA5MCIgc3Ryb2tlPSIjZmZlMDY2IiBzdHJva2Utd2lkdGg9IjUiIGZpbGw9Im5vbmUiIHN0cm9rZS1kYXNoYXJyYXk9IjEwIDgiLz4KICA8dGV4dCB4PSI1NDgiIHk9IjMwMCIgZmlsbD0iI2ZmZTA2NiIgZm9udC1zaXplPSIyMCI+Mi40RzwvdGV4dD4KCiAgPHRleHQgeD0iNDAwIiB5PSI1NDUiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuiTneeJmeeUqOadpemFjee9ru+8jDIuNEcg55So5p2l5byA6L2mPC90ZXh0Pgo8L3N2Zz4K" alt="连上核心板"><div class="notes">备注：送电由家长执行，孩子在安全距离外。一块板只能连一个手机。</div></section>
+<section class="slide" data-layout="big"><h2>通关条件</h2>
+<p>黄灯常亮 = 遥控连上了</p><div class="notes">备注：白灯亮=电源正常；绿灯=待连接；蓝灯=蓝牙连上；黄灯=遥控连上。</div></section>
+<section class="slide" data-layout="two-col"><div class="cols"><div><h3>我们发现的</h3><ul>
+<li>白灯亮＝有电</li>
+<li>蓝灯亮＝手机连上</li>
+<li>黄灯亮＝遥控连上</li>
+</ul></div><div><h3>记下的线索</h3><ul>
+<li>搜不到先断开别的手机</li>
+<li>白灯闪时不能断电</li>
+</ul></div></div><div class="notes">备注：收尾 3 问。灯语表见 docs/03-组装与调试.md。</div></section>
+<section class="slide" data-layout="title"><h1>恭喜过关</h1>
+<p>你现在是「接线员」了</p>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MDAgNjAwIiB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBIaXJhZ2lubyBTYW5zIEdCLCBNaWNyb3NvZnQgWWFIZWksIHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTAxNTI4Ii8+CiAgPHRleHQgeD0iNDAwIiB5PSI2MCIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSI0MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPumAmuWFs++8gTwvdGV4dD4KICA8dGV4dCB4PSI0MDAiIHk9IjEzMCIgZmlsbD0iIzYzZTZiZSIgZm9udC1zaXplPSIyOCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5oiR55qE6L2m6LeR6LW35p2l5LqGPC90ZXh0PgoKICA8IS0tIHRyb3BoeSAtLT4KICA8cGF0aCBkPSJNMzMwIDI1MCBoMTQwIHY2MCBhNzAgNzAgMCAwIDEgLTE0MCAwIHoiIGZpbGw9IiNmZmQxNjYiLz4KICA8cGF0aCBkPSJNMzMwIDI1OCBoLTQwIGE0MCA0MCAwIDAgMCA0MCA0NiB6IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmQxNjYiIHN0cm9rZS13aWR0aD0iMTAiLz4KICA8cGF0aCBkPSJNNDcwIDI1OCBoNDAgYTQwIDQwIDAgMCAxIC00MCA0NiB6IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmQxNjYiIHN0cm9rZS13aWR0aD0iMTAiLz4KICA8cmVjdCB4PSIzNzgiIHk9IjM3OCIgd2lkdGg9IjQ0IiBoZWlnaHQ9IjUwIiBmaWxsPSIjZmZkMTY2Ii8+CiAgPHJlY3QgeD0iMzQwIiB5PSI0MjgiIHdpZHRoPSIxMjAiIGhlaWdodD0iMjIiIHJ4PSI2IiBmaWxsPSIjZmZkMTY2Ii8+CgogIDx0ZXh0IHg9IjQwMCIgeT0iNTIwIiBmaWxsPSIjOWFhM2I4IiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7kvaDmmK/jgIzpqb7pqbblkZjjgI3kuoY8L3RleHQ+CiAgPHRleHQgeD0iNDAwIiB5PSI1NjIiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuS4i+S4gOWFs++8muaNouS4quWjs++8jOWwseaYr+S4gOWPsOaWsOi9pjwvdGV4dD4KPC9zdmc+Cg==" alt="通关奖杯"><div class="notes">备注：盖章。预告下一关：我推一下，它就跑。</div></section>
+</div>
+<div id="num"></div><div id="hint">← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 导出 PDF</div>
+<script>
+const slides=[...document.querySelectorAll('.slide')];
+let i=0;
+function show(n){
+  i=Math.max(0,Math.min(slides.length-1,n));
+  slides.forEach((s,k)=>s.classList.toggle('on',k===i));
+  document.getElementById('bar').style.width=((i+1)/slides.length*100)+'%';
+  document.getElementById('num').textContent=(i+1)+' / '+slides.length;
+  history.replaceState(null,'','#'+(i+1));
+}
+function toggleNotes(){document.body.classList.toggle('notes-on');}
+addEventListener('keydown',e=>{
+  const k=e.key;
+  if(k==='ArrowRight'||k===' '||k==='PageDown'||k==='j'){show(i+1);e.preventDefault();}
+  else if(k==='ArrowLeft'||k==='PageUp'||k==='k'){show(i-1);e.preventDefault();}
+  else if(k==='Home'){show(0);} else if(k==='End'){show(slides.length-1);}
+  else if(k==='n'||k==='N'){toggleNotes();}
+  else if(k==='f'||k==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+  else if(k==='?'||k==='/'){alert('← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 打印成 PDF');}
+});
+addEventListener('click',e=>{show(i+(e.clientX>innerWidth/2?1:-1));});
+show(parseInt(location.hash.slice(1)||'1',10)-1);
+</script>
+</body></html>

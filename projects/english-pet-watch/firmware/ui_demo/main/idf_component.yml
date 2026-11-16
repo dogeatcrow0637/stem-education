@@ -1,0 +1,8 @@
+## 英语宠物怀表 · UI Demo 依赖
+## BSP 负责 CO5300 屏幕、CST9217 触摸、I2C 与 LVGL 适配
+dependencies:
+  waveshare/esp32_s3_touch_amoled_1_75c:
+    version: "^3.0.0"
+  lvgl/lvgl:
+    version: "9.5.0"
+    public: true

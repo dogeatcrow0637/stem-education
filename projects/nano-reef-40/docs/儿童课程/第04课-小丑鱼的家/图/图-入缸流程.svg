@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif">
+<rect width="960" height="540" fill="#0f1220"/>
+<text x="480" y="44" fill="#ffd166" font-size="30" text-anchor="middle" font-weight="700">新鱼新珊瑚怎么进缸</text>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ffd166"/></marker><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4cc9f0"/></marker></defs>
+<rect x="40" y="140" width="280" height="180" rx="10" fill="#12243a" stroke="#4cc9f0" stroke-width="2"/>
+<text x="180.0" y="228.0" fill="#f7f8fb" font-size="20" text-anchor="middle" font-weight="600">1 过温 15 分钟</text>
+<text x="180.0" y="256.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">连袋漂在缸里</text>
+<line x1="325" y1="230" x2="345" y2="230" stroke="#ffd166" stroke-width="3" marker-end="url(#a)"/>
+<rect x="350" y="140" width="280" height="180" rx="10" fill="#1b2f26" stroke="#4cc9f0" stroke-width="2"/>
+<text x="490.0" y="228.0" fill="#f7f8fb" font-size="20" text-anchor="middle" font-weight="600">2 过水 30–45 分钟</text>
+<text x="490.0" y="256.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">每 5 分钟加一杯缸水</text>
+<line x1="635" y1="230" x2="655" y2="230" stroke="#ffd166" stroke-width="3" marker-end="url(#a)"/>
+<rect x="660" y="140" width="280" height="180" rx="10" fill="#2a2418" stroke="#4cc9f0" stroke-width="2"/>
+<text x="800.0" y="228.0" fill="#f7f8fb" font-size="20" text-anchor="middle" font-weight="600">3 手捞入缸</text>
+<text x="800.0" y="256.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">袋里的水倒掉</text>
+<text x="480" y="382" fill="#ffd166" font-size="22" text-anchor="middle" font-weight="700">关灯 1 小时 · 当天不喂食</text>
+<text x="480" y="432" fill="#ff6b6b" font-size="20" text-anchor="middle" font-weight="600">戴手套：纽扣珊瑚有剧毒</text>
+</svg>

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 1 课 · 认识我们的机械臂</title><style>
+:root{--bg:#0f1220;--fg:#f7f8fb;--dim:#9aa3b8;--accent:#ffd166;--accent2:#4cc9f0;--ok:#63e6be;}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#000;color:var(--fg);
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif}
+#deck{position:relative;width:100vw;height:100vh;overflow:hidden;background:var(--bg)}
+.slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
+  padding:5vh 6vw;gap:1.4vh}
+.slide.on{display:flex}
+h1{font-size:7.2vh;line-height:1.15;margin:0 0 1vh}
+h2{font-size:5.4vh;line-height:1.2;margin:0 0 2vh}
+h3{font-size:3.6vh;margin:0 0 1vh;color:var(--accent2)}
+p,li{font-size:4vh;line-height:1.45}
+ul,ol{margin:0;padding-left:1.2em}
+li{margin:.6vh 0}
+strong{color:var(--accent)}
+code{background:#ffffff1a;padding:.1em .35em;border-radius:.3em;font-size:.9em}
+img{max-width:100%;max-height:58vh;object-fit:contain;border-radius:1.2vh;display:block;margin:0 auto}
+.callout{font-size:4.2vh;padding:1.6vh 2vw;border-left:.8vw solid var(--accent);
+  background:#ffffff12;border-radius:1vh}
+.slide[data-layout=title]{align-items:center;text-align:center}
+.slide[data-layout=title] img{max-height:34vh}
+.slide[data-layout=title] p{color:var(--dim);font-size:2.8vh}
+.slide[data-layout=big]{align-items:center;text-align:center}
+.slide[data-layout=big] h1,.slide[data-layout=big] p{font-size:9vh;color:var(--accent)}
+.slide[data-layout=image]{align-items:center;text-align:center}
+.slide[data-layout=image] img{max-height:66vh}
+.cols{display:flex;gap:3vw;align-items:flex-start}
+.cols>div{flex:1;min-width:0}
+.notes{display:none}
+body.notes-on .notes{display:block;position:fixed;left:0;right:0;bottom:0;max-height:32vh;overflow:auto;
+  background:#000000e6;border-top:.4vh solid var(--accent2);padding:1.6vh 3vw;font-size:2.3vh;color:#dbe4f0}
+body.notes-on .slide{padding-bottom:34vh}
+#bar{position:fixed;top:0;left:0;height:.7vh;background:var(--accent);width:0;transition:width .15s;z-index:5}
+#num{position:fixed;right:1.6vw;bottom:1.2vh;font-size:2.2vh;color:var(--dim);z-index:5}
+#hint{position:fixed;left:1.6vw;bottom:1.2vh;font-size:2vh;color:#6b7488;z-index:5}
+@media print{
+  @page{size:297mm 167mm;margin:0}
+  html,body{background:#fff}
+  #bar,#num,#hint,.notes{display:none!important}
+  #deck{width:auto;height:auto;background:var(--bg)}
+  .slide{display:flex!important;position:relative;inset:auto;width:297mm;height:167mm;
+    page-break-after:always;break-after:page}
+  body{color:var(--fg);background:var(--bg)}
+}
+</style></head>
+<body>
+<div id="bar"></div>
+<div id="deck">
+<section class="slide on" data-layout="title"><h1>第 1 课 · 认识我们的机械臂</h1>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MDAgNjAwIiB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBIaXJhZ2lubyBTYW5zIEdCLCBNaWNyb3NvZnQgWWFIZWksIHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTAxNTI4Ii8+CiAgPHRleHQgeD0iNDAwIiB5PSI1MiIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuacuuaisOiHgueahOS6lOS4qumDqOS9jTwvdGV4dD4KCiAgPCEtLSBiYXNlIC0tPgogIDxyZWN0IHg9IjE1MCIgeT0iNDcwIiB3aWR0aD0iMTgwIiBoZWlnaHQ9IjQ2IiByeD0iOCIgZmlsbD0iIzRjYzlmMCIvPgogIDx0ZXh0IHg9IjI0MCIgeT0iNTAwIiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+5bqV5bqnPC90ZXh0PgoKICA8IS0tIGpvaW50IDEgLS0+CiAgPGNpcmNsZSBjeD0iMjQwIiBjeT0iNDQwIiByPSIyNiIgZmlsbD0iI2ZmZDE2NiIvPgogIDx0ZXh0IHg9IjI0MCIgeT0iNDQ5IiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+MTwvdGV4dD4KCiAgPCEtLSBiaWcgYXJtIC0tPgogIDxyZWN0IHg9IjIyOCIgeT0iMjUwIiB3aWR0aD0iMjQiIGhlaWdodD0iMTcwIiByeD0iMTAiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSIzMDAiIHk9IjMyMCIgZmlsbD0iIzYzZTZiZSIgZm9udC1zaXplPSIyNCI+5aSn6IeCPC90ZXh0PgoKICA8IS0tIGpvaW50IDIgLS0+CiAgPGNpcmNsZSBjeD0iMjQwIiBjeT0iMjQwIiByPSIyNiIgZmlsbD0iI2ZmZDE2NiIvPgogIDx0ZXh0IHg9IjI0MCIgeT0iMjQ5IiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+MjwvdGV4dD4KCiAgPCEtLSBmb3JlYXJtIC0tPgogIDxyZWN0IHg9IjI0MCIgeT0iMTUwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIyIiByeD0iMTAiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSIzMzAiIHk9IjE0MCIgZmlsbD0iIzYzZTZiZSIgZm9udC1zaXplPSIyNCI+5bCP6IeCPC90ZXh0PgoKICA8IS0tIGpvaW50IDMgLS0+CiAgPGNpcmNsZSBjeD0iNDUyIiBjeT0iMTYxIiByPSIyNiIgZmlsbD0iI2ZmZDE2NiIvPgogIDx0ZXh0IHg9IjQ1MiIgeT0iMTcwIiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+MzwvdGV4dD4KCiAgPCEtLSB3cmlzdCAtLT4KICA8cmVjdCB4PSI0NzAiIHk9IjEyMCIgd2lkdGg9IjEyMCIgaGVpZ2h0PSIyMCIgcng9IjkiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSI1MzAiIHk9IjEwOCIgZmlsbD0iIzYzZTZiZSIgZm9udC1zaXplPSIyNCI+6IWV6YOoPC90ZXh0PgoKICA8IS0tIGdyaXBwZXIgLS0+CiAgPHBhdGggZD0iTTYwMCAxMDAgbDQwIC0yNiBsMTQgMjAgbC00MCAyNiB6IiBmaWxsPSIjZjRhMjYxIi8+CiAgPHBhdGggZD0iTTYwMCAxNDIgbDQwIDI2IGwxNCAtMjAgbC00MCAtMjYgeiIgZmlsbD0iI2Y0YTI2MSIvPgogIDx0ZXh0IHg9IjY0NiIgeT0iMjMwIiBmaWxsPSIjZjRhMjYxIiBmb250LXNpemU9IjI0Ij7lpLnniKo8L3RleHQ+CgogIDx0ZXh0IHg9IjQwMCIgeT0iNTY2IiBmaWxsPSIjOWFhM2I4IiBmb250LXNpemU9IjIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7lhYjorqTpg6jkvY3vvIzlho3mlbDlhbPoioI8L3RleHQ+Cjwvc3ZnPgo=" alt="机械臂整机示意图">
+<p>今天只做一件事：找出它的 7 个关节</p><div class="notes">备注：开场 30 秒。只说今天要做的事，不讲原理。先问："你觉得它像什么？"</div></section>
+<section class="slide" data-layout="image"><h2>先看一样东西</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MDAgNjAwIiB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBIaXJhZ2lubyBTYW5zIEdCLCBNaWNyb3NvZnQgWWFIZWksIHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTAxNTI4Ii8+CiAgPHRleHQgeD0iNDAwIiB5PSI1MiIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuacuuaisOiHgueahOS6lOS4qumDqOS9jTwvdGV4dD4KCiAgPCEtLSBiYXNlIC0tPgogIDxyZWN0IHg9IjE1MCIgeT0iNDcwIiB3aWR0aD0iMTgwIiBoZWlnaHQ9IjQ2IiByeD0iOCIgZmlsbD0iIzRjYzlmMCIvPgogIDx0ZXh0IHg9IjI0MCIgeT0iNTAwIiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+5bqV5bqnPC90ZXh0PgoKICA8IS0tIGpvaW50IDEgLS0+CiAgPGNpcmNsZSBjeD0iMjQwIiBjeT0iNDQwIiByPSIyNiIgZmlsbD0iI2ZmZDE2NiIvPgogIDx0ZXh0IHg9IjI0MCIgeT0iNDQ5IiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+MTwvdGV4dD4KCiAgPCEtLSBiaWcgYXJtIC0tPgogIDxyZWN0IHg9IjIyOCIgeT0iMjUwIiB3aWR0aD0iMjQiIGhlaWdodD0iMTcwIiByeD0iMTAiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSIzMDAiIHk9IjMyMCIgZmlsbD0iIzYzZTZiZSIgZm9udC1zaXplPSIyNCI+5aSn6IeCPC90ZXh0PgoKICA8IS0tIGpvaW50IDIgLS0+CiAgPGNpcmNsZSBjeD0iMjQwIiBjeT0iMjQwIiByPSIyNiIgZmlsbD0iI2ZmZDE2NiIvPgogIDx0ZXh0IHg9IjI0MCIgeT0iMjQ5IiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+MjwvdGV4dD4KCiAgPCEtLSBmb3JlYXJtIC0tPgogIDxyZWN0IHg9IjI0MCIgeT0iMTUwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIyIiByeD0iMTAiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSIzMzAiIHk9IjE0MCIgZmlsbD0iIzYzZTZiZSIgZm9udC1zaXplPSIyNCI+5bCP6IeCPC90ZXh0PgoKICA8IS0tIGpvaW50IDMgLS0+CiAgPGNpcmNsZSBjeD0iNDUyIiBjeT0iMTYxIiByPSIyNiIgZmlsbD0iI2ZmZDE2NiIvPgogIDx0ZXh0IHg9IjQ1MiIgeT0iMTcwIiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+MzwvdGV4dD4KCiAgPCEtLSB3cmlzdCAtLT4KICA8cmVjdCB4PSI0NzAiIHk9IjEyMCIgd2lkdGg9IjEyMCIgaGVpZ2h0PSIyMCIgcng9IjkiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSI1MzAiIHk9IjEwOCIgZmlsbD0iIzYzZTZiZSIgZm9udC1zaXplPSIyNCI+6IWV6YOoPC90ZXh0PgoKICA8IS0tIGdyaXBwZXIgLS0+CiAgPHBhdGggZD0iTTYwMCAxMDAgbDQwIC0yNiBsMTQgMjAgbC00MCAyNiB6IiBmaWxsPSIjZjRhMjYxIi8+CiAgPHBhdGggZD0iTTYwMCAxNDIgbDQwIDI2IGwxNCAtMjAgbC00MCAtMjYgeiIgZmlsbD0iI2Y0YTI2MSIvPgogIDx0ZXh0IHg9IjY0NiIgeT0iMjMwIiBmaWxsPSIjZjRhMjYxIiBmb250LXNpemU9IjI0Ij7lpLnniKo8L3RleHQ+CgogIDx0ZXh0IHg9IjQwMCIgeT0iNTY2IiBmaWxsPSIjOWFhM2I4IiBmb250LXNpemU9IjIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7lhYjorqTpg6jkvY3vvIzlho3mlbDlhbPoioI8L3RleHQ+Cjwvc3ZnPgo=" alt="整机示意图：标出底座 / 大臂 / 小臂 / 腕部 / 夹爪"><div class="notes">备注：给孩子看 10 秒，问"你看到了什么"。不提示、不补充，让他自己说。</div></section>
+<section class="slide" data-layout="big"><h2>它有几个关节？</h2><div class="notes">备注：让孩子先猜一个数字。<strong>不要说出答案</strong>，下一页一起数。答错就说"那我们数数看"。</div></section>
+<section class="slide" data-layout="image"><h2>一起数：1 到 7</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MDAgNjAwIiB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBIaXJhZ2lubyBTYW5zIEdCLCBNaWNyb3NvZnQgWWFIZWksIHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTAxNTI4Ii8+CiAgPHRleHQgeD0iNDAwIiB5PSI1MiIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuaVsOS4gOaVsO+8muS4gOWFseacieWHoOS4quWFs+iKgu+8nzwvdGV4dD4KCiAgPGxpbmUgeDE9IjEyMCIgeTE9IjUwMCIgeDI9IjcwMCIgeTI9IjUwMCIgc3Ryb2tlPSIjM2E0MzYwIiBzdHJva2Utd2lkdGg9IjQiLz4KCiAgPCEtLSBzaG91bGRlciBjaGFpbiAtLT4KICA8Y2lyY2xlIGN4PSIxNTAiIGN5PSI0NzAiIHI9IjIyIiBmaWxsPSIjZmZkMTY2Ii8+PHRleHQgeD0iMTUwIiB5PSI0NzgiIGZpbGw9IiMwZjEyMjAiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtd2VpZ2h0PSJib2xkIj4xPC90ZXh0PgogIDxjaXJjbGUgY3g9IjIxNSIgY3k9IjQxMCIgcj0iMjIiIGZpbGw9IiNmZmQxNjYiLz48dGV4dCB4PSIyMTUiIHk9IjQxOCIgZmlsbD0iIzBmMTIyMCIgZm9udC1zaXplPSIyMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPjI8L3RleHQ+CiAgPGNpcmNsZSBjeD0iMjkwIiBjeT0iMzUwIiByPSIyMiIgZmlsbD0iI2ZmZDE2NiIvPjx0ZXh0IHg9IjI5MCIgeT0iMzU4IiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjIwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+MzwvdGV4dD4KICA8Y2lyY2xlIGN4PSIzNzAiIGN5PSIzMDAiIHI9IjIyIiBmaWxsPSIjZmZkMTY2Ii8+PHRleHQgeD0iMzcwIiB5PSIzMDgiIGZpbGw9IiMwZjEyMjAiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtd2VpZ2h0PSJib2xkIj40PC90ZXh0PgogIDxjaXJjbGUgY3g9IjQ1NSIgY3k9IjI2MiIgcj0iMjIiIGZpbGw9IiNmZmQxNjYiLz48dGV4dCB4PSI0NTUiIHk9IjI3MCIgZmlsbD0iIzBmMTIyMCIgZm9udC1zaXplPSIyMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPjU8L3RleHQ+CiAgPGNpcmNsZSBjeD0iNTQwIiBjeT0iMjM4IiByPSIyMiIgZmlsbD0iI2ZmZDE2NiIvPjx0ZXh0IHg9IjU0MCIgeT0iMjQ2IiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjIwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+NjwvdGV4dD4KICA8Y2lyY2xlIGN4PSI2MjgiIGN5PSIyMjYiIHI9IjIyIiBmaWxsPSIjZjRhMjYxIi8+PHRleHQgeD0iNjI4IiB5PSIyMzQiIGZpbGw9IiMwZjEyMjAiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtd2VpZ2h0PSJib2xkIj43PC90ZXh0PgoKICA8cGF0aCBkPSJNMTUwIDQ3MCBRMjAwIDQzMCAyMTUgNDEwIE0yMTUgNDEwIFEyNTAgMzc1IDI5MCAzNTAgTTI5MCAzNTAgUTMzMCAzMjAgMzcwIDMwMCBNMzcwIDMwMCBRNDE1IDI3OCA0NTUgMjYyIE00NTUgMjYyIFE1MDAgMjQ2IDU0MCAyMzggTTU0MCAyMzggUTU4NSAyMzAgNjI4IDIyNiIKICAgICAgICBmaWxsPSJub25lIiBzdHJva2U9IiM2M2U2YmUiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CgogIDx0ZXh0IHg9IjYyOCIgeT0iMTgwIiBmaWxsPSIjZjRhMjYxIiBmb250LXNpemU9IjIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7nrKwgNyDkuKrnrqHlpLnniKo8L3RleHQ+CiAgPHRleHQgeD0iMTgwIiB5PSI1NDYiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjIiPjHigJM2IOWPt+iuqeaJi+iHguaRhuWnv+WKvzwvdGV4dD4KICA8dGV4dCB4PSI1MjAiIHk9IjU0NiIgZmlsbD0iIzlhYTNiOCIgZm9udC1zaXplPSIyMiI+NyDlj7fotJ/otKPlvIDlkIg8L3RleHQ+Cjwvc3ZnPgo=" alt="七个关节的编号示意图"><div class="notes">备注：家长用手指点着数，孩子跟着念。数完再问一遍："刚才你猜的是几？"</div></section>
+<section class="slide" data-layout="big"><h2>猜一猜：断电了它还站得住吗？</h2><div class="notes">备注：这是本课最重要的一问。让孩子先猜，再翻下一页给答案。</div></section>
+<section class="slide" data-layout="image"><h2>它没有刹车</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MDAgNjAwIiB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBIaXJhZ2lubyBTYW5zIEdCLCBNaWNyb3NvZnQgWWFIZWksIHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTAxNTI4Ii8+CiAgPHRleHQgeD0iNDAwIiB5PSI1NCIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuWug+ayoeacieWIuei9pjwvdGV4dD4KCiAgPCEtLSBsZWZ0OiBmYWxsaW5nIC0tPgogIDxyZWN0IHg9IjQwIiB5PSIxMDAiIHdpZHRoPSIzMzAiIGhlaWdodD0iNDIwIiByeD0iMTQiIGZpbGw9IiMxYjIxMzgiIHN0cm9rZT0iI2ZmNmI2YiIgc3Ryb2tlLXdpZHRoPSIzIi8+CiAgPHRleHQgeD0iMjA1IiB5PSIxNDIiIGZpbGw9IiNmZjZiNmIiIGZvbnQtc2l6ZT0iMjYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtd2VpZ2h0PSJib2xkIj7mlq3nlLUgPSDoh6rlt7HlgJI8L3RleHQ+CiAgPHJlY3QgeD0iMTIwIiB5PSI0NDAiIHdpZHRoPSIxNzAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSIjNGNjOWYwIi8+CiAgPGxpbmUgeDE9IjIwNSIgeTE9IjQ0MCIgeDI9IjIwNSIgeTI9IjMzMCIgc3Ryb2tlPSIjNjNlNmJlIiBzdHJva2Utd2lkdGg9IjE0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8bGluZSB4MT0iMjA1IiB5MT0iMzMwIiB4Mj0iMzMwIiB5Mj0iNDcwIiBzdHJva2U9IiM2M2U2YmUiIHN0cm9rZS13aWR0aD0iMTQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC40NSIvPgogIDxwYXRoIGQ9Ik0yNTUgMzUwIHE0MCA1NSA2MCAxMDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmNmI2YiIgc3Ryb2tlLXdpZHRoPSI2Ii8+CiAgPHBhdGggZD0iTTMwNSA0NTIgbC00IC0yNCBsLTIyIDEyIHoiIGZpbGw9IiNmZjZiNmIiLz4KICA8dGV4dCB4PSIyMDUiIHk9IjUwMCIgZmlsbD0iIzlhYTNiOCIgZm9udC1zaXplPSIyMCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5Lya56C45LiL5p2lPC90ZXh0PgoKICA8IS0tIHJpZ2h0OiBzdXBwb3J0ZWQgLS0+CiAgPHJlY3QgeD0iNDMwIiB5PSIxMDAiIHdpZHRoPSIzMzAiIGhlaWdodD0iNDIwIiByeD0iMTQiIGZpbGw9IiMxYjIxMzgiIHN0cm9rZT0iIzYzZTZiZSIgc3Ryb2tlLXdpZHRoPSIzIi8+CiAgPHRleHQgeD0iNTk1IiB5PSIxNDIiIGZpbGw9IiM2M2U2YmUiIGZvbnQtc2l6ZT0iMjYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtd2VpZ2h0PSJib2xkIj7lnqvlpb3mlK/mkpEgPSDlronlhag8L3RleHQ+CiAgPHJlY3QgeD0iNTEwIiB5PSI0NDAiIHdpZHRoPSIxNzAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSIjNGNjOWYwIi8+CiAgPGxpbmUgeDE9IjU5NSIgeTE9IjQ0MCIgeDI9IjU5NSIgeTI9IjMzMCIgc3Ryb2tlPSIjNjNlNmJlIiBzdHJva2Utd2lkdGg9IjE0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8bGluZSB4MT0iNTk1IiB5MT0iMzMwIiB4Mj0iNjkwIiB5Mj0iMzY4IiBzdHJva2U9IiM2M2U2YmUiIHN0cm9rZS13aWR0aD0iMTQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxyZWN0IHg9IjYyMCIgeT0iMzY4IiB3aWR0aD0iNzAiIGhlaWdodD0iNzIiIHJ4PSIxMCIgZmlsbD0iI2ZmZDE2NiIvPgogIDx0ZXh0IHg9IjY1NSIgeT0iNDEyIiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjIwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+5pSv5pKR5Z2XPC90ZXh0PgogIDx0ZXh0IHg9IjU5NSIgeT0iNTAwIiBmaWxsPSIjOWFhM2I4IiBmb250LXNpemU9IjIwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7lroPourrnnYDvvIzmjonkuI3kuIvmnaU8L3RleHQ+CgogIDx0ZXh0IHg9IjQwMCIgeT0iNTY2IiBmaWxsPSIjOWFhM2I4IiBmb250LXNpemU9IjIyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7miYDku6Xmr4/mrKHlv6vnu5PmnZ/ml7bvvJrlhYjlnqvlpb3vvIzlho3mlq3nlLU8L3RleHQ+Cjwvc3ZnPgo=" alt="左边断电会倒，右边垫上支撑就安全"><div class="notes">备注：用自行车打比方："没捏闸，坡上就会溜。"所以收工前一定要先垫好支撑，再断电。</div></section>
+<section class="slide" data-layout="image"><h2>动手 ③ 慢慢推</h2>
+<ol>
+<li>扶住 1 号关节</li>
+<li>推过去、再推回来</li>
+<li>说"有点弹手"</li>
+</ol>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MDAgNjAwIiB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBIaXJhZ2lubyBTYW5zIEdCLCBNaWNyb3NvZnQgWWFIZWksIHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTAxNTI4Ii8+CiAgPHRleHQgeD0iNDAwIiB5PSI1NCIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIzNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuaFoiDmhaIg5o6o77yM5Yir56Gs5o6wPC90ZXh0PgoKICA8cmVjdCB4PSIxODAiIHk9IjQyMCIgd2lkdGg9IjQ0MCIgaGVpZ2h0PSI2MCIgcng9IjEwIiBmaWxsPSIjM2E0MzYwIi8+CiAgPHRleHQgeD0iNDAwIiB5PSI0NjAiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjQiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuahjOmdojwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iMzAwIiBjeT0iMzYwIiByPSIzNCIgZmlsbD0iIzYzZTZiZSIvPgogIDx0ZXh0IHg9IjMwMCIgeT0iMzcwIiBmaWxsPSIjMGYxMjIwIiBmb250LXNpemU9IjI4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXdlaWdodD0iYm9sZCI+MTwvdGV4dD4KCiAgPGxpbmUgeDE9IjMwMCIgeTE9IjMyNiIgeDI9IjMwMCIgeTI9IjIyMCIgc3Ryb2tlPSIjNjNlNmJlIiBzdHJva2Utd2lkdGg9IjE2IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KCiAgPCEtLSBoYW5kIC0tPgogIDxwYXRoIGQ9Ik00NzAgMzAwIHEtNDAgLTEwIC02MCAxMCBxLTE0IDE0IC0yIDMwIHExMiAxNiA0MCAxNCBsNjAgLTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y0YTI2MSIgc3Ryb2tlLXdpZHRoPSIxMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPHRleHQgeD0iNjAwIiB5PSIzMzAiIGZpbGw9IiNmNGEyNjEiIGZvbnQtc2l6ZT0iMjYiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuS4pOWPquaJi+aJtuS9jzwvdGV4dD4KCiAgPCEtLSBhcnJvdyAtLT4KICA8cGF0aCBkPSJNNDAwIDIwMCBxNjAgMCA5MCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZkMTY2IiBzdHJva2Utd2lkdGg9IjciIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik00OTAgMjQwIGwtMiAtMjQgbC0yMiAxMiB6IiBmaWxsPSIjZmZkMTY2Ii8+CiAgPHRleHQgeD0iNDcwIiB5PSIxNzAiIGZpbGw9IiNmZmQxNjYiIGZvbnQtc2l6ZT0iMjYiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuW+iOaFouWcsOi9rDwvdGV4dD4KCiAgPHRleHQgeD0iNDAwIiB5PSI1NDYiIGZpbGw9IiM5YWEzYjgiIGZvbnQtc2l6ZT0iMjIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuaJi+mHjOS8muaEn+inieWIsOS4gOeCueeCuSLlvLki77yM6YKj5piv55S15py65Zyo6YeM6Z2iPC90ZXh0Pgo8L3N2Zz4K" alt="慢慢推动 1 号关节，感受阻力"><div class="notes">备注：强调"很慢"两个字。硬掰会损坏减速器。孩子做完问："手里那个弹弹的感觉，是什么？"（埋钩子，第 2 课回答）</div></section>
+<section class="slide" data-layout="big"><h2>通关条件</h2>
+<p>能指着说出 7 个关节 = 过关</p><div class="notes">备注：让孩子自己判定。家长不评价快慢，过关就盖章。</div></section>
+<section class="slide" data-layout="two-col"><div class="cols"><div><h3>我们发现的</h3><ul>
+<li>它一共有 7 个关节</li>
+<li>推的时候手里有点弹</li>
+<li>断电它会倒下来</li>
+</ul></div><div><h3>记下的线索</h3><ul>
+<li>第 7 个关节管的是夹爪</li>
+<li>收工前要先垫支撑，再断电</li>
+</ul></div></div><div class="notes">备注：收尾 3 问：今天成功的标志是什么 / 哪里最麻烦 / 下次想改哪里。把答案写进线索本。</div></section>
+<section class="slide" data-layout="title"><h1>恭喜过关</h1>
+<p>你现在是「观察员」了</p><div class="notes">备注：盖章、发称号。预告第 2 课：把它装起来固定住（要拧螺丝了）。留一个钩子再下课。</div></section>
+</div>
+<div id="num"></div><div id="hint">← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 导出 PDF</div>
+<script>
+const slides=[...document.querySelectorAll('.slide')];
+let i=0;
+function show(n){
+  i=Math.max(0,Math.min(slides.length-1,n));
+  slides.forEach((s,k)=>s.classList.toggle('on',k===i));
+  document.getElementById('bar').style.width=((i+1)/slides.length*100)+'%';
+  document.getElementById('num').textContent=(i+1)+' / '+slides.length;
+  history.replaceState(null,'','#'+(i+1));
+}
+function toggleNotes(){document.body.classList.toggle('notes-on');}
+addEventListener('keydown',e=>{
+  const k=e.key;
+  if(k==='ArrowRight'||k===' '||k==='PageDown'||k==='j'){show(i+1);e.preventDefault();}
+  else if(k==='ArrowLeft'||k==='PageUp'||k==='k'){show(i-1);e.preventDefault();}
+  else if(k==='Home'){show(0);} else if(k==='End'){show(slides.length-1);}
+  else if(k==='n'||k==='N'){toggleNotes();}
+  else if(k==='f'||k==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+  else if(k==='?'||k==='/'){alert('← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 打印成 PDF');}
+});
+addEventListener('click',e=>{show(i+(e.clientX>innerWidth/2?1:-1));});
+show(parseInt(location.hash.slice(1)||'1',10)-1);
+</script>
+</body></html>

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+  <rect width="800" height="600" fill="#101528"/>
+  <text x="400" y="52" fill="#ffd166" font-size="34" text-anchor="middle" font-weight="bold">先让它们牵上手</text>
+
+  <!-- phone -->
+  <rect x="90" y="150" width="130" height="230" rx="20" fill="#3a3f5c" stroke="#4cc9f0" stroke-width="6"/>
+  <text x="155" y="275" fill="#4cc9f0" font-size="22" text-anchor="middle">手机</text>
+  <text x="155" y="430" fill="#9aa3b8" font-size="20" text-anchor="middle">用蓝牙配置</text>
+
+  <!-- car -->
+  <rect x="330" y="330" width="200" height="70" rx="14" fill="#63e6be"/>
+  <circle cx="370" cy="415" r="34" fill="#2b2f45" stroke="#f4a261" stroke-width="6"/>
+  <circle cx="490" cy="415" r="34" fill="#2b2f45" stroke="#f4a261" stroke-width="6"/>
+  <text x="430" y="470" fill="#9aa3b8" font-size="20" text-anchor="middle">车</text>
+
+  <!-- remote -->
+  <rect x="620" y="180" width="110" height="170" rx="18" fill="#3a3f5c"/>
+  <circle cx="675" cy="235" r="24" fill="#ffd166"/>
+  <text x="675" y="400" fill="#9aa3b8" font-size="20" text-anchor="middle">遥控</text>
+
+  <!-- links -->
+  <path d="M225 240 q60 -30 100 40" stroke="#4cc9f0" stroke-width="5" fill="none" stroke-dasharray="10 8"/>
+  <text x="255" y="205" fill="#4cc9f0" font-size="20">蓝牙</text>
+  <path d="M620 250 q-90 -10 -120 90" stroke="#ffe066" stroke-width="5" fill="none" stroke-dasharray="10 8"/>
+  <text x="548" y="300" fill="#ffe066" font-size="20">2.4G</text>
+
+  <text x="400" y="545" fill="#9aa3b8" font-size="22" text-anchor="middle">蓝牙用来配置，2.4G 用来开车</text>
+</svg>

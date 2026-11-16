@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">步态 = 轮流抬腿</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">像划船，一根接一根</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <g fill="#3E7C7B">
+    <circle cx="300" cy="260" r="34"/><circle cx="500" cy="360" r="34"/>
+    <circle cx="700" cy="260" r="34"/><circle cx="900" cy="360" r="34"/>
+  </g>
+  <g font-size="26" fill="#233">
+    <text x="270" y="210">1</text><text x="470" y="310">2</text><text x="670" y="210">3</text><text x="870" y="310">4</text>
+  </g>
+  <path d="M300 300 Q400 430 500 400 Q600 430 700 300 Q800 430 900 400" stroke="#E4572E" stroke-width="8" fill="none" stroke-dasharray="14 12"/>
+  <text x="380" y="560" font-size="30">按顺序，不抢拍</text>
+  </g>
+</svg>

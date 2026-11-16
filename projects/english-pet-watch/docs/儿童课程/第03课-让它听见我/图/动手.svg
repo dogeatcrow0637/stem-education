@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
+  <rect width="800" height="500" fill="#0f1220"/>
+  <circle cx="400" cy="205" r="130" fill="none" stroke="#ffd166" stroke-width="6"/>
+  <text x="400" y="195" fill="#f7f8fb" font-size="38" text-anchor="middle" font-family="PingFang SC, Noto Sans CJK SC, sans-serif">动手</text>
+  <text x="400" y="250" fill="#9aa3b8" font-size="20" text-anchor="middle" font-family="PingFang SC, Noto Sans CJK SC, sans-serif">实拍图占位 · 请替换为同一角度照片</text>
+  <text x="400" y="420" fill="#4cc9f0" font-size="24" text-anchor="middle" font-family="PingFang SC, Noto Sans CJK SC, sans-serif">第03课 · 让它听见我</text>
+</svg>

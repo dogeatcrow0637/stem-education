@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" width="800" height="450">
+  <rect width="800" height="450" fill="#101425"/>
+  <g font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif" fill="#f7f8fb">
+    <text x="40" y="56" font-size="30" fill="#ffd166">接线只看三件事：位置、颜色、松紧</text>
+    <rect x="70" y="120" width="280" height="200" rx="16" fill="#1b2033" stroke="#4cc9f0" stroke-width="4"/>
+    <text x="100" y="164" font-size="26" fill="#4cc9f0">电源</text>
+    <circle cx="120" cy="220" r="24" fill="#e63946"/>
+    <text x="106" y="230" font-size="24" fill="#101425">＋</text>
+    <circle cx="200" cy="220" r="24" fill="#111"/>
+    <text x="188" y="230" font-size="24" fill="#f7f8fb">－</text>
+    <text x="100" y="292" font-size="22" fill="#9aa3b8">标 ① 红：正极</text>
+    <rect x="450" y="120" width="280" height="200" rx="16" fill="#1b2033" stroke="#63e6be" stroke-width="4"/>
+    <text x="480" y="164" font-size="26" fill="#63e6be">控制板</text>
+    <rect x="480" y="196" width="60" height="40" rx="8" fill="#e63946"/>
+    <rect x="556" y="196" width="60" height="40" rx="8" fill="#111" stroke="#9aa3b8"/>
+    <text x="480" y="292" font-size="22" fill="#9aa3b8">插到底，不晃动才算插好</text>
+    <path d="M350 220 h100" stroke="#ffd166" stroke-width="8" stroke-dasharray="14 10"/>
+    <text x="70" y="400" font-size="26" fill="#63e6be">插好以后先不送电，喊家长来检查</text>
+  </g>
+</svg>

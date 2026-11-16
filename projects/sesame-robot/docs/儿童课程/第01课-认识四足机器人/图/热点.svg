@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">机器人自己开 WiFi</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">Sesame-Controller-BETA</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <rect x="300" y="250" width="240" height="180" rx="22" fill="#F3E3C8" stroke="#233" stroke-width="6"/>
+  <text x="330" y="355" font-size="30">机器人</text>
+  <g stroke="#3E7C7B" stroke-width="12" fill="none" stroke-linecap="round">
+    <path d="M620 320 Q700 240 780 320"/><path d="M650 365 Q700 315 750 365"/>
+  </g>
+  <circle cx="700" cy="410" r="16" fill="#3E7C7B"/>
+  <rect x="820" y="230" width="240" height="220" rx="26" fill="#FFFFFF" stroke="#233" stroke-width="6"/>
+  <text x="870" y="300" font-size="30">手机</text>
+  <text x="850" y="370" font-size="26">192.168.4.1</text>
+  <text x="845" y="420" font-size="24" fill="#E4572E">关掉移动数据</text>
+  </g>
+</svg>

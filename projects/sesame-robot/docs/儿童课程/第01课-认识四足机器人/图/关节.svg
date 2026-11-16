@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">髋关节 + 膝关节</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">4 条腿 × 2 = 8 个关节</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <rect x="380" y="230" width="520" height="120" rx="24" fill="#F3E3C8" stroke="#233" stroke-width="6"/>
+  <path d="M470 350 L520 500 L460 630" stroke="#233" stroke-width="18" fill="none" stroke-linecap="round"/>
+  <path d="M810 350 L760 500 L820 630" stroke="#233" stroke-width="18" fill="none" stroke-linecap="round"/>
+  <circle cx="520" cy="500" r="42" fill="#3E7C7B" stroke="#233" stroke-width="6"/>
+  <circle cx="760" cy="500" r="42" fill="#3E7C7B" stroke="#233" stroke-width="6"/>
+  <text x="470" y="180" font-size="34" fill="#E4572E">髋：前后摆</text>
+  <text x="700" y="690" font-size="34" fill="#E4572E">膝：抬和落</text>
+  </g>
+</svg>

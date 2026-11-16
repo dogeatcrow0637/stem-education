@@ -1,0 +1,30 @@
+# 项目元数据：供索引、脚本与统计读取
+# 修改后请同步 projects/README.md 的索引表
+id: "{{PROJECT_ID}}"                  # 两位项目编号，如 "01"
+slug: "{{PROJECT_SLUG}}"              # 目录名
+name: "{{PROJECT_NAME}}"              # 中文项目名
+name_en: ""                           # 英文名（可选）
+status: "资料整理"                     # 资料整理 | 复刻中 | 已完成 | 维护中 | 已归档
+direction: []                         # 方向标签，如 ["机器人", "具身智能"]
+created: "{{DATE}}"
+updated: "{{DATE}}"
+owner: ""                             # 负责人/小组
+
+platform:                             # 运行平台
+  mcu: ""                             # 主控型号，如 STM32F407 / ESP32-S3
+  host: ""                            # 上位机系统，如 Ubuntu 22.04
+  runtime: ""                         # runtime/框架，如 ROS2 Humble / LeRobot
+
+external:                             # 外部资源主入口
+  repo: ""
+  wiki: ""
+  video: ""
+
+license:
+  hardware: ""                        # 如 CERN-OHL-W-2.0
+  software: ""                        # 如 Apache-2.0
+  note: "商业使用前请逐一核验上游许可条款"
+
+cost:                                 # 参考成本（人民币，可留空）
+  total: ""
+  note: ""

@@ -1,0 +1,30 @@
+# 项目元数据：供索引、脚本与统计读取
+# 修改后请同步 projects/README.md 的索引表
+id: "05"
+slug: "sesame-robot"
+name: "Sesame Robot 迷你四足机器人"
+name_en: "Sesame Robot"
+status: "资料整理"
+direction: ["机器人", "四足机器人", "入门教学", "3D 打印"]
+created: "2026-11-05"
+updated: "2026-11-05"
+owner: ""
+
+platform:
+  mcu: "ESP32-S2（Lolin S2 Mini）/ ESP32-S3（Sesame Distro Board V3.1）"
+  host: "macOS / Windows 10+ / Linux（Arduino IDE 2.0+）"
+  runtime: "Arduino-ESP32 / WiFi RESTful JSON API"
+
+external:
+  repo: "https://github.com/dorianborian/sesame-robot"
+  wiki: ""
+  video: "https://www.youtube.com/watch?v=1UDsWkcQZhc"
+
+license:
+  hardware: "Apache-2.0"
+  software: "Apache-2.0"
+  note: "上游仓库整体采用 Apache-2.0；课程中引用的图片与文字需保留原作者署名。商业使用前逐一核验上游许可条款"
+
+cost:
+  total: "￥400–700（国内自采，不含电烙铁/万用表等工具）"
+  note: "以 S2 Mini 洞洞板手接线方案估算；选用成品 V3.1 板会更高。价格随渠道波动，见 hardware/bom/bom_sesame_v1.0.csv"

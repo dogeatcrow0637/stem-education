@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+  <rect width="800" height="600" fill="#101528"/>
+  <text x="400" y="54" fill="#ffd166" font-size="34" text-anchor="middle" font-weight="bold">它没有刹车</text>
+
+  <!-- left: falling -->
+  <rect x="40" y="100" width="330" height="420" rx="14" fill="#1b2138" stroke="#ff6b6b" stroke-width="3"/>
+  <text x="205" y="142" fill="#ff6b6b" font-size="26" text-anchor="middle" font-weight="bold">断电 = 自己倒</text>
+  <rect x="120" y="440" width="170" height="40" rx="8" fill="#4cc9f0"/>
+  <line x1="205" y1="440" x2="205" y2="330" stroke="#63e6be" stroke-width="14" stroke-linecap="round"/>
+  <line x1="205" y1="330" x2="330" y2="470" stroke="#63e6be" stroke-width="14" stroke-linecap="round" opacity="0.45"/>
+  <path d="M255 350 q40 55 60 100" fill="none" stroke="#ff6b6b" stroke-width="6"/>
+  <path d="M305 452 l-4 -24 l-22 12 z" fill="#ff6b6b"/>
+  <text x="205" y="500" fill="#9aa3b8" font-size="20" text-anchor="middle">会砸下来</text>
+
+  <!-- right: supported -->
+  <rect x="430" y="100" width="330" height="420" rx="14" fill="#1b2138" stroke="#63e6be" stroke-width="3"/>
+  <text x="595" y="142" fill="#63e6be" font-size="26" text-anchor="middle" font-weight="bold">垫好支撑 = 安全</text>
+  <rect x="510" y="440" width="170" height="40" rx="8" fill="#4cc9f0"/>
+  <line x1="595" y1="440" x2="595" y2="330" stroke="#63e6be" stroke-width="14" stroke-linecap="round"/>
+  <line x1="595" y1="330" x2="690" y2="368" stroke="#63e6be" stroke-width="14" stroke-linecap="round"/>
+  <rect x="620" y="368" width="70" height="72" rx="10" fill="#ffd166"/>
+  <text x="655" y="412" fill="#0f1220" font-size="20" text-anchor="middle" font-weight="bold">支撑块</text>
+  <text x="595" y="500" fill="#9aa3b8" font-size="20" text-anchor="middle">它躺着，掉不下来</text>
+
+  <text x="400" y="566" fill="#9aa3b8" font-size="22" text-anchor="middle">所以每次快结束时：先垫好，再断电</text>
+</svg>

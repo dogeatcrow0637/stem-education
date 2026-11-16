@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 460" font-family="PingFang SC,Microsoft YaHei,sans-serif">
+  <rect width="820" height="460" fill="#0f1220"/>
+  <text x="410" y="44" fill="#ffd166" font-size="28" text-anchor="middle" font-weight="bold">两个探头，各管一半</text>
+
+  <!-- 车头正视 -->
+  <rect x="230" y="90" width="360" height="120" rx="16" fill="#1b2340" stroke="#4cc9f0" stroke-width="3"/>
+  <text x="410" y="130" fill="#f7f8fb" font-size="22" text-anchor="middle">车头（从前往后看）</text>
+  <circle cx="330" cy="176" r="20" fill="#ffd166"/>
+  <text x="330" y="182" fill="#0f1220" font-size="15" text-anchor="middle" font-weight="bold">左</text>
+  <circle cx="490" cy="176" r="20" fill="#ffd166"/>
+  <text x="490" y="182" fill="#0f1220" font-size="15" text-anchor="middle" font-weight="bold">右</text>
+
+  <!-- 地面 -->
+  <rect x="120" y="340" width="580" height="30" rx="6" fill="#eef1f7"/>
+  <rect x="370" y="340" width="80" height="30" fill="#141414"/>
+  <text x="410" y="400" fill="#9aa3b8" font-size="18" text-anchor="middle">黑色胶带（宽 15–20mm）</text>
+
+  <!-- 虚线 -->
+  <line x1="330" y1="196" x2="330" y2="340" stroke="#63e6be" stroke-width="2" stroke-dasharray="5 4"/>
+  <line x1="490" y1="196" x2="490" y2="340" stroke="#63e6be" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="330" y="252" fill="#63e6be" font-size="16" text-anchor="middle">离地 8–12mm</text>
+  <text x="410" y="292" fill="#4cc9f0" font-size="16" text-anchor="middle">两个探头间距 ≈ 30mm</text>
+
+  <text x="410" y="440" fill="#ffd166" font-size="19" text-anchor="middle">两个探头一起看，才知道自己偏左还是偏右</text>
+</svg>

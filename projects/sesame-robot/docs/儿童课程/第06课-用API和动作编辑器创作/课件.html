@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sesame Robot · 第 6 课</title><style>
+:root{--bg:#0f1220;--fg:#f7f8fb;--dim:#9aa3b8;--accent:#ffd166;--accent2:#4cc9f0;--ok:#63e6be;}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#000;color:var(--fg);
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif}
+#deck{position:relative;width:100vw;height:100vh;overflow:hidden;background:var(--bg)}
+.slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
+  padding:5vh 6vw;gap:1.4vh}
+.slide.on{display:flex}
+h1{font-size:7.2vh;line-height:1.15;margin:0 0 1vh}
+h2{font-size:5.4vh;line-height:1.2;margin:0 0 2vh}
+h3{font-size:3.6vh;margin:0 0 1vh;color:var(--accent2)}
+p,li{font-size:4vh;line-height:1.45}
+ul,ol{margin:0;padding-left:1.2em}
+li{margin:.6vh 0}
+strong{color:var(--accent)}
+code{background:#ffffff1a;padding:.1em .35em;border-radius:.3em;font-size:.9em}
+img{max-width:100%;max-height:58vh;object-fit:contain;border-radius:1.2vh;display:block;margin:0 auto}
+.callout{font-size:4.2vh;padding:1.6vh 2vw;border-left:.8vw solid var(--accent);
+  background:#ffffff12;border-radius:1vh}
+.slide[data-layout=title]{align-items:center;text-align:center}
+.slide[data-layout=title] img{max-height:34vh}
+.slide[data-layout=title] p{color:var(--dim);font-size:2.8vh}
+.slide[data-layout=big]{align-items:center;text-align:center}
+.slide[data-layout=big] h1,.slide[data-layout=big] p{font-size:9vh;color:var(--accent)}
+.slide[data-layout=image]{align-items:center;text-align:center}
+.slide[data-layout=image] img{max-height:66vh}
+.cols{display:flex;gap:3vw;align-items:flex-start}
+.cols>div{flex:1;min-width:0}
+.notes{display:none}
+body.notes-on .notes{display:block;position:fixed;left:0;right:0;bottom:0;max-height:32vh;overflow:auto;
+  background:#000000e6;border-top:.4vh solid var(--accent2);padding:1.6vh 3vw;font-size:2.3vh;color:#dbe4f0}
+body.notes-on .slide{padding-bottom:34vh}
+#bar{position:fixed;top:0;left:0;height:.7vh;background:var(--accent);width:0;transition:width .15s;z-index:5}
+#num{position:fixed;right:1.6vw;bottom:1.2vh;font-size:2.2vh;color:var(--dim);z-index:5}
+#hint{position:fixed;left:1.6vw;bottom:1.2vh;font-size:2vh;color:#6b7488;z-index:5}
+@media print{
+  @page{size:297mm 167mm;margin:0}
+  html,body{background:#fff}
+  #bar,#num,#hint,.notes{display:none!important}
+  #deck{width:auto;height:auto;background:var(--bg)}
+  .slide{display:flex!important;position:relative;inset:auto;width:297mm;height:167mm;
+    page-break-after:always;break-after:page}
+  body{color:var(--fg);background:var(--bg)}
+}
+</style></head>
+<body>
+<div id="bar"></div>
+<div id="deck">
+<section class="slide on" data-layout="title"><h1>Sesame Robot · 第 6 课</h1>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7kuIDmnaHlkb3ku6TvvIzkuIDkuKrliqjkvZw8L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPueCueS4gOS4iyA9IOWPkeS4gOadoea2iOaBrzwvdGV4dD4KICA8ZyBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsIE1pY3Jvc29mdCBZYUhlaSwgTm90byBTYW5zIENKSyBTQywgc2Fucy1zZXJpZiI+CgogIDxyZWN0IHg9IjI2MCIgeT0iMjMwIiB3aWR0aD0iMjgwIiBoZWlnaHQ9IjM2MCIgcng9IjMwIiBmaWxsPSIjRkZGRkZGIiBzdHJva2U9IiMyMzMiIHN0cm9rZS13aWR0aD0iNiIvPgogIDxyZWN0IHg9IjMwMCIgeT0iMjkwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjcwIiByeD0iMTQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSIzNDUiIHk9IjMzNyIgZm9udC1zaXplPSIyOCIgZmlsbD0iI2ZmZiI+5oyl5omLPC90ZXh0PgogIDxnIHN0cm9rZT0iI0U0NTcyRSIgc3Ryb2tlLXdpZHRoPSIxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik01ODAgMzYwIEw3NjAgMzYwIi8+PHBhdGggZD0iTTcxMCAzMTAgTDc2MCAzNjAgTDcxMCA0MTAiLz4KICA8L2c+CiAgPHRleHQgeD0iODQwIiB5PSIzNTAiIGZvbnQtc2l6ZT0iMzAiPuacuuWZqOS6ujwvdGV4dD4KICA8dGV4dCB4PSI4NDAiIHk9IjQxMCIgZm9udC1zaXplPSIzMCI+5oyl5omLPC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==" alt="一条命令">
+<p>今天：用一条命令让它动</p><div class="notes">备注：开场只演示一次"点按钮 → 机器人挥手"，让孩子猜中间发生了什么。</div></section>
+<section class="slide" data-layout="image"><h2>点一下，动一下</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7kuIDmnaHlkb3ku6TvvIzkuIDkuKrliqjkvZw8L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPueCueS4gOS4iyA9IOWPkeS4gOadoea2iOaBrzwvdGV4dD4KICA8ZyBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsIE1pY3Jvc29mdCBZYUhlaSwgTm90byBTYW5zIENKSyBTQywgc2Fucy1zZXJpZiI+CgogIDxyZWN0IHg9IjI2MCIgeT0iMjMwIiB3aWR0aD0iMjgwIiBoZWlnaHQ9IjM2MCIgcng9IjMwIiBmaWxsPSIjRkZGRkZGIiBzdHJva2U9IiMyMzMiIHN0cm9rZS13aWR0aD0iNiIvPgogIDxyZWN0IHg9IjMwMCIgeT0iMjkwIiB3aWR0aD0iMjAwIiBoZWlnaHQ9IjcwIiByeD0iMTQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSIzNDUiIHk9IjMzNyIgZm9udC1zaXplPSIyOCIgZmlsbD0iI2ZmZiI+5oyl5omLPC90ZXh0PgogIDxnIHN0cm9rZT0iI0U0NTcyRSIgc3Ryb2tlLXdpZHRoPSIxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik01ODAgMzYwIEw3NjAgMzYwIi8+PHBhdGggZD0iTTcxMCAzMTAgTDc2MCAzNjAgTDcxMCA0MTAiLz4KICA8L2c+CiAgPHRleHQgeD0iODQwIiB5PSIzNTAiIGZvbnQtc2l6ZT0iMzAiPuacuuWZqOS6ujwvdGV4dD4KICA8dGV4dCB4PSI4NDAiIHk9IjQxMCIgZm9udC1zaXplPSIzMCI+5oyl5omLPC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==" alt="一条命令"><div class="notes">备注：网页按钮背后就是发了一条消息；今天要把这条消息看清楚。</div></section>
+<section class="slide" data-layout="big"><h2>猜一猜</h2>
+<p>命令怎么跑到腿上？</p><div class="notes">备注：让孩子先画/说一条路线，再对照下一页。</div></section>
+<section class="slide" data-layout="image"><h2>三站接力</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7or7fmsYIg4oaSIOWbuuS7tiDihpIg6Ii15py6PC90ZXh0PgogIDx0ZXh0IHg9IjQ4IiB5PSI2NzIiIGZvbnQtc2l6ZT0iMzAiIGZpbGw9IiM1QTZCNkIiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7kuInnq5nmjqXlips8L3RleHQ+CiAgPGcgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPgoKICA8ZyBmb250LXNpemU9IjI4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjMjMzIj4KICAgIDxyZWN0IHg9IjEyMCIgeT0iMjgwIiB3aWR0aD0iMjYwIiBoZWlnaHQ9IjE1MCIgcng9IjIyIiBmaWxsPSIjRERFN0U3Ii8+PHRleHQgeD0iMjUwIiB5PSIzNzAiPua1j+iniOWZqDwvdGV4dD4KICAgIDxyZWN0IHg9IjUxMCIgeT0iMjgwIiB3aWR0aD0iMjYwIiBoZWlnaHQ9IjE1MCIgcng9IjIyIiBmaWxsPSIjRjNFM0M4Ii8+PHRleHQgeD0iNjQwIiB5PSIzNTAiPuWbuuS7tjwvdGV4dD48dGV4dCB4PSI2NDAiIHk9IjM5NSIgZm9udC1zaXplPSIyMiI+5bCP6ISRPC90ZXh0PgogICAgPHJlY3QgeD0iOTAwIiB5PSIyODAiIHdpZHRoPSIyNjAiIGhlaWdodD0iMTUwIiByeD0iMjIiIGZpbGw9IiNGMkM5QzAiLz48dGV4dCB4PSIxMDMwIiB5PSIzNzAiPjgg5Liq6Ii15py6PC90ZXh0PgogIDwvZz4KICA8ZyBzdHJva2U9IiNFNDU3MkUiIHN0cm9rZS13aWR0aD0iMTAiIGZpbGw9Im5vbmUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMzkwIDM1NSBMNDkwIDM1NSIvPjxwYXRoIGQ9Ik03ODAgMzU1IEw4ODAgMzU1Ii8+CiAgPC9nPgogIDwvZz4KPC9zdmc+Cg==" alt="链路"><div class="notes">备注：浏览器 → 固件 → 8 个舵机；固件是"小脑"，负责翻译命令。</div></section>
+<section class="slide" data-layout="image"><h2>JSON 像便签</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj5KU09OIOWDj+W4puagh+etvueahOS+v+etvjwvdGV4dD4KICA8dGV4dCB4PSI0OCIgeT0iNjcyIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNUE2QjZCIiBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsIE1pY3Jvc29mdCBZYUhlaSwgTm90byBTYW5zIENKSyBTQywgc2Fucy1zZXJpZiI+6ZSuIDog5YC877yM55So5aSn5ous5Y+35YyF6LW35p2lPC90ZXh0PgogIDxnIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj4KCiAgPHJlY3QgeD0iMzAwIiB5PSIxODAiIHdpZHRoPSI2ODAiIGhlaWdodD0iMzgwIiByeD0iMjAiIGZpbGw9IiNGRkZGRkYiIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSI2Ii8+CiAgPHRleHQgeD0iMzUwIiB5PSIyOTAiIGZvbnQtc2l6ZT0iNDAiIGZpbGw9IiMzRTdDN0IiPns8L3RleHQ+CiAgPHRleHQgeD0iNDEwIiB5PSIzMjAiIGZvbnQtc2l6ZT0iMzQiIGZpbGw9IiNFNDU3MkUiPiJjb21tYW5kIjwvdGV4dD4KICA8dGV4dCB4PSI2ODAiIHk9IjMyMCIgZm9udC1zaXplPSIzNCI+OiA8L3RleHQ+CiAgPHRleHQgeD0iNzIwIiB5PSIzMjAiIGZvbnQtc2l6ZT0iMzQiIGZpbGw9IiMyRjZCNEYiPiJ3YXZlIjwvdGV4dD4KICA8dGV4dCB4PSIzNTAiIHk9IjQ4MCIgZm9udC1zaXplPSI0MCIgZmlsbD0iIzNFN0M3QiI+fTwvdGV4dD4KICA8dGV4dCB4PSI0MTAiIHk9IjQyMCIgZm9udC1zaXplPSIyNiIgZmlsbD0iIzVBNkI2QiI+5qCH562+ICsg5YaF5a65PC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==" alt="JSON"><div class="notes">备注：大括号里写"标签: 内容"；command 是动作，face 是表情。</div></section>
+<section class="slide" data-layout="image"><h2>一条 curl 就够</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7kuIDmnaEgY3VybCDlsLHlpJ88L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPlBPU1QgKyBKU09OPC90ZXh0PgogIDxnIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj4KCiAgPHJlY3QgeD0iMTgwIiB5PSIxOTAiIHdpZHRoPSI5MjAiIGhlaWdodD0iMzgwIiByeD0iMTgiIGZpbGw9IiMwQjEyMjAiIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSI2Ii8+CiAgPHRleHQgeD0iMjIwIiB5PSIyNjAiIGZvbnQtc2l6ZT0iMjgiIGZpbGw9IiM3QkUwQUQiPiQgY3VybCAtWCBQT1NUIGh0dHA6Ly8xOTIuMTY4LjQuMS9hcGkvY29tbWFuZCBcPC90ZXh0PgogIDx0ZXh0IHg9IjI2MCIgeT0iMzIwIiBmb250LXNpemU9IjI4IiBmaWxsPSIjN0JFMEFEIj4tSCAiQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uIiBcPC90ZXh0PgogIDx0ZXh0IHg9IjI2MCIgeT0iMzgwIiBmb250LXNpemU9IjI4IiBmaWxsPSIjRjJCMTM0Ij4tZCAneyJjb21tYW5kIjoid2F2ZSIsImZhY2UiOiJoYXBweSJ9JzwvdGV4dD4KICA8dGV4dCB4PSIyMjAiIHk9IjUwMCIgZm9udC1zaXplPSIyNiIgZmlsbD0iIzlCRTNCNCI+6L+U5ZueIHsic3RhdHVzIjoib2sifTwvdGV4dD4KICA8L2c+Cjwvc3ZnPgo=" alt="curl"><div class="notes">备注：家长操作命令行，孩子读返回的 status: ok；不要求孩子背命令。</div></section>
+<section class="slide" data-layout="image"><h2>Studio 摆三帧</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj5TdHVkaW8g5pGG5LiJ5binPC90ZXh0PgogIDx0ZXh0IHg9IjQ4IiB5PSI2NzIiIGZvbnQtc2l6ZT0iMzAiIGZpbGw9IiM1QTZCNkIiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7mi5bkuIDmi5bvvIznlJ/miJAgQysrPC90ZXh0PgogIDxnIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj4KCiAgPHJlY3QgeD0iMjAwIiB5PSIyMDAiIHdpZHRoPSI4ODAiIGhlaWdodD0iNDAwIiByeD0iMjAiIGZpbGw9IiNGRkZGRkYiIHN0cm9rZT0iIzIzMyIgc3Ryb2tlLXdpZHRoPSI2Ii8+CiAgPGcgc3Ryb2tlPSIjMjMzIiBzdHJva2Utd2lkdGg9IjUiIGZpbGw9IiNEREU3RTciPgogICAgPHJlY3QgeD0iMjUwIiB5PSIyNjAiIHdpZHRoPSIyMjAiIGhlaWdodD0iMjAwIiByeD0iMTQiLz4KICAgIDxyZWN0IHg9IjUzMCIgeT0iMjYwIiB3aWR0aD0iMjIwIiBoZWlnaHQ9IjIwMCIgcng9IjE0Ii8+CiAgICA8cmVjdCB4PSI4MTAiIHk9IjI2MCIgd2lkdGg9IjIyMCIgaGVpZ2h0PSIyMDAiIHJ4PSIxNCIvPgogIDwvZz4KICA8ZyBmb250LXNpemU9IjI2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjMjMzIj4KICAgIDx0ZXh0IHg9IjM2MCIgeT0iNTAwIj7nrKwgMSDluKc8L3RleHQ+PHRleHQgeD0iNjQwIiB5PSI1MDAiPuesrCAyIOW4pzwvdGV4dD48dGV4dCB4PSI5MjAiIHk9IjUwMCI+56ysIDMg5binPC90ZXh0PgogIDwvZz4KICA8dGV4dCB4PSIyNTAiIHk9IjYyMCIgZm9udC1zaXplPSIyNiIgZmlsbD0iI0U0NTcyRSI+5pGG5ae/5Yq/IOKGkiDkuLLotbfmnaUg4oaSIOWkjeWItuinkuW6pjwvdGV4dD4KICA8L2c+Cjwvc3ZnPgo=" alt="Studio"><div class="notes">备注：拖关节摆姿势，串成三帧，复制生成的角度；这是"动作编辑器"。</div></section>
+<section class="slide" data-layout="image"><h2>表情也能换</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgwIiBoZWlnaHQ9IjcyMCIgdmlld0JveD0iMCAwIDEyODAgNzIwIj4KICA8cmVjdCB3aWR0aD0iMTI4MCIgaGVpZ2h0PSI3MjAiIGZpbGw9IiNGRkZCRjIiLz4KICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTI4MCIgaGVpZ2h0PSIxMDQiIGZpbGw9IiMzRTdDN0IiLz4KICA8dGV4dCB4PSI0OCIgeT0iNjgiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj7ooajmg4XkuZ/og73mjaI8L3RleHQ+CiAgPHRleHQgeD0iNDgiIHk9IjY3MiIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzVBNkI2QiIgZm9udC1mYW1pbHk9IlBpbmdGYW5nIFNDLCBNaWNyb3NvZnQgWWFIZWksIE5vdG8gU2FucyBDSksgU0MsIHNhbnMtc2VyaWYiPuWGmeWtlyDihpIg55Sf5oiQ5L2N5Zu+PC90ZXh0PgogIDxnIGZvbnQtZmFtaWx5PSJQaW5nRmFuZyBTQywgTWljcm9zb2Z0IFlhSGVpLCBOb3RvIFNhbnMgQ0pLIFNDLCBzYW5zLXNlcmlmIj4KCiAgPHJlY3QgeD0iMjUwIiB5PSIyMjAiIHdpZHRoPSIzMjAiIGhlaWdodD0iMjYwIiByeD0iMjIiIGZpbGw9IiMxMTE4MjciLz4KICA8cmVjdCB4PSIyOTAiIHk9IjI2MCIgd2lkdGg9IjI0MCIgaGVpZ2h0PSIxODAiIHJ4PSIxMCIgZmlsbD0iIzBCMTIyMCIvPgogIDxjaXJjbGUgY3g9IjM1MCIgY3k9IjMyMCIgcj0iMTQiIGZpbGw9IiM3QkUwQUQiLz48Y2lyY2xlIGN4PSI0NzAiIGN5PSIzMjAiIHI9IjE0IiBmaWxsPSIjN0JFMEFEIi8+CiAgPHBhdGggZD0iTTM1MCAzNzAgUTQxMCA0MTAgNDcwIDM3MCIgc3Ryb2tlPSIjN0JFMEFEIiBzdHJva2Utd2lkdGg9IjgiIGZpbGw9Im5vbmUiLz4KICA8cmVjdCB4PSI3MDAiIHk9IjIyMCIgd2lkdGg9IjMyMCIgaGVpZ2h0PSIyNjAiIHJ4PSIyMiIgZmlsbD0iIzExMTgyNyIvPgogIDxyZWN0IHg9Ijc0MCIgeT0iMjYwIiB3aWR0aD0iMjQwIiBoZWlnaHQ9IjE4MCIgcng9IjEwIiBmaWxsPSIjMEIxMjIwIi8+CiAgPGNpcmNsZSBjeD0iODAwIiBjeT0iMzIwIiByPSIxNCIgZmlsbD0iI0YyQjEzNCIvPjxjaXJjbGUgY3g9IjkyMCIgY3k9IjMyMCIgcj0iMTQiIGZpbGw9IiNGMkIxMzQiLz4KICA8cGF0aCBkPSJNODAwIDM5MCBMOTIwIDM5MCIgc3Ryb2tlPSIjRjJCMTM0IiBzdHJva2Utd2lkdGg9IjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDx0ZXh0IHg9IjQ0MCIgeT0iNTYwIiBmb250LXNpemU9IjI2IiBmaWxsPSIjRTQ1NzJFIj7mjaLohLjkuI3mjaLohb88L3RleHQ+CiAgPC9nPgo8L3N2Zz4K" alt="表情"><div class="notes">备注：换表情不动腿；用 image2cpp 把画变成 128×64 位图。</div></section>
+<section class="slide" data-layout="big"><h2>通关条件</h2>
+<p>讲清这条链路</p><div class="notes">备注：孩子能说出"我点了什么 → 谁收到 → 谁动了"就算过。</div></section>
+<section class="slide" data-layout="two-col"><div class="cols"><div><h3>我们发现的</h3><ul>
+<li>一条命令 = 一个动作</li>
+<li>固件负责翻译</li>
+</ul></div><div><h3>记下的线索</h3><ul>
+<li>API = 给机器人的订单</li>
+</ul></div></div><div class="notes">备注：收尾 3 问；预告展示：3 分钟讲自己的作品。</div></section>
+<section class="slide" data-layout="title"><h1>恭喜过关</h1>
+<p>你是「小工程师」</p><div class="notes">备注：发知识卡 14/15，安排一次 3 分钟作品展示。</div></section>
+</div>
+<div id="num"></div><div id="hint">← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 导出 PDF</div>
+<script>
+const slides=[...document.querySelectorAll('.slide')];
+let i=0;
+function show(n){
+  i=Math.max(0,Math.min(slides.length-1,n));
+  slides.forEach((s,k)=>s.classList.toggle('on',k===i));
+  document.getElementById('bar').style.width=((i+1)/slides.length*100)+'%';
+  document.getElementById('num').textContent=(i+1)+' / '+slides.length;
+  history.replaceState(null,'','#'+(i+1));
+}
+function toggleNotes(){document.body.classList.toggle('notes-on');}
+addEventListener('keydown',e=>{
+  const k=e.key;
+  if(k==='ArrowRight'||k===' '||k==='PageDown'||k==='j'){show(i+1);e.preventDefault();}
+  else if(k==='ArrowLeft'||k==='PageUp'||k==='k'){show(i-1);e.preventDefault();}
+  else if(k==='Home'){show(0);} else if(k==='End'){show(slides.length-1);}
+  else if(k==='n'||k==='N'){toggleNotes();}
+  else if(k==='f'||k==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+  else if(k==='?'||k==='/'){alert('← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 打印成 PDF');}
+});
+addEventListener('click',e=>{show(i+(e.clientX>innerWidth/2?1:-1));});
+show(parseInt(location.hash.slice(1)||'1',10)-1);
+</script>
+</body></html>

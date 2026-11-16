@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif">
+<rect width="960" height="540" fill="#0f1220"/>
+<text x="480" y="44" fill="#ffd166" font-size="30" text-anchor="middle" font-weight="700">先猜一猜，别急着要答案</text>
+<circle cx="215" cy="300" r="118" fill="#151a2b" stroke="#ffd166" stroke-width="3"/>
+<text x="215" y="350" fill="#ffd166" font-size="150" text-anchor="middle" font-weight="700">?</text>
+<rect x="410" y="140" width="500" height="92" rx="10" fill="#151a2b" stroke="#4cc9f0" stroke-width="2"/>
+<text x="660.0" y="182.0" fill="#4cc9f0" font-size="24" text-anchor="middle" font-weight="600">我看到了…</text>
+<text x="660.0" y="212.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">先说现象，不说答案</text>
+<rect x="410" y="258" width="500" height="92" rx="10" fill="#151a2b" stroke="#63e6be" stroke-width="2"/>
+<text x="660.0" y="300.0" fill="#63e6be" font-size="24" text-anchor="middle" font-weight="600">我猜…</text>
+<text x="660.0" y="330.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">猜错不算错</text>
+<rect x="410" y="376" width="500" height="92" rx="10" fill="#151a2b" stroke="#ff6b6b" stroke-width="2"/>
+<text x="660.0" y="418.0" fill="#ff6b6b" font-size="24" text-anchor="middle" font-weight="600">怎么证明？</text>
+<text x="660.0" y="448.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">动手试一次就知道</text>
+<text x="480" y="492" fill="#9aa3b8" font-size="20" text-anchor="middle" font-weight="400">说出来才算数，记在纸上就变成线索</text>
+</svg>

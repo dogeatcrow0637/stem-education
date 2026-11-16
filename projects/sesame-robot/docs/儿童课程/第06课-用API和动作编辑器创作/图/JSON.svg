@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">JSON 像带标签的便签</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">键 : 值，用大括号包起来</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <rect x="300" y="180" width="680" height="380" rx="20" fill="#FFFFFF" stroke="#233" stroke-width="6"/>
+  <text x="350" y="290" font-size="40" fill="#3E7C7B">{</text>
+  <text x="410" y="320" font-size="34" fill="#E4572E">"command"</text>
+  <text x="680" y="320" font-size="34">: </text>
+  <text x="720" y="320" font-size="34" fill="#2F6B4F">"wave"</text>
+  <text x="350" y="480" font-size="40" fill="#3E7C7B">}</text>
+  <text x="410" y="420" font-size="26" fill="#5A6B6B">标签 + 内容</text>
+  </g>
+</svg>
