@@ -8,6 +8,7 @@
 #include "nvs_flash.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
+#include "audio.h"
 #include "button.h"
 #include "doubao_bridge.h"
 #include "power.h"
@@ -30,7 +31,6 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     ESP_LOGI(TAG, "English Pet Watch UI demo boot");
-    ESP_LOGI(TAG, "audio: disabled, volume: 0");
 
     /* SNTP 同步后使用北京时间（无网络时 UI 回退到内置时钟） */
     setenv("TZ", "CST-8", 1);
@@ -39,6 +39,9 @@ void app_main(void)
     /* 屏幕 + 触摸 + LVGL */
     bsp_display_start();
     bsp_display_brightness_set(80);
+
+    /* 音频输出（ES8311）：音量页现在会真正调节扬声器 */
+    audio_init();
 
     /* AXP2101 电量 */
     power_init();
