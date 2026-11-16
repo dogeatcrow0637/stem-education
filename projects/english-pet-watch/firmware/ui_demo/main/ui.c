@@ -1,20 +1,22 @@
 /*
- * 英语宠物怀表 · UI Demo V0.10
+ * 英语宠物怀表 · UI Demo V0.11
  * 目标板：Waveshare ESP32-S3-Touch-AMOLED-1.75C（466×466 圆屏）
  *
  * 视觉：面向小朋友的纯数字表盘。没有刻度环、没有分钟数字，只有
  *       大号时间、中文日期、天气、电量与 Wi-Fi；其他页面延续同一套
  *       深色底 + 彩色小图标语言，配色不只一种绿。
- *       外圈三色环固定为 003399 深蓝 / FFFF00 亮黄 / FF6600 橙。
+ *       外圈三色环为 FFFF00 亮黄 / FF6600 橙 / 00BFFF 天蓝。
+ *       顶部天气分割线绿色；底部电量弧平时红色、充电时天蓝。
  *
  * 交互（参考 Apple Watch / 华为手表）：
  *   表盘（唯一常驻页）：下滑 → 控制中心（表盘不再响应点按切页）
  *   控制中心（4+3 圆形磁贴）：状态 / 天气 / 电量 / 手电
- *                             亮度 / 音量 / AI
+ *                             亮度 / 音量 / Mimi Cat
  *     ├─ 点「状态」或「电量」→ 状态页（从左往右滑关闭）
- *     ├─ 点「亮度」「音量」→ 亮度页 / 音量页（上下拖动调整，右滑关闭）
+ *     ├─ 点「亮度」「音量」→ 独立调节页（绿色粗轨道，只有按在轨道上
+ *     │                      才能上下拖动；其他区域右滑关闭）
  *     ├─ 点「手电」→ 白色满亮度手电页（双击白屏退出）
- *     ├─ 点「AI」→ 宠物页（Pip · 3D 正脸猫，9 种情绪）
+ *     ├─ 点「Mimi Cat」→ 宠物页（Mimi Cat · 3D 正脸猫，9 种情绪）
  *     └─ 上滑 → 回到表盘
  *   BOOT 短按 → 宠物页；PWR 短按 → 应用桌面（备用入口，长按 PWR 仍由 PMU 关机）。
  *   宠物页：表情 + 对话气泡，全手势交互（无文字按钮）：
@@ -24,7 +26,7 @@
  *
  * 不展示心率/血氧/步数等本机不支持的指标；不初始化音频，音量默认 0
  * （音量页只做 UI 演示，不会真的出声）。
- * 充电模式：底部电量弧变青柠并加柔光；拔线后恢复按电量配色。
+ * 充电模式：底部电量弧变天蓝并加柔光；拔线后恢复红色。
  */
 #include "ui.h"
 
@@ -70,12 +72,12 @@ extern const lv_font_t epw_time_150;
 #define BATT_TO_DEG    240
 
 #define TILE_D      84
-#define TILE_DOT_D  7
+#define TILE_DOT_D  10
 
-/* 亮度 / 音量页：竖向轨道（底部 0%，顶部 100%） */
-#define SLIDER_TRACK_W   34
-#define SLIDER_TRACK_H   224
-#define SLIDER_TRACK_TOP 158
+/* 亮度 / 音量页：竖向轨道（底部 0%，顶部 100%），整体垂直居中 */
+#define SLIDER_TRACK_W   44
+#define SLIDER_TRACK_H   280
+#define SLIDER_TRACK_TOP (CENTER_Y - SLIDER_TRACK_H / 2)
 #define SLIDER_TRACK_X   (CENTER_X - SLIDER_TRACK_W / 2)
 
 /* 应用桌面：6 个圆形图标，2 行 × 3 列，可拖动换位 */
@@ -104,14 +106,13 @@ static const char *TAG = "epw-ui";
 #define COL_PINK    lv_color_hex(0xFF8FB1)
 #define COL_INK     lv_color_hex(0x0A0E14)
 
-/* 表盘三色环：亮黄 + 橙 + 天蓝，最下面一段用天蓝收尾 */
+/* 表盘三色环：亮黄（右上）+ 橙（底部）+ 天蓝（左侧），三段贴边常驻 */
 #define COL_RING_YELLOW lv_color_hex(0xFFFF00)
 #define COL_RING_ORANGE lv_color_hex(0xFF6600)
 #define COL_RING_SKY    lv_color_hex(0x00BFFF)
-/* 底部电量弧：普通模式红色，充电模式天蓝色（不再用绿色） */
-#define COL_BATT_RED    lv_color_hex(0xFF0000)
-/* 天气分割线 / 调节页统一绿色 */
+/* 天气分割线绿色；调节页用科技感浅绿 */
 #define COL_GREEN       lv_color_hex(0x2EE66B)
+#define COL_TECH_GREEN  lv_color_hex(0x5CF39A)
 
 /* -------------------------------------------------------------------------- */
 /* 状态                                                                        */
@@ -145,10 +146,7 @@ static lv_obj_t *s_batt_bolt;
 static lv_obj_t *s_home_wifi[4]; /* 3 段弧 + 底部圆点，用颜色表达联网状态 */
 
 /* 控制中心磁贴上的动态元素 */
-static lv_obj_t *s_cc_bat_arc;
 static lv_obj_t *s_cc_bat_pct;
-static lv_obj_t *s_cc_bat_bolt;
-static lv_obj_t *s_cc_bright_arc;
 static lv_obj_t *s_cc_bright_pct;
 static lv_obj_t *s_cc_vol_pct;
 static lv_obj_t *s_ai_img;
@@ -165,8 +163,8 @@ static bool s_app_drag_moved;
 /* 宠物页 */
 #define PET_IMG_SIZE 208
 #define PET_IMG_X ((SCREEN_W - PET_IMG_SIZE) / 2)
-#define PET_IMG_Y 92
-#define PET_BUBBLE_Y 292
+#define PET_IMG_Y 108
+#define PET_BUBBLE_Y 304
 static lv_obj_t *s_pet_img;
 static lv_obj_t *s_pet_glow;
 static lv_obj_t *s_pet_halo;
@@ -289,38 +287,6 @@ static lv_obj_t *mk_label(lv_obj_t *parent, const char *text, const lv_font_t *f
     return l;
 }
 
-/* 圆弧：rotation 270 让 0° 从 12 点开始顺时针增长。
- * track_deg 是底轨长度，prog_deg 是指示弧长度；0 表示不画。
- * 注意 LVGL 9 只做一次 >360 归一，整圆必须写 0→360。 */
-static lv_obj_t *mk_arc(lv_obj_t *parent, int cx, int cy, int d, int w,
-                        lv_color_t track, lv_opa_t track_opa, int track_deg,
-                        lv_color_t prog, lv_opa_t prog_opa, int prog_deg)
-{
-    lv_obj_t *arc = lv_arc_create(parent);
-    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_pos(arc, cx - d / 2, cy - d / 2);
-    lv_obj_set_size(arc, d, d);
-    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
-
-    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(arc, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(arc, 0, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc, w, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(arc, track, LV_PART_MAIN);
-    lv_obj_set_style_arc_opa(arc, track_opa, LV_PART_MAIN);
-    lv_obj_set_style_arc_rounded(arc, false, LV_PART_MAIN);
-
-    lv_obj_set_style_arc_width(arc, w, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(arc, prog, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_opa(arc, prog_opa, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(arc, prog_deg > 0, LV_PART_INDICATOR);
-
-    lv_arc_set_rotation(arc, 270);
-    lv_arc_set_bg_angles(arc, 0, track_deg);
-    lv_arc_set_angles(arc, 0, prog_deg);
-    return arc;
-}
-
 /* 任意起止角度的底轨（rotation 270，0° 在 12 点）。
  * 三色装饰环、电量底轨都用它；圆头让线条不像 CAD 线框。 */
 static lv_obj_t *mk_arc_seg(lv_obj_t *parent, int cx, int cy, int d, int w,
@@ -383,15 +349,6 @@ static void mk_ring_seg(lv_obj_t *parent, int from, int to, lv_color_t color)
                from + 2, to - 2, lv_color_hex(0xFFFFFF), LV_OPA_30);
 }
 
-static void dot_place(lv_obj_t *dot, int cx, int cy, int d, int w, int deg)
-{
-    float rad = (float)deg * (float)M_PI / 180.0f;
-    float r = (float)(d - w) / 2.0f;
-    int x = cx + (int)lroundf(r * sinf(rad));
-    int y = cy - (int)lroundf(r * cosf(rad));
-    lv_obj_set_pos(dot, x - TILE_DOT_D / 2, y - TILE_DOT_D / 2);
-}
-
 static void draw_sun(lv_obj_t *parent, int cx, int cy, int r, lv_color_t color)
 {
     for (int i = 0; i < 8; i++) {
@@ -404,6 +361,38 @@ static void draw_sun(lv_obj_t *parent, int cx, int cy, int r, lv_color_t color)
         lv_obj_set_style_transform_rotation(ray, deg * 10, 0);
     }
     mk_circle(parent, cx, cy, r * 2, color, LV_OPA_COVER);
+}
+
+/* 双色太阳：琥珀色光芒 + 亮黄核心 */
+static void draw_sun_duo(lv_obj_t *parent, int cx, int cy, int r,
+                         lv_color_t ray_color, lv_color_t core_color)
+{
+    for (int i = 0; i < 8; i++) {
+        int deg = i * 45;
+        float rad = (float)deg * (float)M_PI / 180.0f;
+        int rr = r + 6;
+        int x = cx + (int)lroundf((float)rr * sinf(rad));
+        int y = cy - (int)lroundf((float)rr * cosf(rad));
+        lv_obj_t *ray = mk_box(parent, x - 2, y - 5, 4, 10, ray_color, LV_OPA_COVER, 2);
+        lv_obj_set_style_transform_rotation(ray, deg * 10, 0);
+    }
+    mk_circle(parent, cx, cy, r * 2, core_color, LV_OPA_COVER);
+}
+
+/* 云朵：三个圆 + 底部圆角条，给天气图标叠出层次 */
+static void draw_cloud(lv_obj_t *parent, int cx, int cy, lv_color_t color)
+{
+    mk_circle(parent, cx - 9, cy + 2, 16, color, LV_OPA_COVER);
+    mk_circle(parent, cx + 2, cy - 4, 20, color, LV_OPA_COVER);
+    mk_circle(parent, cx + 13, cy + 2, 15, color, LV_OPA_COVER);
+    mk_box(parent, cx - 14, cy + 2, 34, 10, color, LV_OPA_COVER, 5);
+}
+
+/* 天气磁贴：太阳 + 云，两色叠放 */
+static void draw_weather_icon(lv_obj_t *parent, int cx, int cy)
+{
+    draw_sun_duo(parent, cx - 10, cy - 4, 5, COL_AMBER, lv_color_hex(0xFFFF00));
+    draw_cloud(parent, cx + 9, cy + 3, lv_color_hex(0xDDF2FF));
 }
 
 /* 独立的太阳图标根对象：便于在表盘顶部按整体宽高定位 */
@@ -431,6 +420,43 @@ static void draw_info(lv_obj_t *parent, int cx, int cy, lv_color_t color)
     mk_box(parent, cx - 3, cy - 3, 6, 20, color, LV_OPA_COVER, 3);
 }
 
+/* 状态磁贴：芯片造型（引脚 + 深色内芯 + 在线点），与普通圆形入口区分 */
+static void draw_status_icon(lv_obj_t *parent, int cx, int cy)
+{
+    /* 四边引脚 */
+    for (int i = 0; i < 3; i++) {
+        int d = -10 + i * 10;
+        mk_box(parent, cx + d - 2, cy - 26, 5, 8, COL_TEAL, LV_OPA_COVER, 2);
+        mk_box(parent, cx + d - 2, cy + 18, 5, 8, COL_TEAL, LV_OPA_COVER, 2);
+        mk_box(parent, cx - 26, cy + d - 2, 8, 5, COL_TEAL, LV_OPA_COVER, 2);
+        mk_box(parent, cx + 18, cy + d - 2, 8, 5, COL_TEAL, LV_OPA_COVER, 2);
+    }
+    /* 芯片本体 + 深色内芯 + 中心状态点 */
+    lv_obj_t *body = mk_box(parent, cx - 18, cy - 18, 36, 36, COL_TEAL, LV_OPA_COVER, 8);
+    mk_box(body, 7, 7, 22, 22, COL_INK, LV_OPA_COVER, 5);
+    mk_circle(body, 18, 18, 10, COL_TEAL, LV_OPA_COVER);
+}
+
+/* 电量磁贴：白描边电池 + 绿色电量 + 黄色闪电 */
+static void draw_battery_icon(lv_obj_t *parent, int cx, int cy)
+{
+    lv_obj_t *body = mk_box(parent, cx - 22, cy - 10, 44, 20, COL_TEXT, LV_OPA_TRANSP, 5);
+    lv_obj_set_style_border_width(body, 2, 0);
+    lv_obj_set_style_border_color(body, COL_TEXT, 0);
+    mk_box(parent, cx + 23, cy - 4, 4, 8, COL_TEXT, LV_OPA_COVER, 2);
+    mk_box(parent, cx - 19, cy - 7, 38, 14, COL_GREEN, LV_OPA_COVER, 3);
+
+    static const lv_point_precise_t bolt[] = {
+        {6, 0}, {1, 8}, {5, 8}, {2, 16}, {11, 6}, {6, 6}, {6, 0},
+    };
+    lv_obj_t *b = lv_line_create(parent);
+    lv_line_set_points(b, bolt, 7);
+    lv_obj_set_pos(b, cx - 5, cy - 8);
+    lv_obj_set_style_line_width(b, 2, 0);
+    lv_obj_set_style_line_color(b, lv_color_hex(0xFFFF00), 0);
+    lv_obj_set_style_line_rounded(b, true, 0);
+}
+
 static void draw_speaker(lv_obj_t *parent, int x, int y, lv_color_t color)
 {
     static const lv_point_precise_t body[] = {
@@ -456,7 +482,9 @@ static void draw_speaker(lv_obj_t *parent, int x, int y, lv_color_t color)
 static void draw_torch(lv_obj_t *parent, int cx, int cy, lv_color_t color)
 {
     mk_box(parent, cx - 12, cy - 22, 24, 13, color, LV_OPA_COVER, 4);
-    mk_box(parent, cx - 6, cy - 9, 12, 24, color, LV_OPA_COVER, 4);
+    mk_box(parent, cx - 6, cy - 9, 12, 24, COL_MUTED, LV_OPA_COVER, 4);
+    /* 灯头玻璃反光 */
+    mk_box(parent, cx - 8, cy - 19, 16, 4, COL_TEXT, LV_OPA_80, 2);
 
     static const lv_point_precise_t beams[3][2] = {
         {{0, 0}, {-7, -9}}, {{4, 0}, {4, -11}}, {{8, 0}, {15, -9}},
@@ -466,7 +494,7 @@ static void draw_torch(lv_obj_t *parent, int cx, int cy, lv_color_t color)
         lv_line_set_points(b, beams[i], 2);
         lv_obj_set_pos(b, cx - 4, cy - 24);
         lv_obj_set_style_line_width(b, 3, 0);
-        lv_obj_set_style_line_color(b, color, 0);
+        lv_obj_set_style_line_color(b, i == 1 ? COL_TEXT : color, 0);
         lv_obj_set_style_line_rounded(b, true, 0);
     }
 }
@@ -566,9 +594,6 @@ static void brightness_apply(void)
     if (s_cc_bright_pct != NULL) {
         lv_label_set_text_fmt(s_cc_bright_pct, "%d%%", s_brightness);
     }
-    if (s_cc_bright_arc != NULL) {
-        lv_arc_set_angles(s_cc_bright_arc, 0, s_brightness * 360 / 100);
-    }
     slider_refresh();
 }
 
@@ -654,8 +679,8 @@ static void slider_press_cb(lv_event_t *e)
 static void battery_visuals(void)
 {
     int pct = s_bat_percent < 0 ? 0 : (s_bat_percent > 100 ? 100 : s_bat_percent);
-    /* 普通模式电量弧红色；充电时整段变天蓝，并带一圈柔光。 */
-    lv_color_t level = s_charging ? COL_RING_SKY : COL_BATT_RED;
+    /* 表盘电量统一绿色；充电时只多一圈天蓝柔光，不改变电量主色。 */
+    lv_color_t level = COL_GREEN;
 
     char text[24];
     if (s_bat_percent < 0) {
@@ -689,18 +714,7 @@ static void battery_visuals(void)
     }
     if (s_cc_bat_pct != NULL) {
         lv_label_set_text(s_cc_bat_pct, text);
-        lv_obj_set_style_text_color(s_cc_bat_pct, s_charging ? COL_RING_SKY : COL_BATT_RED, 0);
-    }
-    if (s_cc_bat_arc != NULL) {
-        lv_arc_set_angles(s_cc_bat_arc, 0, pct * 360 / 100);
-        lv_obj_set_style_arc_color(s_cc_bat_arc, level, LV_PART_INDICATOR);
-    }
-    if (s_cc_bat_bolt != NULL) {
-        if (s_charging) {
-            lv_obj_remove_flag(s_cc_bat_bolt, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(s_cc_bat_bolt, LV_OBJ_FLAG_HIDDEN);
-        }
+        lv_obj_set_style_text_color(s_cc_bat_pct, s_charging ? COL_RING_SKY : COL_GREEN, 0);
     }
 
     if (s_status_bat != NULL) {
@@ -715,7 +729,7 @@ static void battery_visuals(void)
             lv_obj_set_style_text_color(s_status_bat, COL_RING_SKY, 0);
         } else {
             lv_label_set_text(s_status_bat, text);
-            lv_obj_set_style_text_color(s_status_bat, COL_BATT_RED, 0);
+            lv_obj_set_style_text_color(s_status_bat, COL_GREEN, 0);
         }
     }
 }
@@ -1012,8 +1026,8 @@ static void slider_open(int kind)
     s_slider_kind = kind;
     s_slider_open = true;
 
-    /* 亮度 / 音量统一绿色，页面上只保留当前值和 0-100 刻度 */
-    lv_color_t accent = COL_GREEN;
+    /* 亮度 / 音量统一科技浅绿，页面上只保留当前值和 0-100 刻度 */
+    lv_color_t accent = COL_TECH_GREEN;
     lv_obj_set_style_bg_color(s_slider_fill, accent, 0);
     lv_obj_set_style_bg_color(s_slider_track, accent, 0);
     lv_obj_set_style_bg_opa(s_slider_track, LV_OPA_30, 0);
@@ -1292,31 +1306,20 @@ static void pet_close_now(void)
 /* -------------------------------------------------------------------------- */
 
 static lv_obj_t *tile_create(lv_obj_t *parent, int cx, int cy, const char *label,
-                             lv_color_t accent, int track_deg, int prog_deg)
+                             lv_color_t accent)
 {
     lv_obj_t *root = mk_circle(parent, cx, cy, TILE_D, COL_SURF, LV_OPA_COVER);
     lv_obj_set_style_border_width(root, 1, 0);
     lv_obj_set_style_border_color(root, COL_LINE, 0);
-    lv_obj_set_style_border_opa(root, LV_OPA_70, 0);
+    lv_obj_set_style_border_opa(root, LV_OPA_50, 0);
     lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);
 
     /* 磁贴柔光：参考华为小组件的发光质感 */
-    lv_obj_set_style_shadow_width(root, 20, 0);
+    lv_obj_set_style_shadow_width(root, 18, 0);
     lv_obj_set_style_shadow_color(root, accent, 0);
     lv_obj_set_style_shadow_opa(root, LV_OPA_20, 0);
 
-    lv_obj_t *arc = mk_arc(root, TILE_D / 2, TILE_D / 2, TILE_D, 4,
-                           COL_LINE, LV_OPA_50, track_deg,
-                           accent, LV_OPA_COVER, prog_deg);
-    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-
-    if (prog_deg > 0) {
-        lv_obj_t *dot = mk_circle(root, 0, 0, TILE_DOT_D, accent, LV_OPA_COVER);
-        dot_place(dot, TILE_D / 2, TILE_D / 2, TILE_D, 4, prog_deg);
-        lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE);
-    }
-
-    mk_label(root, label, &epw_cjk_16, COL_MUTED, 0, 14, TILE_D, LV_TEXT_ALIGN_CENTER);
+    mk_label(root, label, &epw_cjk_16, COL_MUTED, 0, 6, TILE_D, LV_TEXT_ALIGN_CENTER);
     return root;
 }
 
@@ -1481,14 +1484,14 @@ static void build_dial(lv_obj_t *page)
     mk_ring_seg(page, 242, 358, COL_RING_SKY);
 
     /* 底部电量弧：贴着外圈向里收一圈，闪电 + 百分比就是电量语义。
-     * 普通模式固定红色，充电时整段变青柠并带辉光。 */
+     * 电量主色固定绿色，充电时额外叠一层天蓝辉光做区分。 */
     s_batt_glow = mk_arc_prog(page, CENTER_X, CENTER_Y, BATT_SIZE, BATT_WIDTH * 2,
                               BATT_FROM_DEG, BATT_TO_DEG, COL_LIME, LV_OPA_20);
     lv_obj_add_flag(s_batt_glow, LV_OBJ_FLAG_HIDDEN);
     s_batt_track = mk_arc_seg(page, CENTER_X, CENTER_Y, BATT_SIZE, BATT_WIDTH,
                               BATT_FROM_DEG, BATT_TO_DEG, COL_LINE, LV_OPA_60);
     s_batt_arc = mk_arc_prog(page, CENTER_X, CENTER_Y, BATT_SIZE, BATT_WIDTH,
-                             BATT_FROM_DEG, BATT_TO_DEG, COL_BATT_RED, LV_OPA_COVER);
+                             BATT_FROM_DEG, BATT_TO_DEG, COL_GREEN, LV_OPA_COVER);
 
     static const lv_point_precise_t bolt_pts[] = {
         {6, 0}, {1, 8}, {5, 8}, {2, 16}, {11, 6}, {6, 6}, {6, 0},
@@ -1497,10 +1500,10 @@ static void build_dial(lv_obj_t *page)
     lv_line_set_points(s_batt_bolt, bolt_pts, 7);
     lv_obj_set_pos(s_batt_bolt, 194, 371);
     lv_obj_set_style_line_width(s_batt_bolt, 2, 0);
-    lv_obj_set_style_line_color(s_batt_bolt, COL_BATT_RED, 0);
+    lv_obj_set_style_line_color(s_batt_bolt, COL_GREEN, 0);
     lv_obj_set_style_line_rounded(s_batt_bolt, true, 0);
 
-    s_batt_pct = mk_label(page, "94%", &epw_cjk_20, COL_BATT_RED,
+    s_batt_pct = mk_label(page, "94%", &epw_cjk_20, COL_GREEN,
                           203, 368, 60, LV_TEXT_ALIGN_CENTER);
 
     /* 顶部天气：绿色分割弧 + 太阳 + 温度 + 天气词，贴近上沿 */
@@ -1553,73 +1556,57 @@ static void build_center(void)
     const int row_top = 168;
     const int row_bottom = 300;
 
-    /* 状态 */
-    lv_obj_t *t_status = tile_create(s_center, cols4[0], row_top, "状态",
-                                     COL_TEAL, 270, 270);
+    /* 状态：青绿圆底 + 白色信息符号 */
+    lv_obj_t *t_status = tile_create(s_center, cols4[0], row_top, "状态", COL_TEAL);
     lv_obj_add_event_cb(t_status, center_status_cb, LV_EVENT_CLICKED, NULL);
-    draw_info(t_status, TILE_D / 2, TILE_D / 2 + 6, COL_TEAL);
+    draw_status_icon(t_status, TILE_D / 2, TILE_D / 2 + 10);
 
-    /* 天气 */
-    lv_obj_t *t_weather = tile_create(s_center, cols4[1], row_top, "天气",
-                                      COL_BLUE, 270, 270);
+    /* 天气：太阳 + 云 + 温度 */
+    lv_obj_t *t_weather = tile_create(s_center, cols4[1], row_top, "天气", COL_BLUE);
     lv_obj_add_event_cb(t_weather, center_weather_cb, LV_EVENT_CLICKED, NULL);
-    draw_sun(t_weather, TILE_D / 2, TILE_D / 2 - 6, 8, COL_AMBER);
+    draw_weather_icon(t_weather, TILE_D / 2, TILE_D / 2);
     mk_label(t_weather, "24°", &epw_cjk_20, COL_TEXT,
-             0, 54, TILE_D, LV_TEXT_ALIGN_CENTER);
+             0, 58, TILE_D, LV_TEXT_ALIGN_CENTER);
 
-    /* 电量 */
-    lv_obj_t *t_bat = tile_create(s_center, cols4[2], row_top, "电量",
-                                  COL_AMBER, 360, 0);
+    /* 电量：白描边电池 + 绿色电量 + 黄色闪电 + 百分比 */
+    lv_obj_t *t_bat = tile_create(s_center, cols4[2], row_top, "电量", COL_GREEN);
     lv_obj_add_event_cb(t_bat, center_battery_cb, LV_EVENT_CLICKED, NULL);
-    s_cc_bat_arc = mk_arc(t_bat, TILE_D / 2, TILE_D / 2, TILE_D, 4,
-                          COL_LINE, LV_OPA_60, 360, COL_AMBER, LV_OPA_COVER, 0);
-    s_cc_bat_pct = mk_label(t_bat, "86%", &lv_font_montserrat_24, COL_TEXT,
-                            0, 40, TILE_D, LV_TEXT_ALIGN_CENTER);
-    static const lv_point_precise_t cc_bolt[] = {
-        {7, 0}, {1, 10}, {6, 10}, {3, 19}, {12, 7}, {7, 7}, {7, 0},
-    };
-    s_cc_bat_bolt = lv_line_create(t_bat);
-    lv_line_set_points(s_cc_bat_bolt, cc_bolt, 7);
-    lv_obj_set_pos(s_cc_bat_bolt, 54, 20);
-    lv_obj_set_style_line_width(s_cc_bat_bolt, 3, 0);
-    lv_obj_set_style_line_color(s_cc_bat_bolt, COL_LIME, 0);
-    lv_obj_set_style_line_rounded(s_cc_bat_bolt, true, 0);
-    lv_obj_add_flag(s_cc_bat_bolt, LV_OBJ_FLAG_HIDDEN);
+    draw_battery_icon(t_bat, TILE_D / 2, TILE_D / 2 - 4);
+    s_cc_bat_pct = mk_label(t_bat, "94%", &lv_font_montserrat_20, COL_GREEN,
+                            0, 52, TILE_D, LV_TEXT_ALIGN_CENTER);
 
     /* 手电：整屏纯白 + 最大亮度，双击白屏退出 */
     lv_obj_t *t_torch = tile_create(s_center, cols4[3], row_top, "手电",
-                                    COL_RING_YELLOW, 270, 270);
+                                    COL_RING_YELLOW);
     lv_obj_add_event_cb(t_torch, center_torch_cb, LV_EVENT_CLICKED, NULL);
-    draw_torch(t_torch, TILE_D / 2, TILE_D / 2 + 8, COL_RING_YELLOW);
+    draw_torch(t_torch, TILE_D / 2, TILE_D / 2 + 10, COL_RING_YELLOW);
 
     /* 亮度：点开独立调节页，上下拖动 */
     lv_obj_t *t_bright = tile_create(s_center, cols3[0], row_bottom, "亮度",
-                                     COL_PURPLE, 360, 0);
+                                     COL_AMBER);
     lv_obj_add_event_cb(t_bright, center_bright_cb, LV_EVENT_CLICKED, NULL);
-    draw_sun(t_bright, TILE_D / 2, TILE_D / 2 - 12, 6, COL_AMBER);
+    draw_sun_duo(t_bright, TILE_D / 2, TILE_D / 2 - 2, 5,
+                 COL_AMBER, lv_color_hex(0xFFFF00));
     s_cc_bright_pct = mk_label(t_bright, "80%", &lv_font_montserrat_20, COL_TEXT,
-                               0, 50, TILE_D, LV_TEXT_ALIGN_CENTER);
-    s_cc_bright_arc = mk_arc(t_bright, TILE_D / 2, TILE_D / 2, TILE_D, 4,
-                             COL_LINE, LV_OPA_60, 360, COL_PURPLE, LV_OPA_COVER, 0);
-    lv_arc_set_angles(s_cc_bright_arc, 0, s_brightness * 360 / 100);
+                               0, 54, TILE_D, LV_TEXT_ALIGN_CENTER);
 
     /* 音量：点开独立调节页，上下拖动（音频未初始化，仅界面演示） */
     lv_obj_t *t_vol = tile_create(s_center, cols3[1], row_bottom, "音量",
-                                  COL_PINK, 270, 270);
+                                  COL_PINK);
     lv_obj_add_event_cb(t_vol, center_volume_cb, LV_EVENT_CLICKED, NULL);
-    draw_speaker(t_vol, 28, 28, COL_PINK);
+    draw_speaker(t_vol, 26, 32, COL_TEXT);
     s_cc_vol_pct = mk_label(t_vol, "0", &lv_font_montserrat_20, COL_TEXT,
-                            0, 54, TILE_D, LV_TEXT_ALIGN_CENTER);
+                            0, 56, TILE_D, LV_TEXT_ALIGN_CENTER);
 
-    /* 宠物（Pip 3D 正脸） */
-    lv_obj_t *t_ai = tile_create(s_center, cols3[2], row_bottom, "AI",
-                                 COL_AMBER, 270, 270);
+    /* 宠物 Mimi Cat（3D 正脸） */
+    lv_obj_t *t_ai = tile_create(s_center, cols3[2], row_bottom, "Mimi Cat",
+                                 COL_PINK);
     lv_obj_add_event_cb(t_ai, center_ai_cb, LV_EVENT_CLICKED, NULL);
     s_ai_img = lv_image_create(t_ai);
     lv_image_set_src(s_ai_img, &pip_face_happy);
-    lv_image_set_scale(s_ai_img, 66);
+    lv_image_set_scale(s_ai_img, 56);
     lv_obj_remove_flag(s_ai_img, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(s_ai_img, LV_ALIGN_CENTER, 0, 6);
+    lv_obj_align(s_ai_img, LV_ALIGN_CENTER, 0, 10);
 
     /* 收起 */
     lv_obj_t *close = mk_box(s_center, 167, 396, 132, 34, COL_SURF, LV_OPA_COVER, 17);
@@ -1783,7 +1770,7 @@ static void build_slider(void)
     lv_obj_set_style_line_rounded(l, true, 0);
 
     /* 只保留当前值；不写标题和操作说明 */
-    s_slider_value = mk_label(s_slider, "80%", &lv_font_montserrat_28, COL_GREEN,
+    s_slider_value = mk_label(s_slider, "80%", &lv_font_montserrat_28, COL_TECH_GREEN,
                               0, 52, SCREEN_W, LV_TEXT_ALIGN_CENTER);
 
     /* 竖向粗轨道：底部 0%，顶部 100%，必须按在轨道上才能拖动 */
@@ -1796,7 +1783,7 @@ static void build_slider(void)
 
     s_slider_fill = mk_box(s_slider, SLIDER_TRACK_X, SLIDER_TRACK_TOP,
                            SLIDER_TRACK_W, SLIDER_TRACK_H,
-                           COL_GREEN, LV_OPA_COVER, SLIDER_TRACK_W / 2);
+                           COL_TECH_GREEN, LV_OPA_COVER, SLIDER_TRACK_W / 2);
     lv_obj_add_event_cb(s_slider_fill, slider_press_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_slider_fill, slider_press_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(s_slider_fill, slider_press_cb, LV_EVENT_RELEASED, NULL);
@@ -2124,14 +2111,14 @@ static void build_apps(void)
     lv_obj_remove_flag(s_apps, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(s_apps, apps_event_cb, LV_EVENT_GESTURE, NULL);
 
-    mk_label(s_apps, "Pip 的桌面", &epw_cjk_20, COL_TEXT,
+    mk_label(s_apps, "Mimi 的桌面", &epw_cjk_20, COL_TEXT,
              0, 34, SCREEN_W, LV_TEXT_ALIGN_CENTER);
     mk_label(s_apps, "点按打开 · 拖动换位", &epw_cjk_16, COL_MUTED,
              0, 62, SCREEN_W, LV_TEXT_ALIGN_CENTER);
 
     apps_load_slots();
 
-    s_app_icons[APP_PET] = app_icon_create(s_apps, APP_PET, "宠物", COL_PINK);
+    s_app_icons[APP_PET] = app_icon_create(s_apps, APP_PET, "Mimi", COL_PINK);
     lv_obj_t *disc = lv_obj_get_child(s_app_icons[APP_PET], 0);
     lv_obj_t *img = lv_image_create(disc);
     lv_image_set_src(img, &pip_face_happy);
@@ -2179,7 +2166,7 @@ static void build_apps(void)
 }
 
 /* -------------------------------------------------------------------------- */
-/* 宠物页（Pip · 3D 正脸猫）                                                   */
+/* 宠物页（Mimi Cat · 3D 正脸猫）                                                   */
 /* -------------------------------------------------------------------------- */
 
 static lv_color_t pet_accent(ui_pet_state_t state)
@@ -2277,7 +2264,7 @@ static const char *pet_default_text(ui_pet_state_t state)
         return "我在听，你说吧。";
     case UI_PET_IDLE:
     default:
-        return "喵～ 你好呀！我是 Pip。";
+        return "喵～ 你好呀！我是 Mimi。";
     }
 }
 
@@ -2365,7 +2352,7 @@ static void pet_apply(ui_pet_state_t state, const char *text)
                            ? text : pet_default_text(state);
     line = pet_safe_text(line);
     if (line == NULL || line[0] == '\0') {
-        line = "喵～ 你好呀！我是 Pip。";
+        line = "喵～ 你好呀！我是 Mimi。";
     }
     lv_label_set_text(s_pet_bubble_label, line);
     lv_obj_set_style_border_color(s_pet_bubble, accent, 0);
@@ -2472,7 +2459,7 @@ static void pet_anim_timer_cb(lv_timer_t *timer)
         int r = (s_pet_state == UI_PET_EXCITED ? 112 : 100)
                 + (int)(6.0f * sinf(ph * 0.1f + i));
         int x = CENTER_X + (int)lroundf((float)r * cosf(ang));
-        int y = 196 + (int)lroundf((float)r * sinf(ang));
+        int y = 212 + (int)lroundf((float)r * sinf(ang));
         lv_obj_set_pos(sp, x - 5, y - 5);
         lv_obj_set_style_bg_color(sp,
                                   s_pet_state == UI_PET_LOVE ? COL_PINK : COL_AMBER, 0);
@@ -2541,16 +2528,22 @@ static void pet_begin_chat(void)
     pet_apply(UI_PET_LISTENING, "我在听，你说吧。");
 }
 
-static void pet_back_cb(lv_event_t *e)
+/* 页面空白区手势：只认「左→右滑退出」，其它方向一律不响应，
+ * 这样空白处的滑动不会和宠物互动抢手势。 */
+static void pet_page_gesture_cb(lv_event_t *e)
 {
-    if (tap_is_drag(e)) {
+    if (lv_event_get_code(e) != LV_EVENT_GESTURE) {
         return;
     }
-    pet_close();
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev != NULL && lv_indev_get_gesture_dir(indev) == LV_DIR_RIGHT) {
+        pet_close();
+    }
 }
 
-/* 宠物页手势：左右滑=聊天，上滑=兴奋，下滑=睡觉（全部触屏，无文字按钮） */
-static void pet_event_cb(lv_event_t *e)
+/* 宠物区手势：右滑退出，左滑聊天，上滑兴奋，下滑困了。
+ * 右滑优先返回，避免退出动作顺带触发摸头/聊天。 */
+static void pet_area_gesture_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_GESTURE) {
         return;
@@ -2561,8 +2554,10 @@ static void pet_event_cb(lv_event_t *e)
     }
 
     switch (lv_indev_get_gesture_dir(indev)) {
-    case LV_DIR_LEFT:
     case LV_DIR_RIGHT:
+        pet_close();
+        break;
+    case LV_DIR_LEFT:
         pet_begin_chat();
         break;
     case LV_DIR_TOP:
@@ -2640,34 +2635,18 @@ static void build_pet(void)
     lv_obj_set_style_bg_opa(s_pet, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_pet, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_flag(s_pet, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(s_pet, pet_event_cb, LV_EVENT_GESTURE, NULL);
-    lv_obj_add_event_cb(s_pet, pet_press_cb, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(s_pet, pet_touch_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_event_cb(s_pet, pet_long_press_cb, LV_EVENT_LONG_PRESSED, NULL);
+    /* 页面空白区只监听右滑退出；宠物互动全部交给宠物区 */
+    lv_obj_add_event_cb(s_pet, pet_page_gesture_cb, LV_EVENT_GESTURE, NULL);
 
-    /* 返回圆钮 */
-    lv_obj_t *back = mk_circle(s_pet, 52, 56, 38, COL_SURF, LV_OPA_COVER);
-    lv_obj_set_style_border_width(back, 1, 0);
-    lv_obj_set_style_border_color(back, COL_LINE, 0);
-    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(back, pet_back_cb, LV_EVENT_CLICKED, NULL);
-    static const lv_point_precise_t chev[] = {{21, 8}, {11, 19}, {21, 30}};
-    lv_obj_t *l = lv_line_create(back);
-    lv_line_set_points(l, chev, 3);
-    lv_obj_set_pos(l, 0, 0);
-    lv_obj_set_style_line_width(l, 3, 0);
-    lv_obj_set_style_line_color(l, COL_MUTED, 0);
-    lv_obj_set_style_line_rounded(l, true, 0);
-
-    mk_label(s_pet, "皮皮 Pip", &epw_cjk_20, COL_TEXT,
-             80, 42, 150, LV_TEXT_ALIGN_LEFT);
+    mk_label(s_pet, "Mimi Cat", &epw_cjk_20, COL_TEXT,
+             0, 52, SCREEN_W, LV_TEXT_ALIGN_CENTER);
     s_pet_mood = mk_label(s_pet, "发呆", &epw_cjk_16, COL_TEAL,
-                          250, 46, 160, LV_TEXT_ALIGN_RIGHT);
+                          0, 82, SCREEN_W, LV_TEXT_ALIGN_CENTER);
 
     /* 宠物背后的柔光：两层同心圆纯色填充。
      * 不用 shadow（SW 模糊每帧重算，是宠物页卡顿的主因）。 */
-    s_pet_halo = mk_circle(s_pet, CENTER_X, 196, 300, COL_TEAL, LV_OPA_10);
-    s_pet_glow = mk_circle(s_pet, CENTER_X, 196, 246, COL_TEAL, LV_OPA_20);
+    s_pet_halo = mk_circle(s_pet, CENTER_X, 212, 300, COL_TEAL, LV_OPA_10);
+    s_pet_glow = mk_circle(s_pet, CENTER_X, 212, 246, COL_TEAL, LV_OPA_20);
 
     /* 3D 正脸猫：素材本身就是 208px，1:1 直绘（scale=256，无运行时变换） */
     s_pet_img = lv_image_create(s_pet);
@@ -2676,7 +2655,7 @@ static void build_pet(void)
     lv_obj_remove_flag(s_pet_img, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_pet_img, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(s_pet_img, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_add_event_cb(s_pet_img, pet_event_cb, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(s_pet_img, pet_area_gesture_cb, LV_EVENT_GESTURE, NULL);
     lv_obj_add_event_cb(s_pet_img, pet_press_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_pet_img, pet_touch_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(s_pet_img, pet_long_press_cb, LV_EVENT_LONG_PRESSED, NULL);
@@ -2688,23 +2667,23 @@ static void build_pet(void)
     }
 
     /* 对话气泡（去掉旋转小尾巴，避免 transform layer 合成） */
-    s_pet_bubble = mk_box(s_pet, 63, PET_BUBBLE_Y, 340, 88,
+    s_pet_bubble = mk_box(s_pet, 83, PET_BUBBLE_Y, 300, 92,
                           COL_SURF_HI, LV_OPA_COVER, 26);
     lv_obj_set_style_border_width(s_pet_bubble, 1, 0);
     lv_obj_set_style_border_color(s_pet_bubble, COL_TEAL, 0);
     lv_obj_set_style_border_opa(s_pet_bubble, LV_OPA_60, 0);
-    s_pet_bubble_label = mk_label(s_pet_bubble, "喵～ 你好呀！我是 Pip。",
+    s_pet_bubble_label = mk_label(s_pet_bubble, "喵～ 你好呀！我是 Mimi。",
                                   &epw_cjk_16, COL_TEXT,
-                                  18, 12, 304, LV_TEXT_ALIGN_CENTER);
+                                  16, 12, 268, LV_TEXT_ALIGN_CENTER);
     lv_label_set_long_mode(s_pet_bubble_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_height(s_pet_bubble_label, 64);
+    lv_obj_set_height(s_pet_bubble_label, 68);
 
     /* 装饰层不拦截触摸，点按交给 s_pet / 猫咪本体处理 */
     lv_obj_remove_flag(s_pet_halo, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(s_pet_glow, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(s_pet_bubble, LV_OBJ_FLAG_CLICKABLE);
 
-    /* 全部交互走手势：点按 / 左右滑 / 上下滑 / 长按，页面不放任何文字按钮 */
+    /* 全部交互走手势：宠物区点按/长按/滑，空白区右滑退出 */
 
     lv_obj_add_flag(s_pet, LV_OBJ_FLAG_HIDDEN);
     pet_apply(UI_PET_IDLE, NULL);
