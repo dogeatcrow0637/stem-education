@@ -23,9 +23,12 @@ static void toggle_pet(const char *source)
         ESP_LOGW(TAG, "%s: display busy, ignored", source);
         return;
     }
-    ui_demo_toggle_pet();
+    bool woke = ui_activity();
+    if (!woke) {
+        ui_demo_toggle_pet();
+    }
     bsp_display_unlock();
-    ESP_LOGI(TAG, "%s short press -> pet page", source);
+    ESP_LOGI(TAG, "%s short press -> %s", source, woke ? "wake screen" : "pet page");
 }
 
 static void toggle_apps(const char *source)
@@ -34,9 +37,12 @@ static void toggle_apps(const char *source)
         ESP_LOGW(TAG, "%s: display busy, ignored", source);
         return;
     }
-    ui_demo_toggle_apps();
+    bool woke = ui_activity();
+    if (!woke) {
+        ui_demo_toggle_apps();
+    }
     bsp_display_unlock();
-    ESP_LOGI(TAG, "%s short press -> app desktop", source);
+    ESP_LOGI(TAG, "%s short press -> %s", source, woke ? "wake screen" : "app desktop");
 }
 
 static void button_task(void *arg)

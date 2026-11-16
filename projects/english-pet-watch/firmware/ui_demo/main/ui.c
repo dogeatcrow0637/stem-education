@@ -10,22 +10,27 @@
  *
  * 交互（参考 Apple Watch / 华为手表）：
  *   表盘（唯一常驻页）：下滑 → 控制中心（表盘不再响应点按切页）
- *   控制中心（4+3 圆形磁贴）：状态 / 天气 / 电量 / 手电
- *                             亮度 / 音量 / Mimi Cat
+ *   控制中心（4+3 纯图标圆形磁贴，无任何文字）：状态 / 天气 / 电量 / 手电
+ *                             亮度 / 音量 / 睡眠
  *     ├─ 点「状态」或「电量」→ 状态页（从左往右滑关闭）
  *     ├─ 点「亮度」「音量」→ 独立调节页（绿色粗轨道，只有按在轨道上
  *     │                      才能上下拖动；其他区域右滑关闭）
  *     ├─ 点「手电」→ 白色满亮度手电页（双击白屏退出）
- *     ├─ 点「Mimi Cat」→ 宠物页（Mimi Cat · 3D 正脸猫，9 种情绪）
+ *     ├─ 点「睡眠」→ 表盘进入黑白暗光睡眠模式，只显示暗灰时间；
+ *     │            睡眠中同样可以下拉控制中心，再点一次恢复彩色表盘
  *     └─ 上滑 → 回到表盘
  *   BOOT 短按 → 宠物页；PWR 短按 → 应用桌面（备用入口，长按 PWR 仍由 PMU 关机）。
+ *   应用桌面：华为手表风格图标网格（Mimi / 状态 / 天气），上下拖动整页像布一样滚动，
+ *     中心行最大、上下行渐小；图标不带文字；不支持滑动退出，只能再按 PWR。
+ *     音量 / 亮度 / 手电只放在控制中心，不进入应用桌面。
+ *   30s 无操作自动熄屏，点屏幕或按任意键点亮（第一下只负责唤醒）。
  *   宠物页：表情 + 对话气泡，全手势交互（无文字按钮）：
  *     点猫=摸头，左右滑=聊天学英语，上滑=兴奋，下滑=睡觉，长按=思考，
  *     左上角箭头返回；本地情景引擎按电量/充电/网络/时间换状态。
  *     豆包动态台词会先做字形过滤，字体缺字绝不会渲染成方框。
  *
- * 不展示心率/血氧/步数等本机不支持的指标；不初始化音频，音量默认 0
- * （音量页只做 UI 演示，不会真的出声）。
+ * 不展示心率/血氧/步数等本机不支持的指标；音频输出已启用，音量页直接
+ * 调节 ES8311 输出音量。熄屏后不唤醒、不进入 Mimi Cat、不回答。
  * 充电模式：底部电量弧变天蓝并加柔光；拔线后恢复红色。
  */
 #include "ui.h"
@@ -45,6 +50,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "bsp/esp-bsp.h"
+#include "audio.h"
 #include "power.h"
 #include "wifi.h"
 #include "assets/pip_faces.h"
@@ -74,17 +80,28 @@ extern const lv_font_t epw_time_150;
 #define TILE_D      84
 #define TILE_DOT_D  10
 
-/* 亮度 / 音量页：竖向轨道（底部 0%，顶部 100%），整体垂直居中 */
+/* 亮度 / 音量页：竖向轨道（底部最小、顶部最大），整体垂直居中 */
 #define SLIDER_TRACK_W   44
 #define SLIDER_TRACK_H   280
 #define SLIDER_TRACK_TOP (CENTER_Y - SLIDER_TRACK_H / 2)
 #define SLIDER_TRACK_X   (CENTER_X - SLIDER_TRACK_W / 2)
 
-/* 应用桌面：6 个圆形图标，2 行 × 3 列，可拖动换位 */
-#define APP_COUNT   6
-#define APP_ICON_D  96
-static const int s_app_cx[3] = {101, 233, 365};
-static const int s_app_cy[2] = {190, 320};
+/* 应用桌面：华为手表风格 2 列网格，上下拖动整页像布一样滚动，
+ * 中心行最大、上下行渐小；只能再按大按钮退出，不支持滑动退出。
+ * 只保留 Mimi / 状态 / 天气；音量、亮度、手电只属于控制中心。 */
+#define APP_COUNT          3
+#define APP_COLS           2
+#define APP_ROWS           ((APP_COUNT + APP_COLS - 1) / APP_COLS)
+#define APP_ICON_D         96
+#define APP_ROOT_W         APP_ICON_D
+#define APP_ROOT_H         APP_ICON_D
+#define APP_GRID_DX        150   /* 列间距（px） */
+#define APP_GRID_DY        140   /* 行间距（px） */
+#define APP_GRID_CY        233   /* 中心行图标圆心 y */
+#define APP_GRID_HOME_ROW  0     /* 默认停靠行（0 起） */
+#define APP_GRID_SCALE_DROP 0.32f /* 每偏中心一行，缩放减少量 */
+#define APP_GRID_MIN_SCALE  0.46f
+#define APP_GRID_DRAG_TH    22    /* 超过该位移才算拖动，否则视为点按（圆屏手指易抖动） */
 
 static const char *TAG = "epw-ui";
 
@@ -134,9 +151,21 @@ static bool s_torch_open;
 static bool s_apps_open;
 static bool s_pet_open;
 
+/* 控制中心抽屉式滑动：s_center_reveal 表示整块面板从顶部滑下的距离 0..SCREEN_H，
+ * 面板 y = reveal - SCREEN_H，内容（标题、磁贴）随面板一起平移 */
+#define CENTER_DRAG_TH  8
+static bool s_center_dragging;
+static bool s_center_drag_engaged;
+static int s_center_press_y;
+static int s_center_press_reveal;
+static int s_center_reveal;
+
 /* 表盘 */
 static lv_obj_t *s_time;
 static lv_obj_t *s_date;
+/* 表盘装饰层（外环 / 电量 / 天气 / Wi-Fi / 日期）：睡眠模式下整层隐藏，只留时间 */
+static lv_obj_t *s_dial_deco;
+static bool s_sleep_mode;
 /* 三色装饰环（常驻） + 底部电量弧（随电量变化，充电时青柠色发光） */
 static lv_obj_t *s_batt_glow;
 static lv_obj_t *s_batt_track;
@@ -145,20 +174,16 @@ static lv_obj_t *s_batt_pct;
 static lv_obj_t *s_batt_bolt;
 static lv_obj_t *s_home_wifi[4]; /* 3 段弧 + 底部圆点，用颜色表达联网状态 */
 
-/* 控制中心磁贴上的动态元素 */
-static lv_obj_t *s_cc_bat_pct;
-static lv_obj_t *s_cc_bright_pct;
-static lv_obj_t *s_cc_vol_pct;
-static lv_obj_t *s_ai_img;
+/* 控制中心睡眠磁贴（用于显示开/关状态） */
+static lv_obj_t *s_cc_sleep;
 
-/* 应用桌面：图标对象、图标->槽位映射、拖动状态 */
+/* 应用桌面：纵向网格滚动状态（拖动整页，不再单独拖图标） */
 static lv_obj_t *s_app_icons[APP_COUNT];
-static int s_app_slot[APP_COUNT];
-static int s_app_drag_icon = -1;
-static lv_point_t s_app_drag_press;
-static lv_coord_t s_app_drag_x0;
-static lv_coord_t s_app_drag_y0;
+static float s_app_scroll;      /* 当前滚动位置，单位 = 一行 */
+static bool s_app_drag_active;
 static bool s_app_drag_moved;
+static lv_point_t s_app_press;
+static float s_app_scroll_start;
 
 /* 宠物页 */
 #define PET_IMG_SIZE 208
@@ -188,6 +213,36 @@ static lv_obj_t *s_status_bat;
 static lv_obj_t *s_status_net;
 static lv_obj_t *s_status_ip;
 
+/* 网络 App：热点列表 + 密码页 */
+static lv_obj_t *s_wifi;
+static lv_obj_t *s_wifipwd;
+static bool s_wifi_open;
+static bool s_wifipwd_open;
+static lv_obj_t *s_wifi_status;
+static lv_obj_t *s_wifi_list;
+static lv_obj_t *s_wifi_scan_hint;
+static lv_timer_t *s_wifi_timer;
+static epw_wifi_ap_t s_wifi_aps[EPW_WIFI_MAX_APS];
+static int s_wifi_ap_count;
+static bool s_wifi_scan_seen;
+static char s_wifipwd_ssid[33];
+static bool s_wifipwd_secure;
+static lv_obj_t *s_wifipwd_title;
+static lv_obj_t *s_wifipwd_ta;
+static lv_obj_t *s_wifipwd_eye_label;
+static lv_obj_t *s_wifipwd_btn;
+static lv_obj_t *s_wifipwd_btn_label;
+static lv_obj_t *s_wifipwd_hint;
+static lv_obj_t *s_wifipwd_kb;
+static int s_wifipwd_kb_mode;
+static bool s_wifipwd_connecting;
+static bool s_wifipwd_hidden;
+static lv_obj_t *s_wifi_refresh;
+
+/* 密码键盘模式（自绘 buttonmatrix，避免 lv_keyboard 的百分比尺寸/对齐） */
+enum { KP_LC = 0, KP_UC, KP_NUM };
+static void wifi_pwd_kb_apply(void);
+
 /* 亮度 / 音量调节页 */
 enum {
     SLIDER_BRIGHT = 0,
@@ -207,7 +262,14 @@ static lv_timer_t *s_toast_timer;
 static bool s_charging;
 static int s_bat_percent = -1;
 static int s_brightness = 80;
-static int s_volume = 0;
+static int s_volume = 60;
+
+/* 熄屏：30s 无操作关背光；点屏幕或按任意键点亮 */
+#define UI_IDLE_TIMEOUT_MS 30000
+#define UI_IDLE_POLL_MS    100
+static bool s_screen_off;
+static uint32_t s_last_activity;
+static lv_obj_t *s_wake_layer;
 
 /* 手电页 */
 static lv_obj_t *s_torch_hint;
@@ -242,11 +304,19 @@ static void center_close_now(void);
 static void apps_open(void);
 static void apps_close(void);
 static void apps_close_now(void);
+static void apps_layout_icons(void);
+static void app_scroll_clamp(void);
 static void pet_open(void);
 static void pet_close(void);
 static void pet_close_now(void);
 static void pet_apply(ui_pet_state_t state, const char *text);
 static void brightness_apply(void);
+static void wifi_open(void);
+static void wifi_close(void);
+static void wifi_close_now(void);
+static void wifi_pwd_open(const epw_wifi_ap_t *ap);
+static void wifi_pwd_close(void);
+static void wifi_pwd_close_now(void);
 
 /* -------------------------------------------------------------------------- */
 /* 绘制小工具                                                                  */
@@ -347,20 +417,6 @@ static void mk_ring_seg(lv_obj_t *parent, int from, int to, lv_color_t color)
                from, to, color, LV_OPA_COVER);
     mk_arc_seg(parent, CENTER_X, CENTER_Y, RING_SIZE + 2, 2,
                from + 2, to - 2, lv_color_hex(0xFFFFFF), LV_OPA_30);
-}
-
-static void draw_sun(lv_obj_t *parent, int cx, int cy, int r, lv_color_t color)
-{
-    for (int i = 0; i < 8; i++) {
-        int deg = i * 45;
-        float rad = (float)deg * (float)M_PI / 180.0f;
-        int rr = r + 6;
-        int x = cx + (int)lroundf((float)rr * sinf(rad));
-        int y = cy - (int)lroundf((float)rr * cosf(rad));
-        lv_obj_t *ray = mk_box(parent, x - 2, y - 5, 4, 10, color, LV_OPA_COVER, 2);
-        lv_obj_set_style_transform_rotation(ray, deg * 10, 0);
-    }
-    mk_circle(parent, cx, cy, r * 2, color, LV_OPA_COVER);
 }
 
 /* 双色太阳：琥珀色光芒 + 亮黄核心 */
@@ -499,6 +555,32 @@ static void draw_torch(lv_obj_t *parent, int cx, int cy, lv_color_t color)
     }
 }
 
+/* 网络 App 图标：三层 Wi-Fi 弧 + 底部圆点 */
+static void draw_net_icon(lv_obj_t *parent, int cx, int cy, lv_color_t color)
+{
+    static const int radii[3] = {29, 20, 11};
+    for (int i = 0; i < 3; i++) {
+        int r = radii[i];
+        lv_obj_t *arc = lv_arc_create(parent);
+        lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_pos(arc, cx - r, cy + 12 - r);
+        lv_obj_set_size(arc, r * 2, r * 2);
+        lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+        lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(arc, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(arc, 0, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(arc, 4, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(arc, color, LV_PART_MAIN);
+        lv_obj_set_style_arc_opa(arc, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
+        lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_INDICATOR);
+        lv_arc_set_rotation(arc, 0);
+        lv_arc_set_bg_angles(arc, 225, 315);
+        lv_arc_set_angles(arc, 0, 0);
+    }
+    mk_circle(parent, cx, cy + 14, 9, color, LV_OPA_COVER);
+}
+
 /* 小 Wi-Fi：三层同心圆弧 + 底部圆点 */
 static void draw_wifi(lv_obj_t *parent, int cx, int bottom_y, lv_color_t color)
 {
@@ -539,6 +621,13 @@ static void anim_x_cb(void *obj, int32_t value)
 static void anim_opa_cb(void *obj, int32_t value)
 {
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)value, 0);
+}
+
+/* 控制中心抽屉滑动：整块面板（含磁贴）一起平移，不做逐帧布局，拖动才够顺 */
+static void anim_center_h_cb(void *obj, int32_t value)
+{
+    s_center_reveal = value;
+    lv_obj_set_y((lv_obj_t *)obj, value - SCREEN_H);
 }
 
 static bool tap_is_drag(lv_event_t *e)
@@ -590,10 +679,6 @@ static void brightness_apply(void)
     }
 
     bsp_display_brightness_set(s_brightness);
-
-    if (s_cc_bright_pct != NULL) {
-        lv_label_set_text_fmt(s_cc_bright_pct, "%d%%", s_brightness);
-    }
     slider_refresh();
 }
 
@@ -607,7 +692,7 @@ static void slider_refresh(void)
     int h = SLIDER_TRACK_H * v / 100;
 
     if (s_slider_value != NULL) {
-        lv_label_set_text_fmt(s_slider_value, "%d%%", v);
+        lv_label_set_text_fmt(s_slider_value, "%d", v);
     }
     if (s_slider_fill != NULL) {
         lv_obj_set_y(s_slider_fill, SLIDER_TRACK_TOP + SLIDER_TRACK_H - h);
@@ -636,9 +721,7 @@ static void slider_apply_value(int v)
     }
 
     s_volume = v;
-    if (s_cc_vol_pct != NULL) {
-        lv_label_set_text_fmt(s_cc_vol_pct, "%d", s_volume);
-    }
+    audio_set_volume(s_volume);
     slider_refresh();
 }
 
@@ -712,11 +795,6 @@ static void battery_visuals(void)
         /* 小闪电常驻，代表“电量”；充电时随弧线一起变青柠色 */
         lv_obj_set_style_line_color(s_batt_bolt, level, 0);
     }
-    if (s_cc_bat_pct != NULL) {
-        lv_label_set_text(s_cc_bat_pct, text);
-        lv_obj_set_style_text_color(s_cc_bat_pct, s_charging ? COL_RING_SKY : COL_GREEN, 0);
-    }
-
     if (s_status_bat != NULL) {
         if (s_charging) {
             if (s_bat_percent >= 100) {
@@ -865,8 +943,40 @@ static void center_hide_done(lv_anim_t *anim)
     LV_UNUSED(anim);
     if (!s_center_open) {
         lv_obj_add_flag(s_center, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_y(s_center, 0);
+        lv_obj_set_y(s_center, -SCREEN_H);
+        s_center_reveal = 0;
     }
+}
+
+/* 直接把控制中心挪到指定滑出距离（拖动时用，不带动画、不做布局） */
+static void center_reveal_set(int h)
+{
+    if (h < 0) {
+        h = 0;
+    }
+    if (h > SCREEN_H) {
+        h = SCREEN_H;
+    }
+    s_center_reveal = h;
+    lv_obj_set_y(s_center, h - SCREEN_H);
+}
+
+static void center_animate_reveal(int32_t to, uint32_t dur,
+                                  lv_anim_path_cb_t path,
+                                  lv_anim_completed_cb_t done)
+{
+    lv_anim_delete(s_center, anim_center_h_cb);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_center);
+    lv_anim_set_values(&a, s_center_reveal, to);
+    lv_anim_set_duration(&a, dur);
+    lv_anim_set_path_cb(&a, path);
+    lv_anim_set_exec_cb(&a, anim_center_h_cb);
+    if (done != NULL) {
+        lv_anim_set_completed_cb(&a, done);
+    }
+    lv_anim_start(&a);
 }
 
 static void center_open(void)
@@ -876,23 +986,15 @@ static void center_open(void)
     }
     /* 打开控制中心前收起应用桌面 / 宠物页，避免页面叠加 */
     apps_close_now();
+    wifi_close_now();
     pet_close_now();
 
     s_center_open = true;
 
-    lv_anim_delete(s_center, NULL);
-    lv_obj_set_y(s_center, -SCREEN_H);
+    lv_obj_set_y(s_center, s_center_reveal - SCREEN_H);
     lv_obj_remove_flag(s_center, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_center);
-
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, s_center);
-    lv_anim_set_values(&a, -SCREEN_H, 0);
-    lv_anim_set_duration(&a, 300);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a, anim_y_cb);
-    lv_anim_start(&a);
+    center_animate_reveal(SCREEN_H, 240, lv_anim_path_ease_out, NULL);
     ESP_LOGI(TAG, "center open");
 }
 
@@ -915,16 +1017,7 @@ static void center_close(void)
     }
     s_center_open = false;
 
-    lv_anim_delete(s_center, NULL);
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, s_center);
-    lv_anim_set_values(&a, 0, -SCREEN_H);
-    lv_anim_set_duration(&a, 240);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
-    lv_anim_set_exec_cb(&a, anim_y_cb);
-    lv_anim_set_completed_cb(&a, center_hide_done);
-    lv_anim_start(&a);
+    center_animate_reveal(0, 240, lv_anim_path_ease_in, center_hide_done);
     ESP_LOGI(TAG, "center close");
 }
 
@@ -937,9 +1030,105 @@ static void center_close_now(void)
         return;
     }
     s_center_open = false;
-    lv_anim_delete(s_center, NULL);
+    lv_anim_delete(s_center, anim_center_h_cb);
     lv_obj_add_flag(s_center, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_y(s_center, 0);
+    lv_obj_set_y(s_center, -SCREEN_H);
+    s_center_reveal = 0;
+}
+
+/* 表盘跟手下拉：控制中心顶边贴住屏幕顶部，露出高度直接跟手指走 */
+static void home_pull_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev == NULL || s_center_open) {
+        return;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    if (code == LV_EVENT_PRESSED) {
+        lv_anim_delete(s_center, anim_center_h_cb);
+        s_center_dragging = true;
+        s_center_drag_engaged = false;
+        s_center_press_y = p.y;
+        s_center_press_reveal = s_center_reveal;
+    } else if (code == LV_EVENT_PRESSING) {
+        if (!s_center_dragging) {
+            return;
+        }
+        int dy = p.y - s_center_press_y;
+        if (dy <= CENTER_DRAG_TH) {
+            return;
+        }
+        if (!s_center_drag_engaged) {
+            s_center_drag_engaged = true;
+            lv_obj_remove_flag(s_center, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(s_center);
+        }
+        center_reveal_set(s_center_press_reveal + dy);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        if (!s_center_dragging) {
+            return;
+        }
+        s_center_dragging = false;
+        if (!s_center_drag_engaged) {
+            return;
+        }
+        if (s_center_reveal >= SCREEN_H / 4) {
+            /* 拉过 1/4 就吸附展开，从当前高度继续滑到位 */
+            center_open();
+        } else {
+            /* 没拉够，回弹收起 */
+            s_center_open = false;
+            center_animate_reveal(0, 200, lv_anim_path_ease_in, center_hide_done);
+        }
+    }
+}
+
+/* 控制中心跟手上滑收起；向下拖仍在屏幕内时回弹展开 */
+static void center_drag_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev == NULL || !s_center_open || s_status_open || s_slider_open || s_torch_open) {
+        return;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    if (code == LV_EVENT_PRESSED) {
+        lv_anim_delete(s_center, anim_center_h_cb);
+        s_center_dragging = true;
+        s_center_drag_engaged = false;
+        s_center_press_y = p.y;
+        s_center_press_reveal = s_center_reveal;
+    } else if (code == LV_EVENT_PRESSING) {
+        if (!s_center_dragging) {
+            return;
+        }
+        int dy = p.y - s_center_press_y;
+        if (!s_center_drag_engaged) {
+            if (dy >= -CENTER_DRAG_TH) {
+                return;
+            }
+            s_center_drag_engaged = true;
+        }
+        center_reveal_set(s_center_press_reveal + dy);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        if (!s_center_dragging) {
+            return;
+        }
+        s_center_dragging = false;
+        if (!s_center_drag_engaged) {
+            return;
+        }
+        if (s_center_reveal < SCREEN_H * 3 / 4) {
+            center_close();
+        } else {
+            center_animate_reveal(SCREEN_H, 160, lv_anim_path_ease_out, NULL);
+        }
+    }
 }
 
 static void status_hide_done(lv_anim_t *anim)
@@ -1026,7 +1215,7 @@ static void slider_open(int kind)
     s_slider_kind = kind;
     s_slider_open = true;
 
-    /* 亮度 / 音量统一科技浅绿，页面上只保留当前值和 0-100 刻度 */
+    /* 亮度 / 音量统一科技浅绿，页面上只保留当前值 */
     lv_color_t accent = COL_TECH_GREEN;
     lv_obj_set_style_bg_color(s_slider_fill, accent, 0);
     lv_obj_set_style_bg_color(s_slider_track, accent, 0);
@@ -1186,12 +1375,18 @@ static void apps_open(void)
     /* 应用桌面是最底层覆盖页：先把控制中心 / 状态页 / 宠物页收起 */
     center_close_now();
     status_close_now();
+    wifi_close_now();
     pet_close_now();
 
     s_apps_open = true;
     lv_anim_delete(s_apps, NULL);
     lv_obj_remove_flag(s_apps, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_apps);
+    /* 每次进入都让最近一次拖动的停靠位置对齐中心，避免半格状态 */
+    s_app_drag_active = false;
+    s_app_scroll = roundf(s_app_scroll);
+    app_scroll_clamp();
+    apps_layout_icons();
     lv_obj_set_style_opa(s_apps, LV_OPA_TRANSP, 0);
     lv_obj_set_y(s_apps, 20);
 
@@ -1259,10 +1454,15 @@ static void pet_open(void)
     if (s_pet == NULL || s_pet_open) {
         return;
     }
+    /* 熄屏时不唤醒、不进入 Mimi Cat：只允许用户主动点亮屏幕 */
+    if (s_screen_off) {
+        return;
+    }
     /* 宠物页为最上层覆盖页：先收起控制中心 / 状态页 / 应用桌面 */
     center_close_now();
     status_close_now();
     apps_close_now();
+    wifi_close_now();
 
     s_pet_open = true;
     lv_anim_delete(s_pet, NULL);
@@ -1305,42 +1505,52 @@ static void pet_close_now(void)
 /* 磁贴内容绘制                                                                */
 /* -------------------------------------------------------------------------- */
 
-static lv_obj_t *tile_create(lv_obj_t *parent, int cx, int cy, const char *label,
-                             lv_color_t accent)
+/* 控制中心磁贴：纯图标，不放任何文字 */
+static lv_obj_t *tile_create(lv_obj_t *parent, int cx, int cy, lv_color_t accent)
 {
     lv_obj_t *root = mk_circle(parent, cx, cy, TILE_D, COL_SURF, LV_OPA_COVER);
     lv_obj_set_style_border_width(root, 1, 0);
     lv_obj_set_style_border_color(root, COL_LINE, 0);
     lv_obj_set_style_border_opa(root, LV_OPA_50, 0);
     lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);
-
-    /* 磁贴柔光：参考华为小组件的发光质感 */
-    lv_obj_set_style_shadow_width(root, 18, 0);
-    lv_obj_set_style_shadow_color(root, accent, 0);
-    lv_obj_set_style_shadow_opa(root, LV_OPA_20, 0);
-
-    mk_label(root, label, &epw_cjk_16, COL_MUTED, 0, 6, TILE_D, LV_TEXT_ALIGN_CENTER);
+    /* 让 PRESSED/PRESSING 冒泡到控制中心，整页都能跟手上滑收起 */
+    lv_obj_add_flag(root, LV_OBJ_FLAG_EVENT_BUBBLE);
+    /* 外阴影在整页拖动时每帧重绘，很吃性能；用 accent 描边保留层次感 */
+    lv_obj_set_style_border_color(root, accent, 0);
+    lv_obj_set_style_border_opa(root, LV_OPA_30, 0);
     return root;
+}
+
+/* 睡眠磁贴图标：一弯月牙 + 两颗小星 */
+static void draw_moon(lv_obj_t *parent, int cx, int cy, lv_color_t color)
+{
+    const int d = 46;
+    lv_obj_t *arc = lv_arc_create(parent);
+    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(arc, cx - d / 2, cy - d / 2);
+    lv_obj_set_size(arc, d, d);
+    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(arc, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(arc, 0, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, 11, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, color, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_arc_set_rotation(arc, 0);
+    /* 缺口朝右上，形成月牙 */
+    lv_arc_set_bg_angles(arc, 30, 330);
+    lv_arc_set_angles(arc, 0, 0);
+
+    mk_circle(parent, cx + 15, cy - 16, 7, color, LV_OPA_COVER);
+    mk_circle(parent, cx + 21, cy + 4, 5, color, LV_OPA_COVER);
 }
 
 /* -------------------------------------------------------------------------- */
 /* 事件                                                                        */
 /* -------------------------------------------------------------------------- */
 
-/* 表盘下滑：打开控制中心（iWatch / 华为手表交互；表盘不再响应点按切页） */
-static void dial_event_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_GESTURE) {
-        return;
-    }
-    lv_indev_t *indev = lv_event_get_indev(e);
-    if (indev == NULL) {
-        return;
-    }
-    if (lv_indev_get_gesture_dir(indev) == LV_DIR_BOTTOM) {
-        center_open();
-    }
-}
+/* 表盘下滑已改为 home_pull_cb 跟手处理，不再依赖手势识别 */
 
 static void center_status_cb(lv_event_t *e)
 {
@@ -1355,7 +1565,7 @@ static void center_weather_cb(lv_event_t *e)
     if (tap_is_drag(e)) {
         return;
     }
-    toast_show("天气 24°");
+    toast_show("24°");
 }
 
 static void center_battery_cb(lv_event_t *e)
@@ -1391,22 +1601,41 @@ static void center_torch_cb(lv_event_t *e)
     torch_open();
 }
 
-/* 控制中心宠物磁贴：点按进入完整宠物页（表情 / 说话 / 思考由情景引擎驱动） */
-static void center_ai_cb(lv_event_t *e)
+/* 睡眠模式：表盘只保留暗灰色时间，外环 / 电量 / 天气 / 日期 / Wi-Fi 全部隐藏。
+ * 下拉手势仍作用在表盘根对象上，所以睡眠模式下照样能拉出控制中心再点回正常。 */
+static void sleep_mode_apply(bool on)
 {
-    if (tap_is_drag(e)) {
-        return;
+    s_sleep_mode = on;
+
+    if (s_dial_deco != NULL) {
+        if (on) {
+            lv_obj_add_flag(s_dial_deco, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(s_dial_deco, LV_OBJ_FLAG_HIDDEN);
+        }
     }
-    ui_pet_set_state(UI_PET_HAPPY, NULL);
+    if (s_time != NULL) {
+        lv_obj_set_style_text_color(s_time, on ? lv_color_hex(0x9E9E9E) : COL_TEXT, 0);
+    }
+    /* 磁贴用边框亮度表示当前状态 */
+    if (s_cc_sleep != NULL) {
+        lv_obj_set_style_border_opa(s_cc_sleep, on ? LV_OPA_COVER : LV_OPA_30, 0);
+        lv_obj_set_style_bg_color(s_cc_sleep, on ? COL_SURF_HI : COL_SURF, 0);
+    }
+    ESP_LOGI(TAG, "sleep mode %s", on ? "on" : "off");
 }
 
-static void center_close_cb(lv_event_t *e)
+/* 点睡眠磁贴：切换后收起控制中心，直接看到表盘变化 */
+static void center_sleep_cb(lv_event_t *e)
 {
     if (tap_is_drag(e)) {
         return;
     }
+    sleep_mode_apply(!s_sleep_mode);
     center_close();
 }
+
+/* 控制中心不再放 Mimi Cat 磁贴：宠物页只保留 BOOT 短按入口 */
 
 static void status_back_cb(lv_event_t *e)
 {
@@ -1414,20 +1643,6 @@ static void status_back_cb(lv_event_t *e)
         return;
     }
     status_close();
-}
-
-static void center_event_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_GESTURE) {
-        return;
-    }
-    lv_indev_t *indev = lv_event_get_indev(e);
-    if (indev == NULL) {
-        return;
-    }
-    if (lv_indev_get_gesture_dir(indev) == LV_DIR_TOP) {
-        center_close();
-    }
 }
 
 static void status_event_cb(lv_event_t *e)
@@ -1472,61 +1687,668 @@ static void slider_event_cb(lv_event_t *e)
 }
 
 /* -------------------------------------------------------------------------- */
+/* 网络 App                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/* 锁：半圆锁梁 + 锁体，表示需要密码 */
+static void draw_lock(lv_obj_t *parent, int cx, int cy)
+{
+    lv_obj_t *arc = lv_arc_create(parent);
+    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(arc, cx - 7, cy - 15);
+    lv_obj_set_size(arc, 14, 14);
+    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(arc, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(arc, 0, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, 2, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, COL_MUTED, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(arc, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_arc_set_rotation(arc, 0);
+    lv_arc_set_bg_angles(arc, 180, 360);
+    lv_arc_set_angles(arc, 0, 0);
+    mk_box(parent, cx - 7, cy - 3, 14, 11, COL_MUTED, LV_OPA_COVER, 3);
+}
+
+/* 三格信号：按 RSSI 点亮 1~3 格 */
+static void draw_signal_bars(lv_obj_t *parent, int x, int bottom_y, int rssi)
+{
+    int bars = rssi > -55 ? 3 : (rssi > -70 ? 2 : 1);
+    static const int heights[3] = {6, 10, 14};
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *b = mk_box(parent, x + i * 7, bottom_y - heights[i],
+                             5, heights[i],
+                             i < bars ? COL_GREEN : COL_LINE, LV_OPA_COVER, 2);
+        lv_obj_set_style_bg_opa(b, i < bars ? LV_OPA_COVER : LV_OPA_60, 0);
+    }
+}
+
+static void wifi_row_cb(lv_event_t *e);
+
+static void wifi_status_refresh(void)
+{
+    if (s_wifi_status == NULL) {
+        return;
+    }
+    char buf[96];
+    lv_color_t color = COL_MUTED;
+    const char *ssid = wifi_get_ssid();
+
+    switch (wifi_get_state()) {
+    case EPW_WIFI_CONNECTED:
+        snprintf(buf, sizeof(buf), "已连接 · %s", ssid);
+        color = COL_GREEN;
+        break;
+    case EPW_WIFI_CONNECTING:
+        if (ssid[0] != '\0') {
+            snprintf(buf, sizeof(buf), "正在连接 %s…", ssid);
+        } else {
+            snprintf(buf, sizeof(buf), "正在连接…");
+        }
+        color = COL_AMBER;
+        break;
+    case EPW_WIFI_FAILED:
+        snprintf(buf, sizeof(buf), "连接失败，可重新选择网络");
+        color = COL_CORAL;
+        break;
+    case EPW_WIFI_OFF:
+    default:
+        if (ssid[0] != '\0') {
+            snprintf(buf, sizeof(buf), "未连接 · %s", ssid);
+        } else {
+            snprintf(buf, sizeof(buf), "未连接");
+        }
+        color = COL_MUTED;
+        break;
+    }
+    lv_label_set_text(s_wifi_status, buf);
+    lv_obj_set_style_text_color(s_wifi_status, color, 0);
+}
+
+/* 用最近一次扫描结果重建列表；只在扫描完成后调用 */
+static void wifi_populate_list(void)
+{
+    if (s_wifi_list == NULL) {
+        return;
+    }
+    lv_obj_clean(s_wifi_list);
+
+    s_wifi_ap_count = wifi_scan_copy(s_wifi_aps, EPW_WIFI_MAX_APS);
+    if (s_wifi_ap_count < 0) {
+        s_wifi_ap_count = 0;
+    }
+
+    bool connected = wifi_get_state() == EPW_WIFI_CONNECTED;
+
+    for (int i = 0; i < s_wifi_ap_count; i++) {
+        epw_wifi_ap_t *ap = &s_wifi_aps[i];
+        lv_obj_t *row = mk_box(s_wifi_list, 4, i * 64, 344, 56,
+                               COL_SURF, LV_OPA_COVER, 18);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_set_style_border_color(row, COL_LINE, 0);
+        lv_obj_set_style_border_opa(row, LV_OPA_50, 0);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(row, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(row, wifi_row_cb, LV_EVENT_CLICKED, NULL);
+
+        if (ap->secure) {
+            draw_lock(row, 24, 28);
+        } else {
+            mk_circle(row, 24, 28, 7, COL_MUTED, LV_OPA_60);
+        }
+
+        lv_obj_t *name = mk_label(row, ap->ssid, &epw_cjk_16, COL_TEXT,
+                                  46, 19, 200, LV_TEXT_ALIGN_LEFT);
+        lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+
+        if (connected && strcmp(ap->ssid, wifi_get_ssid()) == 0) {
+            mk_circle(row, 262, 28, 7, COL_GREEN, LV_OPA_COVER);
+        }
+        draw_signal_bars(row, 292, 40, ap->rssi);
+    }
+
+    if (s_wifi_scan_hint != NULL) {
+        if (s_wifi_ap_count == 0) {
+            lv_label_set_text(s_wifi_scan_hint, "没有扫描到网络\n点右上角刷新");
+            lv_obj_remove_flag(s_wifi_scan_hint, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_wifi_scan_hint, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+/* 网络页 400ms 轮询：状态文字、扫描结果、连接结果 */
+static void wifi_poll_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    if (!s_wifi_open && !s_wifipwd_open) {
+        return;
+    }
+
+    wifi_status_refresh();
+
+    if (s_wifi_open) {
+        if (wifi_scan_busy()) {
+            if (s_wifi_scan_hint != NULL) {
+                lv_label_set_text(s_wifi_scan_hint, "正在扫描…");
+                lv_obj_remove_flag(s_wifi_scan_hint, LV_OBJ_FLAG_HIDDEN);
+            }
+        } else if (!s_wifi_scan_seen) {
+            s_wifi_scan_seen = true;
+            wifi_populate_list();
+        }
+    }
+
+    if (s_wifipwd_connecting) {
+        epw_wifi_state_t st = wifi_get_state();
+        if (st == EPW_WIFI_CONNECTED) {
+            s_wifipwd_connecting = false;
+            toast_show("网络已连接");
+            wifi_pwd_close_now();
+            wifi_close();
+        } else if (st == EPW_WIFI_FAILED) {
+            s_wifipwd_connecting = false;
+            if (s_wifipwd_open) {
+                lv_label_set_text(s_wifipwd_btn_label, "重试");
+                lv_obj_set_style_bg_color(s_wifipwd_btn, COL_TECH_GREEN, 0);
+                lv_label_set_text(s_wifipwd_hint, "连接失败，请检查密码后重试");
+                lv_obj_set_style_text_color(s_wifipwd_hint, COL_CORAL, 0);
+            } else {
+                toast_show("连接失败");
+            }
+        }
+    }
+}
+
+static void wifi_open(void)
+{
+    if (s_wifi == NULL || s_wifi_open) {
+        return;
+    }
+    s_wifi_open = true;
+    s_wifi_ap_count = 0;
+    s_wifi_scan_seen = false;
+
+    if (s_wifi_list != NULL) {
+        lv_obj_clean(s_wifi_list);
+    }
+    if (s_wifi_scan_hint != NULL) {
+        lv_label_set_text(s_wifi_scan_hint, "正在扫描…");
+        lv_obj_remove_flag(s_wifi_scan_hint, LV_OBJ_FLAG_HIDDEN);
+    }
+    wifi_status_refresh();
+
+    lv_anim_delete(s_wifi, NULL);
+    lv_obj_set_x(s_wifi, SCREEN_W);
+    lv_obj_remove_flag(s_wifi, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_wifi);
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_wifi);
+    lv_anim_set_values(&a, SCREEN_W, 0);
+    lv_anim_set_duration(&a, 280);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, anim_x_cb);
+    lv_anim_start(&a);
+
+    if (wifi_scan_async() != ESP_OK) {
+        /* 已在扫描时保持现状 */
+    }
+    ESP_LOGI(TAG, "wifi app open");
+}
+
+static void wifi_hide_done(lv_anim_t *anim)
+{
+    LV_UNUSED(anim);
+    if (!s_wifi_open) {
+        lv_obj_add_flag(s_wifi, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_x(s_wifi, 0);
+    }
+}
+
+static void wifi_close(void)
+{
+    if (s_wifi == NULL || !s_wifi_open) {
+        return;
+    }
+    s_wifi_open = false;
+    wifi_pwd_close_now();
+
+    lv_anim_delete(s_wifi, NULL);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_wifi);
+    lv_anim_set_values(&a, 0, SCREEN_W);
+    lv_anim_set_duration(&a, 220);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_exec_cb(&a, anim_x_cb);
+    lv_anim_set_completed_cb(&a, wifi_hide_done);
+    lv_anim_start(&a);
+    ESP_LOGI(TAG, "wifi app close");
+}
+
+static void wifi_close_now(void)
+{
+    if (s_wifi == NULL) {
+        return;
+    }
+    s_wifi_open = false;
+    wifi_pwd_close_now();
+    lv_anim_delete(s_wifi, NULL);
+    lv_obj_add_flag(s_wifi, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(s_wifi, 0);
+}
+
+static void wifi_pwd_hide_done(lv_anim_t *anim)
+{
+    LV_UNUSED(anim);
+    if (!s_wifipwd_open) {
+        lv_obj_add_flag(s_wifipwd, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_x(s_wifipwd, 0);
+    }
+}
+
+static void wifi_pwd_open(const epw_wifi_ap_t *ap)
+{
+    if (s_wifipwd == NULL || ap == NULL || s_wifipwd_open) {
+        return;
+    }
+    strncpy(s_wifipwd_ssid, ap->ssid, sizeof(s_wifipwd_ssid) - 1);
+    s_wifipwd_ssid[sizeof(s_wifipwd_ssid) - 1] = '\0';
+    s_wifipwd_secure = ap->secure;
+    s_wifipwd_connecting = false;
+    s_wifipwd_hidden = true;
+
+    if (s_wifipwd_title != NULL) {
+        lv_label_set_text(s_wifipwd_title, s_wifipwd_ssid);
+    }
+    if (s_wifipwd_ta != NULL) {
+        lv_textarea_set_text(s_wifipwd_ta, "");
+        lv_textarea_set_password_mode(s_wifipwd_ta, true);
+        lv_textarea_set_cursor_pos(s_wifipwd_ta, LV_TEXTAREA_CURSOR_LAST);
+    }
+    if (s_wifipwd_kb != NULL) {
+        /* 每次打开都回到小写字母键盘，并重新聚焦密码框 */
+        s_wifipwd_kb_mode = KP_LC;
+        wifi_pwd_kb_apply();
+    }
+    if (s_wifipwd_ta != NULL) {
+        lv_obj_add_state(s_wifipwd_ta, LV_STATE_FOCUSED);
+    }
+    if (s_wifipwd_eye_label != NULL) {
+        lv_label_set_text(s_wifipwd_eye_label, "显示");
+    }
+    if (s_wifipwd_btn_label != NULL) {
+        lv_label_set_text(s_wifipwd_btn_label, "连接");
+    }
+    if (s_wifipwd_hint != NULL) {
+        lv_label_set_text(s_wifipwd_hint, "请输入 Wi-Fi 密码");
+        lv_obj_set_style_text_color(s_wifipwd_hint, COL_MUTED, 0);
+    }
+
+    s_wifipwd_open = true;
+    lv_anim_delete(s_wifipwd, NULL);
+    lv_obj_set_x(s_wifipwd, SCREEN_W);
+    lv_obj_remove_flag(s_wifipwd, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_wifipwd);
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_wifipwd);
+    lv_anim_set_values(&a, SCREEN_W, 0);
+    lv_anim_set_duration(&a, 260);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, anim_x_cb);
+    lv_anim_start(&a);
+    ESP_LOGI(TAG, "wifi pwd open: %s", s_wifipwd_ssid);
+}
+
+static void wifi_pwd_close(void)
+{
+    if (s_wifipwd == NULL || !s_wifipwd_open) {
+        return;
+    }
+    s_wifipwd_open = false;
+    s_wifipwd_connecting = false;
+
+    lv_anim_delete(s_wifipwd, NULL);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_wifipwd);
+    lv_anim_set_values(&a, 0, SCREEN_W);
+    lv_anim_set_duration(&a, 220);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_exec_cb(&a, anim_x_cb);
+    lv_anim_set_completed_cb(&a, wifi_pwd_hide_done);
+    lv_anim_start(&a);
+    ESP_LOGI(TAG, "wifi pwd close");
+}
+
+static void wifi_pwd_close_now(void)
+{
+    if (s_wifipwd == NULL) {
+        return;
+    }
+    s_wifipwd_open = false;
+    s_wifipwd_connecting = false;
+    lv_anim_delete(s_wifipwd, NULL);
+    lv_obj_add_flag(s_wifipwd, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(s_wifipwd, 0);
+}
+
+static void wifi_pwd_do_connect(void)
+{
+    if (s_wifipwd_connecting || s_wifipwd_ta == NULL) {
+        return;
+    }
+    const char *pwd = lv_textarea_get_text(s_wifipwd_ta);
+    if (s_wifipwd_secure && (pwd == NULL || pwd[0] == '\0')) {
+        lv_label_set_text(s_wifipwd_hint, "请输入 Wi-Fi 密码");
+        lv_obj_set_style_text_color(s_wifipwd_hint, COL_CORAL, 0);
+        return;
+    }
+
+    s_wifipwd_connecting = true;
+    lv_label_set_text(s_wifipwd_btn_label, "连接中…");
+    lv_label_set_text(s_wifipwd_hint, "正在连接，请稍候…");
+    lv_obj_set_style_text_color(s_wifipwd_hint, COL_AMBER, 0);
+
+    esp_err_t err = wifi_connect_to(s_wifipwd_ssid, pwd != NULL ? pwd : "");
+    if (err != ESP_OK) {
+        s_wifipwd_connecting = false;
+        lv_label_set_text(s_wifipwd_btn_label, "重试");
+        lv_label_set_text(s_wifipwd_hint, "无法启动 Wi-Fi，请重启设备");
+        lv_obj_set_style_text_color(s_wifipwd_hint, COL_CORAL, 0);
+    }
+}
+
+static void wifi_back_cb(lv_event_t *e)
+{
+    if (tap_is_drag(e)) {
+        return;
+    }
+    wifi_close();
+}
+
+static void wifi_pwd_back_cb(lv_event_t *e)
+{
+    if (tap_is_drag(e)) {
+        return;
+    }
+    wifi_pwd_close();
+}
+
+static void wifi_gesture_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_GESTURE) {
+        return;
+    }
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev != NULL && lv_indev_get_gesture_dir(indev) == LV_DIR_RIGHT) {
+        wifi_close();
+    }
+}
+
+static void wifi_pwd_gesture_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_GESTURE) {
+        return;
+    }
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev != NULL && lv_indev_get_gesture_dir(indev) == LV_DIR_RIGHT) {
+        wifi_pwd_close();
+    }
+}
+
+static void wifi_refresh_cb(lv_event_t *e)
+{
+    if (tap_is_drag(e)) {
+        return;
+    }
+    s_wifi_scan_seen = false;
+    if (s_wifi_scan_hint != NULL) {
+        lv_label_set_text(s_wifi_scan_hint, "正在扫描…");
+        lv_obj_remove_flag(s_wifi_scan_hint, LV_OBJ_FLAG_HIDDEN);
+    }
+    wifi_scan_async();
+}
+
+static void wifi_row_cb(lv_event_t *e)
+{
+    if (tap_is_drag(e)) {
+        return;
+    }
+    lv_obj_t *row = lv_event_get_current_target(e);
+    int idx = (int)(intptr_t)lv_obj_get_user_data(row);
+    if (idx < 0 || idx >= s_wifi_ap_count) {
+        return;
+    }
+
+    epw_wifi_ap_t *ap = &s_wifi_aps[idx];
+    if (!ap->secure) {
+        /* 开放网络直接连接，连接期间保留列表展示进度 */
+        s_wifipwd_connecting = true;
+        wifi_connect_to(ap->ssid, "");
+        wifi_status_refresh();
+        return;
+    }
+    wifi_pwd_open(ap);
+}
+
+static void wifi_pwd_eye_cb(lv_event_t *e)
+{
+    if (tap_is_drag(e)) {
+        return;
+    }
+    s_wifipwd_hidden = !s_wifipwd_hidden;
+    if (s_wifipwd_ta != NULL) {
+        lv_textarea_set_password_mode(s_wifipwd_ta, s_wifipwd_hidden);
+    }
+    if (s_wifipwd_eye_label != NULL) {
+        lv_label_set_text(s_wifipwd_eye_label, s_wifipwd_hidden ? "显示" : "隐藏");
+    }
+}
+
+static void wifi_pwd_connect_cb(lv_event_t *e)
+{
+    if (tap_is_drag(e)) {
+        return;
+    }
+    wifi_pwd_do_connect();
+}
+
+/* ---- 密码键盘：4 行 ASCII 自绘键盘 -------------------------------------
+ * 不用 lv_keyboard：它的构造函数把 align 设成 BOTTOM_MID，之后 set_pos
+ * 只改 x/y 偏移，实际仍贴在屏幕底部（键盘被圆屏裁掉）。这里用
+ * buttonmatrix 完全控制尺寸/位置，并只用 0x20-0x7E 字符，字体不会缺字。 */
+
+static const char *const kp_map_lc[] = {
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    "Aa", "z", "x", "c", "v", "b", "n", "m", "Del", "\n",
+    "1#", "space", ".", "OK", ""
+};
+static const lv_buttonmatrix_ctrl_t kp_ctrl_lc[] = {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 4, 1, 2
+};
+
+static const char *const kp_map_uc[] = {
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n",
+    "A", "S", "D", "F", "G", "H", "J", "K", "L", "\n",
+    "abc", "Z", "X", "C", "V", "B", "N", "M", "Del", "\n",
+    "1#", "space", ".", "OK", ""
+};
+static const lv_buttonmatrix_ctrl_t kp_ctrl_uc[] = {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 4, 1, 2
+};
+
+static const char *const kp_map_num[] = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n",
+    "-", "_", "=", "+", "/", ":", ";", "(", ")", "@", "\n",
+    "#", "$", "%", "&", "*", "\"", "'", "!", "?", "Del", "\n",
+    "abc", "space", ".", "OK", ""
+};
+static const lv_buttonmatrix_ctrl_t kp_ctrl_num[] = {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 4, 1, 2
+};
+
+static void wifi_pwd_kb_apply(void)
+{
+    if (s_wifipwd_kb == NULL) {
+        return;
+    }
+    const char *const *map = kp_map_lc;
+    const lv_buttonmatrix_ctrl_t *ctrl = kp_ctrl_lc;
+    if (s_wifipwd_kb_mode == KP_UC) {
+        map = kp_map_uc;
+        ctrl = kp_ctrl_uc;
+    } else if (s_wifipwd_kb_mode == KP_NUM) {
+        map = kp_map_num;
+        ctrl = kp_ctrl_num;
+    }
+    lv_buttonmatrix_set_map(s_wifipwd_kb, map);
+    lv_buttonmatrix_set_ctrl_map(s_wifipwd_kb, ctrl);
+}
+
+static void wifi_pwd_keypad_cb(lv_event_t *e)
+{
+    lv_obj_t *btnm = lv_event_get_current_target(e);
+    uint32_t id = lv_buttonmatrix_get_selected_button(btnm);
+    if (id == LV_BUTTONMATRIX_BUTTON_NONE) {
+        return;
+    }
+    const char *txt = lv_buttonmatrix_get_button_text(btnm, id);
+    if (txt == NULL) {
+        return;
+    }
+
+    if (strcmp(txt, "Aa") == 0) {
+        s_wifipwd_kb_mode = KP_UC;
+        wifi_pwd_kb_apply();
+        return;
+    }
+    if (strcmp(txt, "abc") == 0) {
+        s_wifipwd_kb_mode = KP_LC;
+        wifi_pwd_kb_apply();
+        return;
+    }
+    if (strcmp(txt, "1#") == 0) {
+        s_wifipwd_kb_mode = KP_NUM;
+        wifi_pwd_kb_apply();
+        return;
+    }
+    if (strcmp(txt, "Del") == 0) {
+        if (s_wifipwd_ta != NULL) {
+            lv_textarea_delete_char(s_wifipwd_ta);
+        }
+        return;
+    }
+    if (strcmp(txt, "OK") == 0) {
+        wifi_pwd_do_connect();
+        return;
+    }
+    if (s_wifipwd_ta == NULL || s_wifipwd_connecting) {
+        return;
+    }
+    lv_textarea_add_text(s_wifipwd_ta, strcmp(txt, "space") == 0 ? " " : txt);
+}
+
+/* -------------------------------------------------------------------------- */
 /* 表盘构建                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/* 递归清掉子控件的 CLICKABLE：装饰图形默认可点，会截走表盘的按压事件 */
+static void clear_clickable_tree(lv_obj_t *o)
+{
+    uint32_t n = lv_obj_get_child_count(o);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *c = lv_obj_get_child(o, i);
+        lv_obj_remove_flag(c, LV_OBJ_FLAG_CLICKABLE);
+        clear_clickable_tree(c);
+    }
+}
+
 static void build_dial(lv_obj_t *page)
 {
+    /* 装饰层：外环 / 电量 / 天气 / Wi-Fi / 日期都放这里。
+     * 睡眠模式整层隐藏，只留下单独挂在 page 上的时间；
+     * 容器本身不可点、不可滚，触摸仍然落到 page 上做下拉。 */
+    lv_obj_t *deco = lv_obj_create(page);
+    lv_obj_remove_style_all(deco);
+    lv_obj_remove_flag(deco, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(deco, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(deco, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(deco, 0, 0);
+    s_dial_deco = deco;
+
     /* 外圈：亮黄 + 橙的暖色儿童科技环，常驻。三段之间留 4° 呼吸口，不做刻度。
      * 每段自带柔光与白色外侧高光，形成一点毛玻璃反光。 */
-    mk_ring_seg(page, 2, 118, COL_RING_YELLOW);
-    mk_ring_seg(page, 122, 238, COL_RING_ORANGE);
-    mk_ring_seg(page, 242, 358, COL_RING_SKY);
+    mk_ring_seg(deco, 2, 118, COL_RING_YELLOW);
+    mk_ring_seg(deco, 122, 238, COL_RING_ORANGE);
+    mk_ring_seg(deco, 242, 358, COL_RING_SKY);
 
     /* 底部电量弧：贴着外圈向里收一圈，闪电 + 百分比就是电量语义。
      * 电量主色固定绿色，充电时额外叠一层天蓝辉光做区分。 */
-    s_batt_glow = mk_arc_prog(page, CENTER_X, CENTER_Y, BATT_SIZE, BATT_WIDTH * 2,
+    s_batt_glow = mk_arc_prog(deco, CENTER_X, CENTER_Y, BATT_SIZE, BATT_WIDTH * 2,
                               BATT_FROM_DEG, BATT_TO_DEG, COL_LIME, LV_OPA_20);
     lv_obj_add_flag(s_batt_glow, LV_OBJ_FLAG_HIDDEN);
-    s_batt_track = mk_arc_seg(page, CENTER_X, CENTER_Y, BATT_SIZE, BATT_WIDTH,
+    s_batt_track = mk_arc_seg(deco, CENTER_X, CENTER_Y, BATT_SIZE, BATT_WIDTH,
                               BATT_FROM_DEG, BATT_TO_DEG, COL_LINE, LV_OPA_60);
-    s_batt_arc = mk_arc_prog(page, CENTER_X, CENTER_Y, BATT_SIZE, BATT_WIDTH,
+    s_batt_arc = mk_arc_prog(deco, CENTER_X, CENTER_Y, BATT_SIZE, BATT_WIDTH,
                              BATT_FROM_DEG, BATT_TO_DEG, COL_GREEN, LV_OPA_COVER);
 
     static const lv_point_precise_t bolt_pts[] = {
         {6, 0}, {1, 8}, {5, 8}, {2, 16}, {11, 6}, {6, 6}, {6, 0},
     };
-    s_batt_bolt = lv_line_create(page);
+    s_batt_bolt = lv_line_create(deco);
     lv_line_set_points(s_batt_bolt, bolt_pts, 7);
     lv_obj_set_pos(s_batt_bolt, 194, 371);
     lv_obj_set_style_line_width(s_batt_bolt, 2, 0);
     lv_obj_set_style_line_color(s_batt_bolt, COL_GREEN, 0);
     lv_obj_set_style_line_rounded(s_batt_bolt, true, 0);
 
-    s_batt_pct = mk_label(page, "94%", &epw_cjk_20, COL_GREEN,
+    s_batt_pct = mk_label(deco, "94%", &epw_cjk_20, COL_GREEN,
                           203, 368, 60, LV_TEXT_ALIGN_CENTER);
 
     /* 顶部天气：绿色分割弧 + 太阳 + 温度 + 天气词，贴近上沿 */
-    mk_arc_seg(page, CENTER_X, CENTER_Y, 402, 3, 338, 382, COL_GREEN, LV_OPA_80);
-    lv_obj_t *sun = mk_sun_icon(page, 22, COL_AMBER);
+    mk_arc_seg(deco, CENTER_X, CENTER_Y, 402, 3, 338, 382, COL_GREEN, LV_OPA_80);
+    lv_obj_t *sun = mk_sun_icon(deco, 22, COL_AMBER);
     lv_obj_set_pos(sun, 184, 44);
-    mk_label(page, "24°", &epw_cjk_20, COL_TEXT, 212, 38, 56, LV_TEXT_ALIGN_LEFT);
-    mk_label(page, "晴", &epw_cjk_16, COL_AMBER, 266, 42, 24, LV_TEXT_ALIGN_LEFT);
+    mk_label(deco, "24°", &epw_cjk_20, COL_TEXT, 212, 38, 56, LV_TEXT_ALIGN_LEFT);
+    mk_label(deco, "晴", &epw_cjk_16, COL_AMBER, 266, 42, 24, LV_TEXT_ALIGN_LEFT);
 
     /* Wi-Fi 状态：只保留图标，用颜色表达（青=在线 / 琥珀=连接中 / 珊瑚=断开） */
-    draw_wifi(page, 372, 102, COL_TEAL);
+    draw_wifi(deco, 372, 102, COL_TEAL);
 
-    /* 中央：超大号圆润数字时间，垂直居中并整体下移，不再顶在上沿 */
+    /* 中央：超大号圆润数字时间，垂直居中并整体下移，不再顶在上沿。
+     * 时间不放进装饰层，睡眠模式下要单独保留。 */
     s_time = mk_label(page, "10:09", &epw_time_150, COL_TEXT,
                       0, 176, SCREEN_W, LV_TEXT_ALIGN_CENTER);
     lv_obj_set_style_text_letter_space(s_time, 1, 0);
 
     /* 中文日期 + 星期：20px，位于时间下方留白里 */
-    s_date = mk_label(page, "11月16日 周一", &epw_cjk_20,
+    s_date = mk_label(deco, "11月16日 周一", &epw_cjk_20,
                       lv_color_hex(0xD6E2F0), 0, 300, SCREEN_W, LV_TEXT_ALIGN_CENTER);
 
-    /* 表盘下滑打开控制中心（iWatch / 华为手表交互） */
-    lv_obj_add_event_cb(page, dial_event_cb, LV_EVENT_GESTURE, NULL);
+    /* 表盘装饰物不接收点击，所有按压都落到 page 上，才能跟手下拉控制中心 */
+    clear_clickable_tree(page);
+
+    /* 华为手表式跟手下拉：不依赖手势识别，手指拖多少露出多少 */
+    lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_PRESS_LOST, NULL);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1545,79 +2367,56 @@ static void build_center(void)
     /* 自己收手势，子磁贴保留默认冒泡 */
     lv_obj_remove_flag(s_center, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_flag(s_center, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(s_center, center_event_cb, LV_EVENT_GESTURE, NULL);
+    /* 跟手上滑收起：磁贴上的按压通过 EVENT_BUBBLE 冒泡到这里统一处理 */
+    lv_obj_add_event_cb(s_center, center_drag_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_center, center_drag_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(s_center, center_drag_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(s_center, center_drag_cb, LV_EVENT_PRESS_LOST, NULL);
 
-    mk_label(s_center, "控制中心", &epw_cjk_20, COL_TEXT,
-             0, 48, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-
-    /* 4 + 3 磁贴：第一行四个功能，第二行三个调节项，给手电留出位置 */
+    /* 纯图标磁贴：没有标题、没有磁贴名、没有数值文字 */
     const int cols4[4] = {74, 180, 286, 392};
     const int cols3[3] = {128, 233, 338};
-    const int row_top = 168;
-    const int row_bottom = 300;
+    const int row_top = 140;
+    const int row_bottom = 272;
 
     /* 状态：青绿圆底 + 白色信息符号 */
-    lv_obj_t *t_status = tile_create(s_center, cols4[0], row_top, "状态", COL_TEAL);
+    lv_obj_t *t_status = tile_create(s_center, cols4[0], row_top, COL_TEAL);
     lv_obj_add_event_cb(t_status, center_status_cb, LV_EVENT_CLICKED, NULL);
-    draw_status_icon(t_status, TILE_D / 2, TILE_D / 2 + 10);
+    draw_status_icon(t_status, TILE_D / 2, TILE_D / 2);
 
-    /* 天气：太阳 + 云 + 温度 */
-    lv_obj_t *t_weather = tile_create(s_center, cols4[1], row_top, "天气", COL_BLUE);
+    /* 天气：太阳 + 云 */
+    lv_obj_t *t_weather = tile_create(s_center, cols4[1], row_top, COL_BLUE);
     lv_obj_add_event_cb(t_weather, center_weather_cb, LV_EVENT_CLICKED, NULL);
     draw_weather_icon(t_weather, TILE_D / 2, TILE_D / 2);
-    mk_label(t_weather, "24°", &epw_cjk_20, COL_TEXT,
-             0, 58, TILE_D, LV_TEXT_ALIGN_CENTER);
 
-    /* 电量：白描边电池 + 绿色电量 + 黄色闪电 + 百分比 */
-    lv_obj_t *t_bat = tile_create(s_center, cols4[2], row_top, "电量", COL_GREEN);
+    /* 电量：白描边电池 + 绿色电量 + 黄色闪电 */
+    lv_obj_t *t_bat = tile_create(s_center, cols4[2], row_top, COL_GREEN);
     lv_obj_add_event_cb(t_bat, center_battery_cb, LV_EVENT_CLICKED, NULL);
-    draw_battery_icon(t_bat, TILE_D / 2, TILE_D / 2 - 4);
-    s_cc_bat_pct = mk_label(t_bat, "94%", &lv_font_montserrat_20, COL_GREEN,
-                            0, 52, TILE_D, LV_TEXT_ALIGN_CENTER);
+    draw_battery_icon(t_bat, TILE_D / 2, TILE_D / 2);
 
     /* 手电：整屏纯白 + 最大亮度，双击白屏退出 */
-    lv_obj_t *t_torch = tile_create(s_center, cols4[3], row_top, "手电",
-                                    COL_RING_YELLOW);
+    lv_obj_t *t_torch = tile_create(s_center, cols4[3], row_top, COL_RING_YELLOW);
     lv_obj_add_event_cb(t_torch, center_torch_cb, LV_EVENT_CLICKED, NULL);
-    draw_torch(t_torch, TILE_D / 2, TILE_D / 2 + 10, COL_RING_YELLOW);
+    draw_torch(t_torch, TILE_D / 2, TILE_D / 2 + 6, COL_RING_YELLOW);
 
     /* 亮度：点开独立调节页，上下拖动 */
-    lv_obj_t *t_bright = tile_create(s_center, cols3[0], row_bottom, "亮度",
-                                     COL_AMBER);
+    lv_obj_t *t_bright = tile_create(s_center, cols3[0], row_bottom, COL_AMBER);
     lv_obj_add_event_cb(t_bright, center_bright_cb, LV_EVENT_CLICKED, NULL);
-    draw_sun_duo(t_bright, TILE_D / 2, TILE_D / 2 - 2, 5,
+    draw_sun_duo(t_bright, TILE_D / 2, TILE_D / 2, 5,
                  COL_AMBER, lv_color_hex(0xFFFF00));
-    s_cc_bright_pct = mk_label(t_bright, "80%", &lv_font_montserrat_20, COL_TEXT,
-                               0, 54, TILE_D, LV_TEXT_ALIGN_CENTER);
 
-    /* 音量：点开独立调节页，上下拖动（音频未初始化，仅界面演示） */
-    lv_obj_t *t_vol = tile_create(s_center, cols3[1], row_bottom, "音量",
-                                  COL_PINK);
+    /* 音量：点开独立调节页，上下拖动；直接驱动 ES8311 输出音量 */
+    lv_obj_t *t_vol = tile_create(s_center, cols3[1], row_bottom, COL_PINK);
     lv_obj_add_event_cb(t_vol, center_volume_cb, LV_EVENT_CLICKED, NULL);
-    draw_speaker(t_vol, 26, 32, COL_TEXT);
-    s_cc_vol_pct = mk_label(t_vol, "0", &lv_font_montserrat_20, COL_TEXT,
-                            0, 56, TILE_D, LV_TEXT_ALIGN_CENTER);
+    draw_speaker(t_vol, 26, 31, COL_TEXT);
 
-    /* 宠物 Mimi Cat（3D 正脸） */
-    lv_obj_t *t_ai = tile_create(s_center, cols3[2], row_bottom, "Mimi Cat",
-                                 COL_PINK);
-    lv_obj_add_event_cb(t_ai, center_ai_cb, LV_EVENT_CLICKED, NULL);
-    s_ai_img = lv_image_create(t_ai);
-    lv_image_set_src(s_ai_img, &pip_face_happy);
-    lv_image_set_scale(s_ai_img, 56);
-    lv_obj_remove_flag(s_ai_img, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(s_ai_img, LV_ALIGN_CENTER, 0, 10);
-
-    /* 收起 */
-    lv_obj_t *close = mk_box(s_center, 167, 396, 132, 34, COL_SURF, LV_OPA_COVER, 17);
-    lv_obj_set_style_border_width(close, 1, 0);
-    lv_obj_set_style_border_color(close, COL_LINE, 0);
-    lv_obj_add_flag(close, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(close, center_close_cb, LV_EVENT_CLICKED, NULL);
-    mk_label(close, "上滑收起", &epw_cjk_16, COL_MUTED,
-             0, 7, 132, LV_TEXT_ALIGN_CENTER);
+    /* 睡眠：点一下进入只显示时间黑白表盘，再点恢复 */
+    s_cc_sleep = tile_create(s_center, cols3[2], row_bottom, COL_PURPLE);
+    lv_obj_add_event_cb(s_cc_sleep, center_sleep_cb, LV_EVENT_CLICKED, NULL);
+    draw_moon(s_cc_sleep, TILE_D / 2, TILE_D / 2, COL_PURPLE);
 
     lv_obj_add_flag(s_center, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_y(s_center, -SCREEN_H);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1769,11 +2568,11 @@ static void build_slider(void)
     lv_obj_set_style_line_color(l, COL_MUTED, 0);
     lv_obj_set_style_line_rounded(l, true, 0);
 
-    /* 只保留当前值；不写标题和操作说明 */
-    s_slider_value = mk_label(s_slider, "80%", &lv_font_montserrat_28, COL_TECH_GREEN,
+    /* 只保留当前值：不写标题、说明、端点刻度和百分号 */
+    s_slider_value = mk_label(s_slider, "80", &lv_font_montserrat_28, COL_TECH_GREEN,
                               0, 52, SCREEN_W, LV_TEXT_ALIGN_CENTER);
 
-    /* 竖向粗轨道：底部 0%，顶部 100%，必须按在轨道上才能拖动 */
+    /* 竖向粗轨道：底部最小、顶部最大，必须按在轨道上才能拖动 */
     s_slider_track = mk_box(s_slider, SLIDER_TRACK_X, SLIDER_TRACK_TOP,
                             SLIDER_TRACK_W, SLIDER_TRACK_H,
                             COL_LINE, LV_OPA_60, SLIDER_TRACK_W / 2);
@@ -1787,13 +2586,6 @@ static void build_slider(void)
     lv_obj_add_event_cb(s_slider_fill, slider_press_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_slider_fill, slider_press_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(s_slider_fill, slider_press_cb, LV_EVENT_RELEASED, NULL);
-
-    mk_label(s_slider, "100", &epw_cjk_16, COL_MUTED,
-             SLIDER_TRACK_X + SLIDER_TRACK_W + 14, SLIDER_TRACK_TOP - 8,
-             42, LV_TEXT_ALIGN_LEFT);
-    mk_label(s_slider, "0", &epw_cjk_16, COL_MUTED,
-             SLIDER_TRACK_X + SLIDER_TRACK_W + 14, SLIDER_TRACK_TOP + SLIDER_TRACK_H - 10,
-             42, LV_TEXT_ALIGN_LEFT);
 
     lv_obj_add_flag(s_slider, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1824,107 +2616,72 @@ static void build_torch(void)
 }
 
 /* -------------------------------------------------------------------------- */
-/* 应用桌面（Mac Launchpad 风格）                                               */
+/* 应用桌面（华为手表风格 2 列 × 3 行网格）                                      */
 /* -------------------------------------------------------------------------- */
 
+/* 顺序即网格顺序：首行（Mimi / 状态）— 末行（网络，居中）
+ * 控制中心只从表盘下拉进入；音量 / 亮度 / 手电不放进应用桌面 */
 enum {
     APP_PET = 0,
-    APP_CENTER,
     APP_STATUS,
-    APP_WEATHER,
-    APP_BRIGHT,
-    APP_VOLUME,
+    APP_WIFI,
 };
 
-#define APP_ROOT_W 120
-#define APP_ROOT_H 132
-
-static void app_slot_pos(int slot, lv_coord_t *x, lv_coord_t *y)
+/* 图标 i 所在行相对中心的偏移（单位：行），不做环形回绕：桌面有边界，像一张布上下滚 */
+static float app_row_delta(int i)
 {
-    *x = s_app_cx[slot % 3] - APP_ROOT_W / 2;
-    *y = s_app_cy[slot / 3] - APP_ICON_D / 2;
+    return (float)(i / APP_COLS) - s_app_scroll;
 }
 
-/* NVS 持久化：6 个图标各自的槽位（0..5） */
-static void apps_load_slots(void)
+/* 离中心行越远越小：中心 1.0，相邻一行约 0.68，最外 0.46 */
+static int app_row_scale(float delta)
 {
-    for (int i = 0; i < APP_COUNT; i++) {
-        s_app_slot[i] = i;
+    float s = 1.0f - APP_GRID_SCALE_DROP * fabsf(delta);
+    if (s < APP_GRID_MIN_SCALE) {
+        s = APP_GRID_MIN_SCALE;
     }
-
-    nvs_handle_t h;
-    if (nvs_open("epw_apps", NVS_READONLY, &h) != ESP_OK) {
-        return;
-    }
-    uint8_t buf[APP_COUNT];
-    size_t len = sizeof(buf);
-    if (nvs_get_blob(h, "slots", buf, &len) == ESP_OK && len == APP_COUNT) {
-        bool used[APP_COUNT] = {0};
-        bool ok = true;
-        for (int i = 0; i < APP_COUNT; i++) {
-            if (buf[i] >= APP_COUNT || used[buf[i]]) {
-                ok = false;
-                break;
-            }
-            used[buf[i]] = true;
-        }
-        if (ok) {
-            memcpy(s_app_slot, buf, APP_COUNT);
-        }
-    }
-    nvs_close(h);
+    return (int)(s * 256.0f);
 }
 
-static void apps_save_slots(void)
+/* 网格列圆心：偶数列也精确居中（2 列 → 158 / 308）；
+ * 末行不足一整行时（如只剩天气）单独居中，不偏到左边 */
+static int app_col_x(int i)
 {
-    uint8_t buf[APP_COUNT];
-    for (int i = 0; i < APP_COUNT; i++) {
-        buf[i] = (uint8_t)s_app_slot[i];
+    int row = i / APP_COLS;
+    int in_row = APP_COUNT - row * APP_COLS;
+    if (in_row > APP_COLS) {
+        in_row = APP_COLS;
     }
-
-    nvs_handle_t h;
-    esp_err_t err = nvs_open("epw_apps", NVS_READWRITE, &h);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "nvs open failed: %s", esp_err_to_name(err));
-        return;
+    if (in_row == 1) {
+        return CENTER_X;
     }
-    if (nvs_set_blob(h, "slots", buf, sizeof(buf)) == ESP_OK) {
-        nvs_commit(h);
-    }
-    nvs_close(h);
+    float half = ((float)APP_COLS - 1.0f) * 0.5f;
+    return CENTER_X + (int)lroundf(((float)(i % APP_COLS) - half) * (float)APP_GRID_DX);
 }
 
-static void app_icon_move_to(lv_obj_t *icon, lv_coord_t x, lv_coord_t y)
-{
-    lv_anim_delete(icon, NULL);
-
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, icon);
-    lv_anim_set_values(&a, lv_obj_get_x(icon), x);
-    lv_anim_set_duration(&a, 200);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a, anim_x_cb);
-    lv_anim_start(&a);
-
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, icon);
-    lv_anim_set_values(&a, lv_obj_get_y(icon), y);
-    lv_anim_set_duration(&a, 200);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a, anim_y_cb);
-    lv_anim_start(&a);
-}
-
+/* 整页按滚动位置重排：网格整体上下滚，位置、缩放、透明度一起变 */
 static void apps_layout_icons(void)
 {
     for (int i = 0; i < APP_COUNT; i++) {
-        if (s_app_icons[i] == NULL) {
+        lv_obj_t *icon = s_app_icons[i];
+        if (icon == NULL) {
             continue;
         }
-        lv_coord_t x, y;
-        app_slot_pos(s_app_slot[i], &x, &y);
-        app_icon_move_to(s_app_icons[i], x, y);
+        float d = app_row_delta(i);
+        float ad = fabsf(d);
+        int cx = app_col_x(i);
+        int cy = (int)(APP_GRID_CY + d * APP_GRID_DY);
+        lv_obj_set_pos(icon, cx - APP_ROOT_W / 2, cy - APP_ROOT_H / 2);
+
+        int scale = app_row_scale(d);
+        lv_obj_set_style_transform_scale_x(icon, scale, 0);
+        lv_obj_set_style_transform_scale_y(icon, scale, 0);
+
+        int opa = 255 - (int)(95.0f * ad);
+        if (opa < 70) {
+            opa = 70;
+        }
+        lv_obj_set_style_opa(icon, (lv_opa_t)opa, 0);
     }
 }
 
@@ -1934,165 +2691,166 @@ static void app_open_index(int idx)
     case APP_PET:
         ui_pet_set_state(UI_PET_HAPPY, NULL);
         break;
-    case APP_CENTER:
-        center_open();
-        break;
     case APP_STATUS:
         status_open();
         break;
-    case APP_WEATHER:
-        toast_show("天气 24°");
-        break;
-    case APP_BRIGHT:
-        slider_open(SLIDER_BRIGHT);
-        break;
-    case APP_VOLUME:
-        slider_open(SLIDER_VOLUME);
+    case APP_WIFI:
+        wifi_open();
         break;
     default:
         break;
     }
 }
 
-/* 松手吸附到最近的槽位；目标槽被占用时两个图标交换位置 */
-static void apps_drop_icon(int idx)
+/* 松手吸附到最近的一行；动画只改滚动值，位置/缩放统一由 apps_layout_icons 计算 */
+static void app_scroll_anim_cb(void *var, int32_t value)
 {
-    lv_obj_t *icon = s_app_icons[idx];
-    int cx = lv_obj_get_x(icon) + APP_ROOT_W / 2;
-    int cy = lv_obj_get_y(icon) + APP_ICON_D / 2;
-
-    int best = 0;
-    long best_d = 0x7fffffffL;
-    for (int s = 0; s < APP_COUNT; s++) {
-        int dx = cx - s_app_cx[s % 3];
-        int dy = cy - s_app_cy[s / 3];
-        long d = (long)dx * dx + (long)dy * dy;
-        if (d < best_d) {
-            best_d = d;
-            best = s;
-        }
-    }
-
-    int old = s_app_slot[idx];
-    if (best != old) {
-        int other = -1;
-        for (int i = 0; i < APP_COUNT; i++) {
-            if (i != idx && s_app_slot[i] == best) {
-                other = i;
-                break;
-            }
-        }
-        s_app_slot[idx] = best;
-        if (other >= 0) {
-            s_app_slot[other] = old;
-        }
-        apps_save_slots();
-    }
+    LV_UNUSED(var);
+    s_app_scroll = (float)value / 256.0f;
     apps_layout_icons();
 }
 
-static void app_icon_event_cb(lv_event_t *e)
+static void app_scroll_clamp(void)
+{
+    if (s_app_scroll < 0.0f) {
+        s_app_scroll = 0.0f;
+    }
+    if (s_app_scroll > (float)(APP_ROWS - 1)) {
+        s_app_scroll = (float)(APP_ROWS - 1);
+    }
+}
+
+static void apps_snap(void)
+{
+    int32_t from;
+    int32_t to;
+
+    app_scroll_clamp();
+    from = (int32_t)lroundf(s_app_scroll * 256.0f);
+    s_app_scroll = lroundf(s_app_scroll);
+    app_scroll_clamp();
+    to = (int32_t)lroundf(s_app_scroll) * 256;
+
+    lv_anim_delete(s_apps, app_scroll_anim_cb);
+    if (from == to) {
+        apps_layout_icons();
+        return;
+    }
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_apps);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_duration(&a, 260);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, app_scroll_anim_cb);
+    lv_anim_start(&a);
+}
+
+/* 点按：按当前滚动位置做圆形命中检测，点到哪个图标就打开哪个 */
+static void apps_open_at(lv_point_t p)
+{
+    int best = -1;
+    float best_d = 1e9f;
+    for (int i = 0; i < APP_COUNT; i++) {
+        float d = app_row_delta(i);
+        if (fabsf(d) > 1.2f) {
+            continue;
+        }
+        float scale = (float)app_row_scale(d) / 256.0f;
+        float cx = (float)app_col_x(i);
+        float cy = (float)APP_GRID_CY + d * (float)APP_GRID_DY;
+        float dx = (float)p.x - cx;
+        float dy = (float)p.y - cy;
+        float r = APP_ICON_D * 0.5f * scale + 14.0f;
+        float dist = sqrtf(dx * dx + dy * dy);
+        if (dist <= r && dist < best_d) {
+            best_d = dist;
+            best = i;
+        }
+    }
+    if (best >= 0) {
+        app_open_index(best);
+    }
+}
+
+/* 整页拖动：上下拖动整张网格像布一样滚动，松手吸附；不支持滑动退出 */
+static void apps_touch_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
-    int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    lv_obj_t *icon = (lv_obj_t *)lv_event_get_current_target(e);
-    if (icon == NULL) {
-        return;
-    }
-
-    if (code == LV_EVENT_PRESSED) {
-        if (s_app_drag_icon >= 0) {
-            return;
-        }
-        s_app_drag_icon = idx;
-        s_app_drag_moved = false;
-        lv_indev_t *indev = lv_event_get_indev(e);
-        if (indev != NULL) {
-            lv_indev_get_point(indev, &s_app_drag_press);
-        }
-        s_app_drag_x0 = lv_obj_get_x(icon);
-        s_app_drag_y0 = lv_obj_get_y(icon);
-        lv_obj_move_foreground(icon);
-    } else if (code == LV_EVENT_PRESSING) {
-        if (s_app_drag_icon != idx) {
-            return;
-        }
-        lv_indev_t *indev = lv_event_get_indev(e);
-        if (indev == NULL) {
-            return;
-        }
-        lv_point_t p;
-        lv_indev_get_point(indev, &p);
-        int dx = p.x - s_app_drag_press.x;
-        int dy = p.y - s_app_drag_press.y;
-        if (abs(dx) > 8 || abs(dy) > 8) {
-            s_app_drag_moved = true;
-        }
-        if (s_app_drag_moved) {
-            lv_obj_set_pos(icon, s_app_drag_x0 + dx, s_app_drag_y0 + dy);
-        }
-    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        if (s_app_drag_icon != idx) {
-            return;
-        }
-        s_app_drag_icon = -1;
-        if (code == LV_EVENT_RELEASED && !s_app_drag_moved) {
-            app_open_index(idx);
-        } else {
-            apps_drop_icon(idx);
-        }
-    }
-}
-
-static void apps_back_cb(lv_event_t *e)
-{
-    if (tap_is_drag(e)) {
-        return;
-    }
-    apps_close();
-}
-
-/* 应用桌面上滑：像 Launchpad 一样收起 */
-static void apps_event_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_GESTURE) {
-        return;
-    }
     lv_indev_t *indev = lv_event_get_indev(e);
     if (indev == NULL) {
         return;
     }
-    if (lv_indev_get_gesture_dir(indev) == LV_DIR_TOP) {
-        apps_close();
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    if (code == LV_EVENT_PRESSED) {
+        lv_anim_delete(s_apps, app_scroll_anim_cb);
+        s_app_drag_active = true;
+        s_app_drag_moved = false;
+        s_app_press = p;
+        s_app_scroll_start = s_app_scroll;
+    } else if (code == LV_EVENT_PRESSING) {
+        if (!s_app_drag_active) {
+            return;
+        }
+        int dy = p.y - s_app_press.y;
+        if (abs(dy) > APP_GRID_DRAG_TH) {
+            s_app_drag_moved = true;
+        }
+        if (s_app_drag_moved) {
+            s_app_scroll = s_app_scroll_start - (float)dy / (float)APP_GRID_DY;
+            app_scroll_clamp();
+            apps_layout_icons();
+        }
+    } else if (code == LV_EVENT_RELEASED) {
+        if (!s_app_drag_active) {
+            return;
+        }
+        s_app_drag_active = false;
+        if (s_app_drag_moved) {
+            apps_snap();
+        } else {
+            apps_open_at(p);
+        }
+    } else if (code == LV_EVENT_PRESS_LOST) {
+        if (!s_app_drag_active) {
+            return;
+        }
+        s_app_drag_active = false;
+        if (s_app_drag_moved) {
+            apps_snap();
+        }
     }
 }
 
-static lv_obj_t *app_icon_create(lv_obj_t *parent, int idx, const char *label,
-                                 lv_color_t accent)
+/* 图标内所有子对象都不接收点击，触摸统一交给 s_apps 做整页滚动 / 点按判定 */
+static void app_icon_clear_clickable(lv_obj_t *o)
+{
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    uint32_t n = lv_obj_get_child_count(o);
+    for (uint32_t i = 0; i < n; i++) {
+        app_icon_clear_clickable(lv_obj_get_child(o, i));
+    }
+}
+
+static lv_obj_t *app_icon_create(lv_obj_t *parent, lv_color_t accent)
 {
     lv_obj_t *root = mk_box(parent, 0, 0, APP_ROOT_W, APP_ROOT_H,
                             COL_BG, LV_OPA_TRANSP, 0);
-    lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(root, app_icon_event_cb, LV_EVENT_PRESSED,
-                        (void *)(intptr_t)idx);
-    lv_obj_add_event_cb(root, app_icon_event_cb, LV_EVENT_PRESSING,
-                        (void *)(intptr_t)idx);
-    lv_obj_add_event_cb(root, app_icon_event_cb, LV_EVENT_RELEASED,
-                        (void *)(intptr_t)idx);
-    lv_obj_add_event_cb(root, app_icon_event_cb, LV_EVENT_PRESS_LOST,
-                        (void *)(intptr_t)idx);
+    /* 以圆盘中心为缩放基准，避免图标放大时整体偏移 */
+    lv_obj_set_style_transform_pivot_x(root, APP_ROOT_W / 2, 0);
+    lv_obj_set_style_transform_pivot_y(root, APP_ICON_D / 2, 0);
 
     lv_obj_t *disc = mk_circle(root, APP_ROOT_W / 2, APP_ICON_D / 2, APP_ICON_D,
                                COL_SURF_HI, LV_OPA_COVER);
     lv_obj_set_style_border_width(disc, 1, 0);
     lv_obj_set_style_border_color(disc, accent, 0);
-    lv_obj_set_style_border_opa(disc, LV_OPA_60, 0);
-    lv_obj_set_style_shadow_width(disc, 18, 0);
-    lv_obj_set_style_shadow_color(disc, accent, 0);
-    lv_obj_set_style_shadow_opa(disc, LV_OPA_20, 0);
+    lv_obj_set_style_border_opa(disc, LV_OPA_80, 0);
+    /* 去掉外阴影：网格整页滚动时每帧重绘阴影会明显掉帧 */
 
-    mk_label(root, label, &epw_cjk_16, COL_TEXT,
-             0, APP_ICON_D + 6, APP_ROOT_W, LV_TEXT_ALIGN_CENTER);
+    app_icon_clear_clickable(root);
     return root;
 }
 
@@ -2103,22 +2861,18 @@ static void build_apps(void)
     lv_obj_remove_flag(s_apps, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(s_apps, SCREEN_W, SCREEN_H);
     lv_obj_set_pos(s_apps, 0, 0);
-    lv_obj_set_style_bg_color(s_apps, lv_color_hex(0x060A10), 0);
-    lv_obj_set_style_bg_grad_color(s_apps, lv_color_hex(0x111E2C), 0);
-    lv_obj_set_style_bg_grad_dir(s_apps, LV_GRAD_DIR_VER, 0);
+    /* 纯色背景：竖向渐变在整页滚动时每帧都要重算，纯色更顺 */
+    lv_obj_set_style_bg_color(s_apps, lv_color_hex(0x0A1018), 0);
     lv_obj_set_style_bg_opa(s_apps, LV_OPA_COVER, 0);
     lv_obj_add_flag(s_apps, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(s_apps, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_add_event_cb(s_apps, apps_event_cb, LV_EVENT_GESTURE, NULL);
+    /* 整页手势：按住任意位置上下拖动即可像布一样滚动，松手吸附；不支持滑动退出 */
+    lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_PRESS_LOST, NULL);
 
-    mk_label(s_apps, "Mimi 的桌面", &epw_cjk_20, COL_TEXT,
-             0, 34, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-    mk_label(s_apps, "点按打开 · 拖动换位", &epw_cjk_16, COL_MUTED,
-             0, 62, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-
-    apps_load_slots();
-
-    s_app_icons[APP_PET] = app_icon_create(s_apps, APP_PET, "Mimi", COL_PINK);
+    /* 首行：Mimi 宠物 / 状态 */
+    s_app_icons[APP_PET] = app_icon_create(s_apps, COL_PINK);
     lv_obj_t *disc = lv_obj_get_child(s_app_icons[APP_PET], 0);
     lv_obj_t *img = lv_image_create(disc);
     lv_image_set_src(img, &pip_face_happy);
@@ -2126,43 +2880,214 @@ static void build_apps(void)
     lv_obj_remove_flag(img, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
 
-    s_app_icons[APP_CENTER] = app_icon_create(s_apps, APP_CENTER, "控制中心", COL_TEAL);
-    disc = lv_obj_get_child(s_app_icons[APP_CENTER], 0);
-    for (int gy = 0; gy < 3; gy++) {
-        for (int gx = 0; gx < 3; gx++) {
-            mk_box(disc, 48 - 11 + gx * 8, 48 - 11 + gy * 8, 5, 5,
-                   COL_TEAL, LV_OPA_COVER, 2);
-        }
-    }
-
-    s_app_icons[APP_STATUS] = app_icon_create(s_apps, APP_STATUS, "状态", COL_BLUE);
+    s_app_icons[APP_STATUS] = app_icon_create(s_apps, COL_BLUE);
     disc = lv_obj_get_child(s_app_icons[APP_STATUS], 0);
     draw_info(disc, 48, 42, COL_BLUE);
 
-    s_app_icons[APP_WEATHER] = app_icon_create(s_apps, APP_WEATHER, "天气", COL_BLUE);
-    disc = lv_obj_get_child(s_app_icons[APP_WEATHER], 0);
-    draw_sun(disc, 48, 44, 10, COL_AMBER);
+    /* 末行：网络（单图标居中） */
+    s_app_icons[APP_WIFI] = app_icon_create(s_apps, COL_BLUE);
+    disc = lv_obj_get_child(s_app_icons[APP_WIFI], 0);
+    draw_net_icon(disc, 48, 44, COL_BLUE);
 
-    s_app_icons[APP_BRIGHT] = app_icon_create(s_apps, APP_BRIGHT, "亮度", COL_AMBER);
-    disc = lv_obj_get_child(s_app_icons[APP_BRIGHT], 0);
-    draw_sun(disc, 48, 40, 7, COL_AMBER);
-    mk_label(disc, "%", &lv_font_montserrat_20, COL_TEXT,
-             0, 58, APP_ICON_D, LV_TEXT_ALIGN_CENTER);
+    lv_obj_add_flag(s_apps, LV_OBJ_FLAG_HIDDEN);
+    s_app_scroll = (float)APP_GRID_HOME_ROW;
+    apps_layout_icons();
+}
 
-    s_app_icons[APP_VOLUME] = app_icon_create(s_apps, APP_VOLUME, "音量", COL_MUTED);
-    disc = lv_obj_get_child(s_app_icons[APP_VOLUME], 0);
-    draw_speaker(disc, 32, 36, COL_MUTED);
+/* -------------------------------------------------------------------------- */
+/* 网络页构建                                                                  */
+/* -------------------------------------------------------------------------- */
 
-    /* 返回表盘胶囊 */
-    lv_obj_t *back = mk_box(s_apps, 173, 410, 120, 34, COL_SURF, LV_OPA_COVER, 17);
+static void build_wifi(void)
+{
+    s_wifi = lv_obj_create(s_screen);
+    lv_obj_remove_style_all(s_wifi);
+    lv_obj_remove_flag(s_wifi, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_wifi, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(s_wifi, 0, 0);
+    lv_obj_set_style_bg_color(s_wifi, COL_BG, 0);
+    lv_obj_set_style_bg_opa(s_wifi, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_wifi, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_flag(s_wifi, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_wifi, wifi_gesture_cb, LV_EVENT_GESTURE, NULL);
+
+    mk_label(s_wifi, "网络", &epw_cjk_20, COL_TEXT,
+             0, 38, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    s_wifi_status = mk_label(s_wifi, "未连接", &epw_cjk_16, COL_MUTED,
+                             0, 76, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+
+    /* 返回圆钮（主要关闭方式是从左往右滑） */
+    lv_obj_t *back = mk_circle(s_wifi, 54, 60, 38, COL_SURF, LV_OPA_COVER);
     lv_obj_set_style_border_width(back, 1, 0);
     lv_obj_set_style_border_color(back, COL_LINE, 0);
     lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(back, apps_back_cb, LV_EVENT_CLICKED, NULL);
-    mk_label(back, "返回表盘", &epw_cjk_16, COL_MUTED, 0, 7, 120, LV_TEXT_ALIGN_CENTER);
+    lv_obj_add_event_cb(back, wifi_back_cb, LV_EVENT_CLICKED, NULL);
+    static const lv_point_precise_t chev[] = {{21, 8}, {11, 19}, {21, 30}};
+    lv_obj_t *l = lv_line_create(back);
+    lv_line_set_points(l, chev, 3);
+    lv_obj_set_style_line_width(l, 3, 0);
+    lv_obj_set_style_line_color(l, COL_MUTED, 0);
+    lv_obj_set_style_line_rounded(l, true, 0);
 
-    lv_obj_add_flag(s_apps, LV_OBJ_FLAG_HIDDEN);
-    apps_layout_icons();
+    /* 刷新圆钮 */
+    s_wifi_refresh = mk_circle(s_wifi, 412, 60, 38, COL_SURF, LV_OPA_COVER);
+    lv_obj_set_style_border_width(s_wifi_refresh, 1, 0);
+    lv_obj_set_style_border_color(s_wifi_refresh, COL_LINE, 0);
+    lv_obj_add_flag(s_wifi_refresh, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_wifi_refresh, wifi_refresh_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *ra = lv_arc_create(s_wifi_refresh);
+    lv_obj_remove_flag(ra, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(ra, 22, 22);
+    lv_obj_center(ra);
+    lv_obj_remove_style(ra, NULL, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(ra, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ra, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(ra, 0, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(ra, 3, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(ra, COL_BLUE, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(ra, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(ra, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_arc_set_rotation(ra, 270);
+    lv_arc_set_bg_angles(ra, 40, 320);
+    lv_arc_set_angles(ra, 0, 0);
+
+    static const lv_point_precise_t arrow[] = {{0, 0}, {7, 1}, {2, 7}, {0, 0}};
+    lv_obj_t *al = lv_line_create(s_wifi_refresh);
+    lv_line_set_points(al, arrow, 4);
+    lv_obj_set_pos(al, 23, 12);
+    lv_obj_set_style_line_width(al, 2, 0);
+    lv_obj_set_style_line_color(al, COL_BLUE, 0);
+    lv_obj_set_style_line_rounded(al, true, 0);
+
+    /* 热点列表：整列可上下拖动 */
+    s_wifi_list = lv_obj_create(s_wifi);
+    lv_obj_set_pos(s_wifi_list, 57, 112);
+    lv_obj_set_size(s_wifi_list, 352, 312);
+    lv_obj_set_style_bg_opa(s_wifi_list, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_wifi_list, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_wifi_list, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_wifi_list, 0, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(s_wifi_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_wifi_list, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_y(s_wifi_list, LV_SCROLL_SNAP_NONE);
+
+    s_wifi_scan_hint = mk_label(s_wifi, "正在扫描…", &epw_cjk_16, COL_MUTED,
+                                0, 250, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    lv_label_set_long_mode(s_wifi_scan_hint, LV_LABEL_LONG_WRAP);
+
+    s_wifi_timer = lv_timer_create(wifi_poll_cb, 400, NULL);
+    lv_obj_add_flag(s_wifi, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void build_wifipwd(void)
+{
+    s_wifipwd = lv_obj_create(s_screen);
+    lv_obj_remove_style_all(s_wifipwd);
+    lv_obj_remove_flag(s_wifipwd, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_wifipwd, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(s_wifipwd, 0, 0);
+    lv_obj_set_style_bg_color(s_wifipwd, COL_BG, 0);
+    lv_obj_set_style_bg_opa(s_wifipwd, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_wifipwd, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_flag(s_wifipwd, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_wifipwd, wifi_pwd_gesture_cb, LV_EVENT_GESTURE, NULL);
+
+    /* 顶栏：返回 + SSID + 连接，整体左右对称 */
+    lv_obj_t *back = mk_circle(s_wifipwd, 42, 54, 34, COL_SURF, LV_OPA_COVER);
+    lv_obj_set_style_border_width(back, 1, 0);
+    lv_obj_set_style_border_color(back, COL_LINE, 0);
+    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(back, wifi_pwd_back_cb, LV_EVENT_CLICKED, NULL);
+    static const lv_point_precise_t chev[] = {{19, 7}, {10, 17}, {19, 27}};
+    lv_obj_t *l = lv_line_create(back);
+    lv_line_set_points(l, chev, 3);
+    lv_obj_set_style_line_width(l, 3, 0);
+    lv_obj_set_style_line_color(l, COL_MUTED, 0);
+    lv_obj_set_style_line_rounded(l, true, 0);
+
+    s_wifipwd_title = mk_label(s_wifipwd, "", &epw_cjk_16, COL_TEXT,
+                               78, 40, 236, LV_TEXT_ALIGN_CENTER);
+    lv_label_set_long_mode(s_wifipwd_title, LV_LABEL_LONG_DOT);
+
+    /* 连接按钮放在顶栏右侧，密码页不再额外占一行 */
+    s_wifipwd_btn = mk_box(s_wifipwd, 346, 38, 84, 34,
+                           COL_TECH_GREEN, LV_OPA_COVER, 17);
+    lv_obj_add_flag(s_wifipwd_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_wifipwd_btn, wifi_pwd_connect_cb, LV_EVENT_CLICKED, NULL);
+    s_wifipwd_btn_label = mk_label(s_wifipwd_btn, "连接", &epw_cjk_16, COL_INK,
+                                   0, 6, 84, LV_TEXT_ALIGN_CENTER);
+
+    s_wifipwd_hint = mk_label(s_wifipwd, "请输入 Wi-Fi 密码", &epw_cjk_16, COL_MUTED,
+                              0, 74, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+
+    /* 密码框 + 眼睛按钮：48+300 与 356+62 以屏幕中心对称。
+     * 高度 60px，文字用 pad_top 垂直居中（CJK16 行高 20） */
+    s_wifipwd_ta = lv_textarea_create(s_wifipwd);
+    lv_obj_set_pos(s_wifipwd_ta, 48, 102);
+    lv_obj_set_size(s_wifipwd_ta, 300, 60);
+    lv_textarea_set_one_line(s_wifipwd_ta, true);
+    lv_textarea_set_password_mode(s_wifipwd_ta, true);
+    lv_textarea_set_password_bullet(s_wifipwd_ta, "*");
+    lv_textarea_set_placeholder_text(s_wifipwd_ta, "输入密码");
+    lv_textarea_set_max_length(s_wifipwd_ta, 64);
+    lv_textarea_set_cursor_pos(s_wifipwd_ta, LV_TEXTAREA_CURSOR_LAST);
+    lv_textarea_set_cursor_click_pos(s_wifipwd_ta, true);
+    lv_obj_add_flag(s_wifipwd_ta, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_wifipwd_ta, LV_OBJ_FLAG_CLICK_FOCUSABLE);
+    lv_obj_set_style_bg_color(s_wifipwd_ta, COL_SURF, 0);
+    lv_obj_set_style_bg_opa(s_wifipwd_ta, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_wifipwd_ta, 1, 0);
+    lv_obj_set_style_border_color(s_wifipwd_ta, COL_LINE, 0);
+    lv_obj_set_style_radius(s_wifipwd_ta, 30, 0);
+    lv_obj_set_style_text_color(s_wifipwd_ta, COL_TEXT, 0);
+    lv_obj_set_style_text_align(s_wifipwd_ta, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(s_wifipwd_ta, &epw_cjk_16, 0);
+    lv_obj_set_style_pad_left(s_wifipwd_ta, 18, 0);
+    lv_obj_set_style_pad_right(s_wifipwd_ta, 12, 0);
+    lv_obj_set_style_pad_top(s_wifipwd_ta, 20, 0);
+    lv_obj_set_style_pad_bottom(s_wifipwd_ta, 0, 0);
+    /* 光标用绿色竖线，输入时看得见 */
+    lv_obj_set_style_border_color(s_wifipwd_ta, COL_TECH_GREEN, LV_PART_CURSOR);
+    lv_obj_set_style_border_width(s_wifipwd_ta, 2, LV_PART_CURSOR);
+    lv_obj_set_style_border_side(s_wifipwd_ta, LV_BORDER_SIDE_LEFT, LV_PART_CURSOR);
+    lv_obj_set_style_bg_opa(s_wifipwd_ta, LV_OPA_TRANSP, LV_PART_CURSOR);
+
+    lv_obj_t *eye = mk_box(s_wifipwd, 356, 102, 62, 60,
+                           COL_SURF, LV_OPA_COVER, 30);
+    lv_obj_set_style_border_width(eye, 1, 0);
+    lv_obj_set_style_border_color(eye, COL_LINE, 0);
+    lv_obj_add_flag(eye, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(eye, wifi_pwd_eye_cb, LV_EVENT_CLICKED, NULL);
+    s_wifipwd_eye_label = mk_label(eye, "显示", &epw_cjk_16, COL_MUTED,
+                                   0, 20, 62, LV_TEXT_ALIGN_CENTER);
+
+    /* 自绘密码键盘（buttonmatrix）：
+     * 466 圆屏在 y=366 处可见宽度约 382px；键盘 360×200 放在 (53,166)，
+     * 上沿和内切圆相差 70px、下沿相差 10px，四角都不会被圆形边框裁掉。
+     * 4 行按键约 31×45px，密码输入够大、好点。 */
+    lv_obj_t *kb = lv_buttonmatrix_create(s_wifipwd);
+    lv_obj_set_size(kb, 360, 200);
+    lv_obj_set_pos(kb, 53, 166);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(kb, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(kb, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(kb, 6, 0);
+    lv_obj_set_style_pad_column(kb, 5, 0);
+    lv_obj_set_style_bg_color(kb, COL_SURF, LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(kb, COL_TEXT, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(kb, &epw_cjk_16, LV_PART_ITEMS);
+    lv_obj_set_style_radius(kb, 10, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(kb, 0, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_width(kb, 0, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(kb, COL_SURF_HI, LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_add_event_cb(kb, wifi_pwd_keypad_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_wifipwd_kb = kb;
+    s_wifipwd_kb_mode = KP_LC;
+    wifi_pwd_kb_apply();
+
+    lv_obj_add_flag(s_wifipwd, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2575,7 +3500,7 @@ static void pet_area_gesture_cb(lv_event_t *e)
 static void pet_scene_timer_cb(lv_timer_t *timer)
 {
     LV_UNUSED(timer);
-    if (s_pet == NULL || !s_pet_open || s_pet_chat_busy) {
+    if (s_pet == NULL || !s_pet_open || s_pet_chat_busy || s_screen_off) {
         return;
     }
     uint32_t now = lv_tick_get();
@@ -2690,6 +3615,74 @@ static void build_pet(void)
 }
 
 /* -------------------------------------------------------------------------- */
+/* 熄屏 / 亮屏                                                                  */
+/* -------------------------------------------------------------------------- */
+
+static void screen_wake(void)
+{
+    if (!s_screen_off) {
+        return;
+    }
+    s_screen_off = false;
+    if (s_wake_layer != NULL) {
+        lv_obj_add_flag(s_wake_layer, LV_OBJ_FLAG_HIDDEN);
+    }
+    brightness_apply();
+    s_last_activity = lv_tick_get();
+    ESP_LOGI(TAG, "display wake");
+}
+
+static void screen_sleep(void)
+{
+    if (s_screen_off) {
+        return;
+    }
+    s_screen_off = true;
+    /* 先盖上整屏黑色点击层，再关背光：熄屏后的第一下触摸只负责点亮 */
+    if (s_wake_layer != NULL) {
+        lv_obj_remove_flag(s_wake_layer, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_wake_layer);
+    }
+    bsp_display_brightness_set(0);
+    /* 熄屏即退出 Mimi Cat：不在黑屏下保留对话状态，也不再回答 */
+    pet_close_now();
+    ESP_LOGI(TAG, "display sleep (idle %d ms)", UI_IDLE_TIMEOUT_MS);
+}
+
+bool ui_activity(void)
+{
+    s_last_activity = lv_tick_get();
+    if (!s_screen_off) {
+        return false;
+    }
+    screen_wake();
+    return true;
+}
+
+static void wake_layer_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    ui_activity();
+}
+
+/* 100ms 轮询触摸状态：点按/拖动都算操作；30s 无操作关背光 */
+static void idle_timer_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    lv_indev_t *indev = bsp_display_get_input_dev();
+    if (indev != NULL && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) {
+        s_last_activity = lv_tick_get();
+        if (s_screen_off) {
+            screen_wake();
+        }
+        return;
+    }
+    if (!s_screen_off && lv_tick_elaps(s_last_activity) >= UI_IDLE_TIMEOUT_MS) {
+        screen_sleep();
+    }
+}
+
+/* -------------------------------------------------------------------------- */
 /* 初始化                                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -2699,10 +3692,17 @@ void ui_init(void)
     lv_obj_set_style_bg_color(s_screen, COL_BG, 0);
     lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(s_screen, 0, 0);
+    /* 关键：screen 默认可滚动，手指拖动子页面时会把整屏内容一起滚走，
+     * 导致退出音量页后下层控制中心也停在右移状态。关掉后手势只属于当前页 */
+    lv_obj_remove_flag(s_screen, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_indev_t *indev = bsp_display_get_input_dev();
     if (indev != NULL) {
         lv_indev_set_long_press_time(indev, 500);
+        /* 圆屏上 50px 手势门槛偏低且要求每帧 3px 速度，慢滑常常识别不到；
+         * 收到 30px / 1px 后下拉控制中心、右滑关闭等手势更跟手 */
+        lv_indev_set_gesture_min_distance(indev, 30);
+        lv_indev_set_gesture_min_velocity(indev, 1);
     }
 
     /* 表盘（唯一的常驻页面） */
@@ -2712,6 +3712,8 @@ void ui_init(void)
     lv_obj_set_size(s_home, SCREEN_W, SCREEN_H);
     lv_obj_set_pos(s_home, 0, 0);
     lv_obj_add_flag(s_home, LV_OBJ_FLAG_CLICKABLE);
+    /* 手势不向上冒泡：表盘自己处理下拉，避免事件跑到 screen */
+    lv_obj_remove_flag(s_home, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
     build_dial(s_home);
     build_center();
@@ -2719,6 +3721,8 @@ void ui_init(void)
     build_slider();
     build_torch();
     build_apps();
+    build_wifi();
+    build_wifipwd();
     build_pet();
 
     /* 全局提示条 */
@@ -2726,24 +3730,51 @@ void ui_init(void)
     lv_obj_set_style_shadow_width(s_toast, 22, 0);
     lv_obj_set_style_shadow_color(s_toast, lv_color_black(), 0);
     lv_obj_set_style_shadow_opa(s_toast, LV_OPA_40, 0);
-    s_toast_label = mk_label(s_toast, "音量固定为 0", &epw_cjk_16, COL_INK,
+    s_toast_label = mk_label(s_toast, "", &epw_cjk_16, COL_INK,
                              0, 11, 300, LV_TEXT_ALIGN_CENTER);
     lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+
+    /* 熄屏唤醒层：全屏黑色，仅熄屏时出现，吞掉点亮屏幕的第一下触摸 */
+    s_wake_layer = mk_box(s_screen, 0, 0, SCREEN_W, SCREEN_H,
+                          lv_color_black(), LV_OPA_COVER, 0);
+    lv_obj_add_flag(s_wake_layer, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_wake_layer, wake_layer_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_flag(s_wake_layer, LV_OBJ_FLAG_HIDDEN);
+
+    s_last_activity = lv_tick_get();
 
     time_tick_cb(NULL);
     ui_update_battery(power_battery_percent(), power_is_vbus());
     brightness_apply();
+    audio_set_volume(s_volume);
 
     lv_timer_create(time_tick_cb, 1000, NULL);
     lv_timer_create(battery_timer_cb, 3000, NULL);
     lv_timer_create(network_timer_cb, 2000, NULL);
     lv_timer_create(pet_anim_timer_cb, 80, NULL);
     lv_timer_create(pet_scene_timer_cb, 9000, NULL);
+    lv_timer_create(idle_timer_cb, UI_IDLE_POLL_MS, NULL);
 }
 
 /* -------------------------------------------------------------------------- */
 /* 演示 / 调试接口                                                             */
 /* -------------------------------------------------------------------------- */
+
+/* 演示/调试：直接打开指定热点的密码页（不依赖真实扫描），用于真机截图检查布局 */
+void ui_demo_open_wifipwd(const char *ssid, const char *pwd)
+{
+    epw_wifi_ap_t ap = {0};
+    if (ssid != NULL) {
+        strncpy(ap.ssid, ssid, sizeof(ap.ssid) - 1);
+    }
+    ap.secure = true;
+    ap.rssi = -48;
+    wifi_pwd_open(&ap);
+    if (pwd != NULL && s_wifipwd_ta != NULL) {
+        lv_textarea_set_text(s_wifipwd_ta, pwd);
+        lv_textarea_set_cursor_pos(s_wifipwd_ta, LV_TEXTAREA_CURSOR_LAST);
+    }
+}
 
 void ui_demo_open_center(void)
 {
@@ -2832,7 +3863,12 @@ void ui_demo_close_apps(void)
 
 void ui_demo_toggle_apps(void)
 {
-    if (s_apps_open) {
+    /* 大按钮逐层退出：密码页 → 网络列表 → 应用桌面 */
+    if (s_wifipwd_open) {
+        wifi_pwd_close();
+    } else if (s_wifi_open) {
+        wifi_close();
+    } else if (s_apps_open) {
         apps_close();
     } else {
         apps_open();
@@ -2851,6 +3887,10 @@ void ui_demo_close_pet(void)
 
 void ui_demo_toggle_pet(void)
 {
+    /* 熄屏时本函数不负责点亮屏幕，也不进入 Mimi Cat */
+    if (s_screen_off) {
+        return;
+    }
     if (s_pet_open) {
         pet_close();
     } else {
@@ -2860,12 +3900,21 @@ void ui_demo_toggle_pet(void)
 
 void ui_pet_set_state(ui_pet_state_t state, const char *text)
 {
+    /* 熄屏状态：不唤醒、不更新台词、不回答 */
+    if (s_screen_off) {
+        return;
+    }
     pet_apply(state, text);
     pet_open();
 }
 
 void ui_pet_set_state_by_name(const char *emotion, const char *text)
 {
+    /* 熄屏状态：忽略服务端回复，不唤醒、不发声、不更新表情 */
+    if (s_screen_off) {
+        return;
+    }
+
     static const struct {
         const char *name;
         ui_pet_state_t state;

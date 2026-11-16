@@ -38,6 +38,9 @@ void ui_demo_open_center(void);
 /** 演示/调试用：收起控制中心。调用前需持有 LVGL 锁。 */
 void ui_demo_close_center(void);
 
+/** 演示/调试用：直接打开指定 SSID 的 Wi-Fi 密码页，pwd 可为 NULL。调用前需持有 LVGL 锁。 */
+void ui_demo_open_wifipwd(const char *ssid, const char *pwd);
+
 /** 演示/调试用：从右侧滑入状态页。调用前需持有 LVGL 锁。 */
 void ui_demo_open_status(void);
 
@@ -68,7 +71,7 @@ void ui_demo_close_torch(void);
  */
 void ui_demo_power_mode(int mode);
 
-/** 物理大按钮 / 演示用：打开应用桌面（Mac Launchpad 风格圆形图标）。 */
+/** 物理大按钮 / 演示用：打开应用桌面（华为手表风格 2×3 网格，上下拖动整页滚动）。 */
 void ui_demo_open_apps(void);
 
 /** 关闭应用桌面。 */
@@ -76,6 +79,13 @@ void ui_demo_close_apps(void);
 
 /** 大按钮切换应用桌面。 */
 void ui_demo_toggle_apps(void);
+
+/**
+ * 记录一次用户操作并刷新 30s 熄屏计时。
+ * 若屏幕已熄灭，则点亮屏幕并返回 true（表示本次按键只用于唤醒，调用方不要再切页）。
+ * 调用前需持有 LVGL 锁。
+ */
+bool ui_activity(void);
 
 /** 小按钮 / 演示用：打开宠物页。 */
 void ui_demo_open_pet(void);

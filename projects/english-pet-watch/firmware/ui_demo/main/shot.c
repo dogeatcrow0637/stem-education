@@ -107,52 +107,59 @@ static void shot_ui(void (*fn)(void), const char *label, int delay_ms)
 void shot_capture_demo_pages(void *arg)
 {
     (void)arg;
-    /* 截图期间静音全部日志，避免与 base64 行交错导致丢行 */
     esp_log_level_set("*", ESP_LOG_NONE);
 
-    /* 等首屏 / SNTP / 电量刷新稳定 */
-    vTaskDelay(pdMS_TO_TICKS(8000));
+    vTaskDelay(pdMS_TO_TICKS(6000));
 
-    shot_dump("home");
-
-    /* 同一块表盘强制普通模式，便于对比外圈 */
+    /* 表盘：拔线普通模式，便于对比外圈 */
     bsp_display_lock(-1);
     ui_demo_power_mode(0);
     bsp_display_unlock();
-    vTaskDelay(pdMS_TO_TICKS(900));
+    vTaskDelay(pdMS_TO_TICKS(600));
     shot_dump("home_normal");
 
+    /* 控制中心 */
     bsp_display_lock(-1);
-    ui_demo_power_mode(-1);
+    ui_demo_open_center();
     bsp_display_unlock();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    shot_dump("center");
 
-    shot_ui(ui_demo_open_center, "center", 800);
-    shot_ui(ui_demo_open_status, "status", 900);
-
+    /* 状态页 */
+    bsp_display_lock(-1);
+    ui_demo_open_status();
+    bsp_display_unlock();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    shot_dump("status");
     bsp_display_lock(-1);
     ui_demo_close_status();
     bsp_display_unlock();
+
+    /* 亮度调节页 */
+    bsp_display_lock(-1);
+    ui_demo_open_bright();
+    bsp_display_unlock();
     vTaskDelay(pdMS_TO_TICKS(500));
-
-    shot_ui(ui_demo_open_bright, "bright", 800);
-
+    shot_dump("bright");
     bsp_display_lock(-1);
     ui_demo_close_bright();
     bsp_display_unlock();
+
+    /* 音量调节页 */
+    bsp_display_lock(-1);
+    ui_demo_open_volume();
+    bsp_display_unlock();
     vTaskDelay(pdMS_TO_TICKS(500));
-
-    shot_ui(ui_demo_open_volume, "vol", 800);
-
+    shot_dump("vol");
     bsp_display_lock(-1);
     ui_demo_close_volume();
     ui_demo_close_center();
     bsp_display_unlock();
-    vTaskDelay(pdMS_TO_TICKS(600));
 
     printf("SHOTALLDONE\n");
     fflush(stdout);
     esp_log_level_set("*", ESP_LOG_INFO);
-    ESP_LOGI(TAG, "demo capture finished");
+    ESP_LOGI(TAG, "demo page capture finished");
 
     vTaskDelete(NULL);
 }
