@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">3D 打印件</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">PLA · 0.2mm 层高 · 清支撑</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <g stroke="#233" stroke-width="6" fill="none">
+    <path d="M380 560 L380 300 Q380 260 420 260 L860 260 Q900 260 900 300 L900 560"/>
+    <path d="M380 380 L900 380"/><path d="M380 470 L900 470"/>
+  </g>
+  <g fill="#F3E3C8" stroke="#233" stroke-width="5">
+    <rect x="430" y="400" width="110" height="55" rx="8"/>
+    <rect x="570" y="400" width="110" height="55" rx="8"/>
+    <rect x="710" y="400" width="110" height="55" rx="8"/>
+  </g>
+  <text x="430" y="330" font-size="28">一层一层堆出来</text>
+  <text x="430" y="620" font-size="26" fill="#E4572E">支撑要清干净，孔才装得进</text>
+  </g>
+</svg>

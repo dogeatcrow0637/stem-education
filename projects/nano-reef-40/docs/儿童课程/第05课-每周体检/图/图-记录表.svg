@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif">
+<rect width="960" height="540" fill="#0f1220"/>
+<text x="480" y="44" fill="#ffd166" font-size="30" text-anchor="middle" font-weight="700">每周写一行 · 水质记录表</text>
+<rect x="60" y="110" width="840" height="290" rx="10" fill="#151a2b" stroke="#4cc9f0" stroke-width="2"/>
+<text x="135.0" y="148" fill="#4cc9f0" font-size="19" text-anchor="middle" font-weight="600">日期</text>
+<text x="275.0" y="148" fill="#4cc9f0" font-size="19" text-anchor="middle" font-weight="600">盐度</text>
+<text x="405.0" y="148" fill="#4cc9f0" font-size="19" text-anchor="middle" font-weight="600">温度</text>
+<text x="530.0" y="148" fill="#4cc9f0" font-size="19" text-anchor="middle" font-weight="600">氨</text>
+<text x="670.0" y="148" fill="#4cc9f0" font-size="19" text-anchor="middle" font-weight="600">亚硝酸盐</text>
+<text x="825.0" y="148" fill="#4cc9f0" font-size="19" text-anchor="middle" font-weight="600">现象</text>
+<line x1="60" y1="230" x2="900" y2="230" stroke="#2a3350" stroke-width="2"/>
+<line x1="60" y1="300" x2="900" y2="300" stroke="#2a3350" stroke-width="2"/>
+<line x1="60" y1="370" x2="900" y2="370" stroke="#2a3350" stroke-width="2"/>
+<line x1="210" y1="150" x2="210" y2="400" stroke="#2a3350" stroke-width="1"/>
+<line x1="340" y1="150" x2="340" y2="400" stroke="#2a3350" stroke-width="1"/>
+<line x1="470" y1="150" x2="470" y2="400" stroke="#2a3350" stroke-width="1"/>
+<line x1="590" y1="150" x2="590" y2="400" stroke="#2a3350" stroke-width="1"/>
+<line x1="750" y1="150" x2="750" y2="400" stroke="#2a3350" stroke-width="1"/>
+<line x1="60" y1="160" x2="900" y2="160" stroke="#2a3350" stroke-width="2"/>
+<text x="150" y="255" fill="#ffd166" font-size="22" font-weight="600">化验单，不是成绩单</text>
+<text x="150" y="290" fill="#9aa3b8" font-size="16">数字不好看也不用怕，改了就记下改了什么</text>
+<rect x="470" y="420" width="200" height="66" rx="10" fill="#151a2b" stroke="#63e6be" stroke-width="2"/>
+<text x="570.0" y="459.0" fill="#63e6be" font-size="22" text-anchor="middle" font-weight="600">写一行</text>
+<rect x="690" y="420" width="200" height="66" rx="10" fill="#151a2b" stroke="#ffd166" stroke-width="2"/>
+<text x="790.0" y="459.0" fill="#ffd166" font-size="22" text-anchor="middle" font-weight="600">打一个勾</text>
+<text x="480" y="515" fill="#9aa3b8" font-size="20" text-anchor="middle" font-weight="400">看不见的变化，写下来才看得见</text>
+</svg>

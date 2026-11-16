@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">四条腿排好队</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">每条腿都能顺滑转动</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <g stroke="#233" stroke-width="10" fill="none" stroke-linecap="round">
+    <path d="M260 230 L260 420 L190 560"/><path d="M460 230 L460 420 L530 560"/>
+    <path d="M760 230 L760 420 L690 560"/><path d="M960 230 L960 420 L1030 560"/>
+  </g>
+  <g fill="#3E7C7B"><circle cx="260" cy="420" r="28"/><circle cx="460" cy="420" r="28"/><circle cx="760" cy="420" r="28"/><circle cx="960" cy="420" r="28"/></g>
+  <text x="210" y="660" font-size="26">L1</text><text x="410" y="660" font-size="26">L2</text>
+  <text x="710" y="660" font-size="26">R3</text><text x="910" y="660" font-size="26">R4</text>
+  </g>
+</svg>

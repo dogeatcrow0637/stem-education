@@ -1,0 +1,65 @@
+# 英语宠物怀表 · 方案 1：只接豆包 LLM（申请面最小）
+# 适用：只想先申请一个火山方舟 Key，ASR/TTS 继续用免费方案
+# 需要：火山方舟 API Key（免费额度）
+# ASR 用本地 FunASR，TTS 用 EdgeTTS，均不需要 Key
+
+selected_module:
+  VAD: SileroVAD
+  ASR: FunASR
+  LLM: DoubaoLLM
+  TTS: EdgeTTS
+  Memory: mem_local_short
+  Intent: function_call
+
+VAD:
+  SileroVAD:
+    type: silero
+    threshold: 0.5
+    threshold_low: 0.3
+    min_silence_duration_ms: 900
+
+ASR:
+  FunASR:
+    type: fun_local
+    model_dir: models/SenseVoiceSmall
+    output_dir: tmp/
+    language: auto
+
+LLM:
+  DoubaoLLM:
+    type: openai
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    # 先填模型名；如果控制台提示模型不存在，改填你的推理接入点 ID（ep-xxxxxxxx）
+    model_name: doubao-seed-2-0-lite-260215
+    api_key: <火山方舟 API Key>
+    temperature: 0.4
+    max_tokens: 300
+
+TTS:
+  EdgeTTS:
+    type: edge
+    voice: en-US-AnaNeural
+    language: "英语"
+    output_dir: tmp/
+
+Memory:
+  mem_local_short:
+    type: mem_local_short
+    llm: DoubaoLLM
+
+Intent:
+  function_call:
+    type: function_call
+    functions:
+      - change_role
+
+prompt: |
+  你是 Pico，一只住在怀表里的英语小宠物，陪 6–10 岁的中国孩子练英语。
+  规则：
+  1. 先用 1 句简单英语问候，再用 1 句中文提示；每次最多 2 个新单词。
+  2. 孩子说错时不要批评，用正确的说法重复一遍，再让他跟读。
+  3. 每次回答不超过 2 句话，语速慢，句子短。
+  4. 不聊暴力、恐怖、成人话题；被问到就转回英语小游戏。
+  5. 每 3 轮做一次小复习；结束时说一句鼓励的话。
+
+system_error_response: "Pico 现在有点困啦，我们等一下再试试。"

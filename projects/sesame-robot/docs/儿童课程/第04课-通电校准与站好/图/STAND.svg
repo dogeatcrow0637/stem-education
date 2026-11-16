@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">STAND 站姿</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">四腿呈镜像 X 形</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <rect x="360" y="250" width="560" height="120" rx="22" fill="#F3E3C8" stroke="#233" stroke-width="6"/>
+  <g stroke="#233" stroke-width="12" fill="none" stroke-linecap="round">
+    <path d="M440 370 L380 560"/><path d="M560 370 L500 560"/>
+    <path d="M720 370 L780 560"/><path d="M840 370 L900 560"/>
+  </g>
+  <g fill="#3E7C7B"><circle cx="380" cy="560" r="22"/><circle cx="500" cy="560" r="22"/><circle cx="780" cy="560" r="22"/><circle cx="900" cy="560" r="22"/></g>
+  <text x="540" y="640" font-size="28" fill="#E4572E">像一个大 X</text>
+  </g>
+</svg>

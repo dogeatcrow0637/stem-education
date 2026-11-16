@@ -1,0 +1,7 @@
+# 本目录的本地构建产物与含密钥配置不入库
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.local
+managed_components/
+dependencies.lock

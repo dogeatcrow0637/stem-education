@@ -1,0 +1,50 @@
+# 项目元数据
+id: "01"
+slug: "rebot-devarm"
+name: "reBot-DevArm 开源六轴机械臂"
+name_en: "reBot-DevArm"
+status: "资料整理"                     # 资料整理 | 复刻中 | 已完成 | 维护中 | 已归档
+direction: ["机器人", "机械臂", "具身智能", "VLA"]
+created: "2026-10-19"
+updated: "2026-10-20"
+owner: ""
+
+platform:
+  mcu: "待定（电机为 CAN 总线伺服）"
+  host: "Ubuntu 物理机（官方明确不支持虚拟机）"
+  runtime: "LeRobot / ROS1|2 + MoveIt / Isaac Sim / Pinocchio / Python SDK"
+
+external:
+  repo: "https://github.com/Seeed-Projects/reBot-DevArm"
+  repo_mirror: "https://gitee.com/seeed-projects/reBot-DevArm"
+  wiki: "https://wiki.seeedstudio.com/cn/robotics_page/"
+  video: "https://www.snm0516.aisee.tv/video/BV1zPdzBEE1R/"
+
+variants:
+  - code: "B601-DM"
+    motor: "达妙 DM4310(V4) x4 + DM4340P(V4) x3"
+    arm_span_mm: 767
+    payload_kg: 1.5
+    power: "DC 24V"
+    weight_kg: 4.5
+  - code: "B601-RS"
+    motor: "RobStride RS00 x4 + RS06 x3"
+    arm_span_mm: 754
+    payload_kg: 2.5
+    power: "DC 48V"
+    weight_kg: 6.7
+
+spec:
+  dof: "6+1（第 7 电机驱动夹爪）"
+  repeatability_mm: 0.2
+  brake: false                        # 无刹车，断电自由下落
+  notes: "社区对 0.2mm 重复精度持保留态度，以实测为准"
+
+license:
+  hardware: "CERN-OHL-W-2.0（2026-05-11 起；此前 CC BY-SA-NC）"
+  software: "Apache-2.0"
+  note: "商业使用前请逐一核验上游许可条款"
+
+cost:
+  total: "约 ￥6000（自行采购散件复刻）"
+  note: "官方套件早鸟价 $1499；打印件约 ￥350、金属件约 ￥1500 仅为局部制造成本；电源适配器与 C 型夹不含，需另购 24V 4.5A XT30"

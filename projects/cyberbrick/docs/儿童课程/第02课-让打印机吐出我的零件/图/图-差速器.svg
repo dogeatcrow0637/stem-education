@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+  <rect width="800" height="600" fill="#101528"/>
+  <text x="400" y="52" fill="#ffd166" font-size="34" text-anchor="middle" font-weight="bold">手推一边，另一边反过来</text>
+
+  <!-- left wheel -->
+  <circle cx="220" cy="300" r="90" fill="#2b2f45" stroke="#f4a261" stroke-width="10"/>
+  <path d="M220 230 a70 70 0 0 1 60 35" stroke="#63e6be" stroke-width="8" fill="none"/>
+  <path d="M212 224 l16 -6 l4 16 z" fill="#63e6be"/>
+  <text x="220" y="440" fill="#63e6be" font-size="24" text-anchor="middle">往里转</text>
+
+  <!-- axle -->
+  <rect x="320" y="288" width="160" height="24" rx="8" fill="#4cc9f0"/>
+  <circle cx="400" cy="300" r="26" fill="#ffd166"/>
+  <text x="400" y="310" fill="#0f1220" font-size="20" text-anchor="middle" font-weight="bold">差速</text>
+
+  <!-- right wheel -->
+  <circle cx="580" cy="300" r="90" fill="#2b2f45" stroke="#f4a261" stroke-width="10"/>
+  <path d="M520 265 a70 70 0 0 0 60 -35" stroke="#ff6b6b" stroke-width="8" fill="none"/>
+  <path d="M572 226 l16 6 l-4 16 z" fill="#ff6b6b"/>
+  <text x="580" y="440" fill="#ff6b6b" font-size="24" text-anchor="middle">往外转</text>
+
+  <text x="400" y="540" fill="#9aa3b8" font-size="22" text-anchor="middle">转弯时两只脚迈不一样的步</text>
+</svg>

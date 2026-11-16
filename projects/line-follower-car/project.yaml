@@ -1,0 +1,30 @@
+# 项目元数据：供索引、脚本与统计读取
+# 修改后请同步 projects/README.md 的索引表
+id: "02"                  # 两位项目编号，如 "01"
+slug: "line-follower-car"              # 目录名
+name: "循迹小车"              # 中文项目名
+name_en: "Line Follower Car"                           # 英文名（可选）
+status: "资料整理"                     # 资料整理 | 复刻中 | 已完成 | 维护中 | 已归档
+direction: ["智能车", "入门教学"]                         # 方向标签，如 ["机器人", "具身智能"]
+created: "2026-10-20"
+updated: "2026-10-20"
+owner: ""                             # 负责人/小组
+
+platform:                             # 运行平台
+  mcu: "Arduino UNO R3 兼容板（ATmega328P）"   # 主控型号，如 STM32F407 / ESP32-S3
+  host: "无需上位机（可选串口监视器）"           # 上位机系统，如 Ubuntu 22.04
+  runtime: "Mixly / mBlock 积木编程，或 Arduino IDE"   # runtime/框架，如 ROS2 Humble / LeRobot
+
+external:                             # 外部资源主入口
+  repo: ""
+  wiki: ""
+  video: ""
+
+license:
+  hardware: ""                        # 如 CERN-OHL-W-2.0
+  software: "本站示例代码可自由用于教学（基于 Arduino IDE 自带例程改写）"                        # 如 Apache-2.0
+  note: "本项目为通用套件组装，无上游开源仓库；套件与商家例程的许可各自以其页面为准"
+
+cost:                                 # 参考成本（人民币，可留空）
+  total: "MVP 约 ￥65–100"
+  note: "含主控/驱动/循迹模块/底盘套件；不含家里已有的 4 节 5 号电池与黑胶带。价格为淘宝量级参考，下单前以页面为准（访问日期 2026-10-20），明细见 hardware/bom/bom_lfc_v1.0.csv"

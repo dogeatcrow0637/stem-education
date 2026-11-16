@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">站 → 走 → 停</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">每一步都等它做完</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <g font-size="30" text-anchor="middle" fill="#233">
+    <rect x="120" y="250" width="260" height="180" rx="24" fill="#DDE7E7"/><text x="250" y="360">站</text>
+    <rect x="510" y="250" width="260" height="180" rx="24" fill="#F3E3C8"/><text x="640" y="360">走</text>
+    <rect x="900" y="250" width="260" height="180" rx="24" fill="#F2C9C0"/><text x="1030" y="360">停</text>
+  </g>
+  <g stroke="#E4572E" stroke-width="10" fill="none" stroke-linecap="round">
+    <path d="M390 340 L490 340"/><path d="M780 340 L880 340"/>
+  </g>
+  </g>
+</svg>

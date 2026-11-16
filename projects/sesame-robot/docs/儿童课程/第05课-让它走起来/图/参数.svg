@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">三个小旋钮</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">一次只改一个</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <g stroke="#233" stroke-width="6" fill="#DDE7E7">
+    <circle cx="340" cy="360" r="90"/><circle cx="640" cy="360" r="90"/><circle cx="940" cy="360" r="90"/>
+  </g>
+  <g stroke="#E4572E" stroke-width="10" stroke-linecap="round">
+    <path d="M340 360 L340 290"/><path d="M640 360 L700 320"/><path d="M940 360 L880 300"/>
+  </g>
+  <g font-size="26" text-anchor="middle" fill="#233">
+    <text x="340" y="520">frameDelay</text><text x="640" y="520">walkCycles</text><text x="940" y="520">motorCurrentDelay</text>
+  </g>
+  </g>
+</svg>

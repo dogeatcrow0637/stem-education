@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">一条 curl 就够</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">POST + JSON</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <rect x="180" y="190" width="920" height="380" rx="18" fill="#0B1220" stroke="#233" stroke-width="6"/>
+  <text x="220" y="260" font-size="28" fill="#7BE0AD">$ curl -X POST http://192.168.4.1/api/command \</text>
+  <text x="260" y="320" font-size="28" fill="#7BE0AD">-H "Content-Type: application/json" \</text>
+  <text x="260" y="380" font-size="28" fill="#F2B134">-d '{"command":"wave","face":"happy"}'</text>
+  <text x="220" y="500" font-size="26" fill="#9BE3B4">返回 {"status":"ok"}</text>
+  </g>
+</svg>

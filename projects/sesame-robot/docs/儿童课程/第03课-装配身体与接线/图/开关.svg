@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">开关串在正极</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">电池 → 开关 → 降压</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <path d="M240 360 L460 360" stroke="#E4572E" stroke-width="12"/>
+  <path d="M460 360 L560 300" stroke="#E4572E" stroke-width="12"/>
+  <circle cx="460" cy="360" r="12" fill="#E4572E"/><circle cx="580" cy="360" r="12" fill="#E4572E"/>
+  <path d="M580 360 L820 360" stroke="#E4572E" stroke-width="12"/>
+  <text x="260" y="320" font-size="30">电池 +</text>
+  <text x="650" y="300" font-size="30">开关</text>
+  <text x="860" y="370" font-size="30">降压</text>
+  </g>
+</svg>

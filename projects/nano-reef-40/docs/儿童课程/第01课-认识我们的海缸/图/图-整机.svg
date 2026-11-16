@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif">
+<rect width="960" height="540" fill="#0f1220"/>
+<text x="480" y="44" fill="#ffd166" font-size="30" text-anchor="middle" font-weight="700">一口 60 方背滤缸</text>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ffd166"/></marker><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4cc9f0"/></marker></defs>
+<rect x="230" y="110" width="500" height="250" rx="10" fill="#12243a" stroke="#4cc9f0" stroke-width="2"/>
+<text x="480.0" y="233.0" fill="#cfe8ff" font-size="22" text-anchor="middle" font-weight="600">主缸 60×60×50 超白</text>
+<text x="480.0" y="261.0" fill="#9aa3b8" font-size="17" text-anchor="middle" font-weight="400">造景石 + 鱼 + 珊瑚</text>
+<rect x="730" y="110" width="90" height="250" rx="10" fill="#151a2b" stroke="#63e6be" stroke-width="2"/>
+<text x="775.0" y="233.0" fill="#63e6be" font-size="20" text-anchor="middle" font-weight="600">背滤</text>
+<text x="775.0" y="261.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">3 格</text>
+<rect x="830" y="110" width="80" height="250" rx="10" fill="#12243a" stroke="#ffd166" stroke-width="2"/>
+<text x="870.0" y="241.3" fill="#ffd166" font-size="18" text-anchor="middle" font-weight="600">主泵</text>
+<rect x="230" y="370" width="680" height="90" rx="10" fill="#1a1a24" stroke="#9aa3b8" stroke-width="2"/>
+<text x="570.0" y="422.0" fill="#9aa3b8" font-size="20" text-anchor="middle" font-weight="600">底柜 承重 ≥300kg</text>
+<line x1="732" y1="235" x2="662" y2="235" stroke="#4cc9f0" stroke-width="3" marker-end="url(#b)"/>
+<line x1="832" y1="235" x2="910" y2="235" stroke="#4cc9f0" stroke-width="3" marker-end="url(#b)"/>
+<text x="480" y="500" fill="#9aa3b8" font-size="18" text-anchor="middle" font-weight="400">满水约 150kg · 系统水量 130–150L</text>
+</svg>

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">灯亮 · 热点出现</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">等 10–20 秒</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <rect x="250" y="260" width="220" height="170" rx="20" fill="#2F6B4F"/>
+  <circle cx="300" cy="300" r="12" fill="#7BE0AD"/>
+  <g stroke="#3E7C7B" stroke-width="12" fill="none" stroke-linecap="round">
+    <path d="M600 330 Q680 250 760 330"/><path d="M630 375 Q680 325 730 375"/>
+  </g>
+  <circle cx="680" cy="420" r="15" fill="#3E7C7B"/>
+  <text x="540" y="520" font-size="30">Sesame-Controller-BETA</text>
+  <text x="560" y="570" font-size="26" fill="#E4572E">密码 12345678</text>
+  </g>
+</svg>

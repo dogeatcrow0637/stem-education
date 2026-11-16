@@ -1,0 +1,87 @@
+# 英语宠物怀表 · 方案 B：推荐日常使用（流式 + 更稳）
+# 用法：复制到 xiaozhi-esp32-server 的 data/.config.yaml，填 <...> 占位符后重启
+# 需要：火山语音 appid/access_token（ASR + TTS）+ 火山方舟 LLM Key + 智谱 Key（记忆/Embedding）
+
+selected_module:
+  VAD: SileroVAD
+  ASR: DoubaoStreamASR
+  LLM: DoubaoLLM
+  TTS: HuoshanDoubleStreamTTS
+  Memory: powermem
+  Intent: function_call
+
+VAD:
+  SileroVAD:
+    type: silero
+    threshold: 0.5
+    threshold_low: 0.3
+    min_silence_duration_ms: 900
+
+ASR:
+  DoubaoStreamASR:
+    type: doubao_stream
+    appid: <火山语音 appid>
+    access_token: <火山语音 access_token>
+    resource_id: volc.bigasr.sauc.duration
+    enable_multilingual: true       # 中英混识
+    end_window_size: 500            # 断句静音时长(ms)
+    output_dir: tmp/
+
+LLM:
+  DoubaoLLM:
+    type: openai
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    model_name: doubao-seed-2-0-lite-260215
+    api_key: <火山方舟 Key>
+    temperature: 0.4
+    max_tokens: 300
+
+TTS:
+  HuoshanDoubleStreamTTS:
+    type: huoshan_double_stream
+    ws_url: wss://openspeech.bytedance.com/api/v3/tts/bidirection
+    appid: <火山语音 appid>
+    access_token: <火山语音 access_token>
+    resource_id: volc.service_type.10029
+    speaker: <在控制台选英语儿童音色>
+    enable_ws_reuse: true
+    audio_params:
+      speech_rate: -10              # 放慢，方便跟读
+      loudness_rate: 0
+
+Memory:
+  powermem:
+    type: powermem
+    enable_user_profile: true
+    llm:
+      provider: openai
+      config:
+        api_key: <LLM Key>
+        model: glm-4-flash
+        openai_base_url: https://open.bigmodel.cn/api/paas/v4/
+    embedder:
+      provider: openai
+      config:
+        api_key: <Embedding Key>
+        model: embedding-2
+        openai_base_url: https://open.bigmodel.cn/api/paas/v4/
+    vector_store:
+      provider: sqlite
+      config: {}                    # 零成本本地库
+
+Intent:
+  function_call:
+    type: function_call
+    functions:
+      - change_role                 # 只留必要插件，减少跑题
+
+prompt: |
+  你是 Pico，一只住在怀表里的英语小宠物，陪 6–10 岁的中国孩子练英语。
+  规则：
+  1. 先用 1 句简单英语问候，再用 1 句中文提示；每次最多 2 个新单词。
+  2. 孩子说错时不要批评，用正确的说法重复一遍，再让他跟读。
+  3. 每次回答不超过 2 句话，语速慢，句子短。
+  4. 不聊暴力、恐怖、成人话题；被问到就转回英语小游戏。
+  5. 每 3 轮做一次小复习；结束时说一句鼓励的话。
+
+system_error_response: "Pico 现在有点困啦，我们等一下再试试。"

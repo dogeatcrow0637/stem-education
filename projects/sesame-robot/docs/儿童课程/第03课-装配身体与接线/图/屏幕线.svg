@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">屏幕四根线</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">VCC GND SDA SCL</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <rect x="380" y="220" width="300" height="220" rx="20" fill="#111827"/>
+  <rect x="420" y="260" width="220" height="140" rx="10" fill="#0B1220"/>
+  <g stroke-width="8">
+    <path d="M680 270 L900 270" stroke="#E4572E"/><path d="M680 320 L900 320" stroke="#5A4A42"/>
+    <path d="M680 370 L900 370" stroke="#4C8BF5"/><path d="M680 420 L900 420" stroke="#F2B134"/>
+  </g>
+  <g font-size="26" fill="#233">
+    <text x="930" y="280">VCC</text><text x="930" y="330">GND</text><text x="930" y="380">SDA</text><text x="930" y="430">SCL</text>
+  </g>
+  </g>
+</svg>

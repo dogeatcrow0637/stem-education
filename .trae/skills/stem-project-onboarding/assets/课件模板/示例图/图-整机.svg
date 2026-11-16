@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" width="800" height="450">
+  <rect width="800" height="450" fill="#101425"/>
+  <g font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif" fill="#f7f8fb">
+    <text x="40" y="56" font-size="30" fill="#ffd166">示意：机械臂整体（实际请换实拍照片）</text>
+    <rect x="90" y="340" width="200" height="36" rx="10" fill="#4cc9f0"/>
+    <rect x="170" y="220" width="34" height="130" rx="14" fill="#9aa3b8"/>
+    <circle cx="187" cy="220" r="22" fill="#ffd166"/>
+    <rect x="187" y="196" width="170" height="30" rx="14" fill="#9aa3b8" transform="rotate(-28 187 210)"/>
+    <circle cx="330" cy="140" r="20" fill="#ffd166"/>
+    <rect x="330" y="132" width="150" height="26" rx="12" fill="#9aa3b8" transform="rotate(24 330 145)"/>
+    <circle cx="470" cy="200" r="16" fill="#63e6be"/>
+    <rect x="470" y="150" width="60" height="50" rx="8" fill="#63e6be" opacity="0.7"/>
+    <text x="560" y="120" font-size="24" fill="#9aa3b8">1 底座  2 关节</text>
+    <text x="560" y="156" font-size="24" fill="#9aa3b8">3 连杆  4 夹爪</text>
+    <text x="560" y="192" font-size="24" fill="#9aa3b8">5 电源  6 数据线</text>
+    <text x="90" y="416" font-size="24" fill="#63e6be">先认零件，再动手 —— 对号入座就不会装错</text>
+  </g>
+</svg>

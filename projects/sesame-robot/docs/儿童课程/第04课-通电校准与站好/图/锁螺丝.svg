@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">再检查，再锁螺丝</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">锁完再切两次姿态</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <circle cx="640" cy="350" r="130" fill="#F3E3C8" stroke="#233" stroke-width="6"/>
+  <g stroke="#233" stroke-width="10"><path d="M640 220 L640 480"/><path d="M510 350 L770 350"/></g>
+  <circle cx="640" cy="350" r="34" fill="#8A9A9A" stroke="#233" stroke-width="5"/>
+  <path d="M610 350 L670 350 M640 320 L640 380" stroke="#233" stroke-width="8"/>
+  <text x="760" y="560" font-size="28">M2.5</text>
+  </g>
+</svg>

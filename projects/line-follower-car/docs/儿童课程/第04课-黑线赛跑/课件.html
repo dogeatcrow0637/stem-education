@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>循迹小车 · 第 4 课</title><style>
+:root{--bg:#0f1220;--fg:#f7f8fb;--dim:#9aa3b8;--accent:#ffd166;--accent2:#4cc9f0;--ok:#63e6be;}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#000;color:var(--fg);
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif}
+#deck{position:relative;width:100vw;height:100vh;overflow:hidden;background:var(--bg)}
+.slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
+  padding:5vh 6vw;gap:1.4vh}
+.slide.on{display:flex}
+h1{font-size:7.2vh;line-height:1.15;margin:0 0 1vh}
+h2{font-size:5.4vh;line-height:1.2;margin:0 0 2vh}
+h3{font-size:3.6vh;margin:0 0 1vh;color:var(--accent2)}
+p,li{font-size:4vh;line-height:1.45}
+ul,ol{margin:0;padding-left:1.2em}
+li{margin:.6vh 0}
+strong{color:var(--accent)}
+code{background:#ffffff1a;padding:.1em .35em;border-radius:.3em;font-size:.9em}
+img{max-width:100%;max-height:58vh;object-fit:contain;border-radius:1.2vh;display:block;margin:0 auto}
+.callout{font-size:4.2vh;padding:1.6vh 2vw;border-left:.8vw solid var(--accent);
+  background:#ffffff12;border-radius:1vh}
+.slide[data-layout=title]{align-items:center;text-align:center}
+.slide[data-layout=title] img{max-height:34vh}
+.slide[data-layout=title] p{color:var(--dim);font-size:2.8vh}
+.slide[data-layout=big]{align-items:center;text-align:center}
+.slide[data-layout=big] h1,.slide[data-layout=big] p{font-size:9vh;color:var(--accent)}
+.slide[data-layout=image]{align-items:center;text-align:center}
+.slide[data-layout=image] img{max-height:66vh}
+.cols{display:flex;gap:3vw;align-items:flex-start}
+.cols>div{flex:1;min-width:0}
+.notes{display:none}
+body.notes-on .notes{display:block;position:fixed;left:0;right:0;bottom:0;max-height:32vh;overflow:auto;
+  background:#000000e6;border-top:.4vh solid var(--accent2);padding:1.6vh 3vw;font-size:2.3vh;color:#dbe4f0}
+body.notes-on .slide{padding-bottom:34vh}
+#bar{position:fixed;top:0;left:0;height:.7vh;background:var(--accent);width:0;transition:width .15s;z-index:5}
+#num{position:fixed;right:1.6vw;bottom:1.2vh;font-size:2.2vh;color:var(--dim);z-index:5}
+#hint{position:fixed;left:1.6vw;bottom:1.2vh;font-size:2vh;color:#6b7488;z-index:5}
+@media print{
+  @page{size:297mm 167mm;margin:0}
+  html,body{background:#fff}
+  #bar,#num,#hint,.notes{display:none!important}
+  #deck{width:auto;height:auto;background:var(--bg)}
+  .slide{display:flex!important;position:relative;inset:auto;width:297mm;height:167mm;
+    page-break-after:always;break-after:page}
+  body{color:var(--fg);background:var(--bg)}
+}
+</style></head>
+<body>
+<div id="bar"></div>
+<div id="deck">
+<section class="slide on" data-layout="title"><h1>循迹小车 · 第 4 课</h1>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4NDAgNDIwIiBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsTWljcm9zb2Z0IFlhSGVpLHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4NDAiIGhlaWdodD0iNDIwIiBmaWxsPSIjMGYxMjIwIi8+CiAgPHRleHQgeD0iNDIwIiB5PSI0NCIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIyOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuaIkeS7rOeahOi1m+mBkzwvdGV4dD4KCiAgPCEtLSDotZvpgZPnmb3lupUgLS0+CiAgPHJlY3QgeD0iNjAiIHk9IjEwMCIgd2lkdGg9IjcyMCIgaGVpZ2h0PSIyNDAiIHJ4PSIyMCIgZmlsbD0iI2VlZjFmNyIvPgogIDwhLS0g6buR57q/77ya55u06YGTICsg57yT5byvIC0tPgogIDxwYXRoIGQ9Ik0xMDAgMjIwIEw0MzAgMjIwIEM1MjAgMjIwIDU2MCAxNTAgNjUwIDE1MCBMNzQwIDE1MCIKICAgICAgICBmaWxsPSJub25lIiBzdHJva2U9IiMxNDE0MTQiIHN0cm9rZS13aWR0aD0iMjAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDwhLS0g6LW354K557uI54K5IC0tPgogIDxjaXJjbGUgY3g9IjEwMCIgY3k9IjIyMCIgcj0iMTIiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSIxMDAiIHk9IjI3MCIgZmlsbD0iIzBmMTIyMCIgZm9udC1zaXplPSIxNyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+6LW354K5PC90ZXh0PgogIDxjaXJjbGUgY3g9Ijc0MCIgY3k9IjE1MCIgcj0iMTIiIGZpbGw9IiNmZjZiNmIiLz4KICA8dGV4dCB4PSI3MzUiIHk9IjEyMCIgZmlsbD0iIzBmMTIyMCIgZm9udC1zaXplPSIxNyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+57uI54K5PC90ZXh0PgoKICA8dGV4dCB4PSI0MjAiIHk9IjM4NiIgZmlsbD0iIzlhYTNiOCIgZm9udC1zaXplPSIxOCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5YWI6LeR6YCaIDEg57Gz55u06YGT77yM5YaN5Yqg5LiA5Liq57yT5byv77yI5Yir5LiA5LiK5p2l5bCxIFMg5byv77yJPC90ZXh0Pgo8L3N2Zz4K" alt="赛道">
+<p>Boss 关：让它自己跑完全程</p><div class="notes">备注：开场 30 秒。说明这是最后一关，跑完要讲给家人听。</div></section>
+<section class="slide" data-layout="image"><h2>先看，不许说话</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4NDAgNDIwIiBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsTWljcm9zb2Z0IFlhSGVpLHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4NDAiIGhlaWdodD0iNDIwIiBmaWxsPSIjMGYxMjIwIi8+CiAgPHRleHQgeD0iNDIwIiB5PSI0NCIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIyOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuaIkeS7rOeahOi1m+mBkzwvdGV4dD4KCiAgPCEtLSDotZvpgZPnmb3lupUgLS0+CiAgPHJlY3QgeD0iNjAiIHk9IjEwMCIgd2lkdGg9IjcyMCIgaGVpZ2h0PSIyNDAiIHJ4PSIyMCIgZmlsbD0iI2VlZjFmNyIvPgogIDwhLS0g6buR57q/77ya55u06YGTICsg57yT5byvIC0tPgogIDxwYXRoIGQ9Ik0xMDAgMjIwIEw0MzAgMjIwIEM1MjAgMjIwIDU2MCAxNTAgNjUwIDE1MCBMNzQwIDE1MCIKICAgICAgICBmaWxsPSJub25lIiBzdHJva2U9IiMxNDE0MTQiIHN0cm9rZS13aWR0aD0iMjAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDwhLS0g6LW354K557uI54K5IC0tPgogIDxjaXJjbGUgY3g9IjEwMCIgY3k9IjIyMCIgcj0iMTIiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSIxMDAiIHk9IjI3MCIgZmlsbD0iIzBmMTIyMCIgZm9udC1zaXplPSIxNyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+6LW354K5PC90ZXh0PgogIDxjaXJjbGUgY3g9Ijc0MCIgY3k9IjE1MCIgcj0iMTIiIGZpbGw9IiNmZjZiNmIiLz4KICA8dGV4dCB4PSI3MzUiIHk9IjEyMCIgZmlsbD0iIzBmMTIyMCIgZm9udC1zaXplPSIxNyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+57uI54K5PC90ZXh0PgoKICA8dGV4dCB4PSI0MjAiIHk9IjM4NiIgZmlsbD0iIzlhYTNiOCIgZm9udC1zaXplPSIxOCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5YWI6LeR6YCaIDEg57Gz55u06YGT77yM5YaN5Yqg5LiA5Liq57yT5byv77yI5Yir5LiA5LiK5p2l5bCxIFMg5byv77yJPC90ZXh0Pgo8L3N2Zz4K" alt="我们的赛道"><div class="notes">备注：看 10 秒，问"这个弯难在哪"。不提示。</div></section>
+<section class="slide" data-layout="big"><h2>猜一猜</h2>
+<p>跑快一点，还是慢一点更稳？</p><div class="notes">备注：让孩子先猜。后面用实验验证：太快会掉线。</div></section>
+<section class="slide" data-layout="bullets"><h2>动手（2 步）</h2>
+<p>1 先跑直道</p>
+<p>2 再加一个缓弯</p>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4NDAgNDIwIiBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsTWljcm9zb2Z0IFlhSGVpLHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4NDAiIGhlaWdodD0iNDIwIiBmaWxsPSIjMGYxMjIwIi8+CiAgPHRleHQgeD0iNDIwIiB5PSI0NCIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIyOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPuaIkeS7rOeahOi1m+mBkzwvdGV4dD4KCiAgPCEtLSDotZvpgZPnmb3lupUgLS0+CiAgPHJlY3QgeD0iNjAiIHk9IjEwMCIgd2lkdGg9IjcyMCIgaGVpZ2h0PSIyNDAiIHJ4PSIyMCIgZmlsbD0iI2VlZjFmNyIvPgogIDwhLS0g6buR57q/77ya55u06YGTICsg57yT5byvIC0tPgogIDxwYXRoIGQ9Ik0xMDAgMjIwIEw0MzAgMjIwIEM1MjAgMjIwIDU2MCAxNTAgNjUwIDE1MCBMNzQwIDE1MCIKICAgICAgICBmaWxsPSJub25lIiBzdHJva2U9IiMxNDE0MTQiIHN0cm9rZS13aWR0aD0iMjAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDwhLS0g6LW354K557uI54K5IC0tPgogIDxjaXJjbGUgY3g9IjEwMCIgY3k9IjIyMCIgcj0iMTIiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSIxMDAiIHk9IjI3MCIgZmlsbD0iIzBmMTIyMCIgZm9udC1zaXplPSIxNyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+6LW354K5PC90ZXh0PgogIDxjaXJjbGUgY3g9Ijc0MCIgY3k9IjE1MCIgcj0iMTIiIGZpbGw9IiNmZjZiNmIiLz4KICA8dGV4dCB4PSI3MzUiIHk9IjEyMCIgZmlsbD0iIzBmMTIyMCIgZm9udC1zaXplPSIxNyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+57uI54K5PC90ZXh0PgoKICA8dGV4dCB4PSI0MjAiIHk9IjM4NiIgZmlsbD0iIzlhYTNiOCIgZm9udC1zaXplPSIxOCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5YWI6LeR6YCaIDEg57Gz55u06YGT77yM5YaN5Yqg5LiA5Liq57yT5byv77yI5Yir5LiA5LiK5p2l5bCxIFMg5byv77yJPC90ZXh0Pgo8L3N2Zz4K" alt="赛道"><div class="notes">备注：别一上来就上 S 弯。每成功一次录 ≤10 秒视频。</div></section>
+<section class="slide" data-layout="bullets"><h2>它心里在想什么</h2>
+<ul>
+<li>看不到线 → 直走</li>
+<li>左边看到 → 左拐</li>
+<li>右边看到 → 右拐</li>
+</ul>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4NjAgNDgwIiBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsTWljcm9zb2Z0IFlhSGVpLHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4NjAiIGhlaWdodD0iNDgwIiBmaWxsPSIjMGYxMjIwIi8+CiAgPHRleHQgeD0iNDMwIiB5PSI0NCIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIyOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPueoi+W6j+mHjOeahCA0IOadoeinhOWImTwvdGV4dD4KCiAgPCEtLSDotbfngrkgLS0+CiAgPHJlY3QgeD0iNjAiIHk9IjIwMCIgd2lkdGg9IjEyMCIgaGVpZ2h0PSI4MCIgcng9IjE0IiBmaWxsPSIjMjYzMDRmIiBzdHJva2U9IiM0Y2M5ZjAiIHN0cm9rZS13aWR0aD0iMyIvPgogIDx0ZXh0IHg9IjEyMCIgeT0iMjM1IiBmaWxsPSIjZjdmOGZiIiBmb250LXNpemU9IjE5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7or7vkuKTkuKo8L3RleHQ+CiAgPHRleHQgeD0iMTIwIiB5PSIyNjAiIGZpbGw9IiNmN2Y4ZmIiIGZvbnQtc2l6ZT0iMTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuaOouWktDwvdGV4dD4KCiAgPCEtLSDlm5vkuKrliIbmlK8gLS0+CiAgPGc+CiAgICA8bGluZSB4MT0iMTgwIiB5MT0iMjQwIiB4Mj0iMjUwIiB5Mj0iMTEwIiBzdHJva2U9IiM5YWEzYjgiIHN0cm9rZS13aWR0aD0iMiIvPgogICAgPHJlY3QgeD0iMjUwIiB5PSI3MCIgd2lkdGg9IjU0MCIgaGVpZ2h0PSI3MCIgcng9IjEyIiBmaWxsPSIjMWIyMzQwIiBzdHJva2U9IiM2M2U2YmUiIHN0cm9rZS13aWR0aD0iMiIvPgogICAgPHRleHQgeD0iMjcwIiB5PSIxMTQiIGZpbGw9IiM2M2U2YmUiIGZvbnQtc2l6ZT0iMTkiPumDveeci+S4jeWIsOm7kee6vyDihpIg55u06LWwPC90ZXh0PgogIDwvZz4KICA8Zz4KICAgIDxsaW5lIHgxPSIxODAiIHkxPSIyNDAiIHgyPSIyNTAiIHkyPSIyMDAiIHN0cm9rZT0iIzlhYTNiOCIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgICA8cmVjdCB4PSIyNTAiIHk9IjE2NSIgd2lkdGg9IjU0MCIgaGVpZ2h0PSI3MCIgcng9IjEyIiBmaWxsPSIjMWIyMzQwIiBzdHJva2U9IiM0Y2M5ZjAiIHN0cm9rZS13aWR0aD0iMiIvPgogICAgPHRleHQgeD0iMjcwIiB5PSIyMDkiIGZpbGw9IiM0Y2M5ZjAiIGZvbnQtc2l6ZT0iMTkiPuW3pui+ueeci+WIsOm7kee6vyDihpIg5b6A5bem5ouQPC90ZXh0PgogIDwvZz4KICA8Zz4KICAgIDxsaW5lIHgxPSIxODAiIHkxPSIyNDAiIHgyPSIyNTAiIHkyPSIyOTAiIHN0cm9rZT0iIzlhYTNiOCIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgICA8cmVjdCB4PSIyNTAiIHk9IjI1NSIgd2lkdGg9IjU0MCIgaGVpZ2h0PSI3MCIgcng9IjEyIiBmaWxsPSIjMWIyMzQwIiBzdHJva2U9IiM0Y2M5ZjAiIHN0cm9rZS13aWR0aD0iMiIvPgogICAgPHRleHQgeD0iMjcwIiB5PSIyOTkiIGZpbGw9IiM0Y2M5ZjAiIGZvbnQtc2l6ZT0iMTkiPuWPs+i+ueeci+WIsOm7kee6vyDihpIg5b6A5Y+z5ouQPC90ZXh0PgogIDwvZz4KICA8Zz4KICAgIDxsaW5lIHgxPSIxODAiIHkxPSIyNDAiIHgyPSIyNTAiIHkyPSIzODAiIHN0cm9rZT0iIzlhYTNiOCIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgICA8cmVjdCB4PSIyNTAiIHk9IjM0NSIgd2lkdGg9IjU0MCIgaGVpZ2h0PSI3MCIgcng9IjEyIiBmaWxsPSIjMWIyMzQwIiBzdHJva2U9IiNmZmQxNjYiIHN0cm9rZS13aWR0aD0iMiIvPgogICAgPHRleHQgeD0iMjcwIiB5PSIzODkiIGZpbGw9IiNmZmQxNjYiIGZvbnQtc2l6ZT0iMTkiPuS4pOi+uemDveeci+WIsCDihpIg55u06LWw77yI6Leo6L+H5a6957q/77yJPC90ZXh0PgogIDwvZz4KPC9zdmc+Cg==" alt="判断规则"><div class="notes">备注：让孩子对着车复述这 4 条，能背下来就算懂原理。</div></section>
+<section class="slide" data-layout="big"><h2>通关条件</h2>
+<p>连续 2 次跑完全程</p><div class="notes">备注：连着成功两次才算通过，偶发失败不算数，也不批评。</div></section>
+<section class="slide" data-layout="two-col"><div class="cols"><div><h3>我们发现的</h3><ul>
+<li>慢一点更不容易掉线</li>
+<li>探头前移会更好拐弯</li>
+</ul></div><div><h3>记下的线索</h3><ul>
+<li>速度改到 __ 最稳</li>
+</ul></div></div><div class="notes">备注：收尾 3 问。把最稳的速度记进线索本。</div></section>
+<section class="slide" data-layout="image"><h2>讲给家人听</h2>
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MjAgNDYwIiBmb250LWZhbWlseT0iUGluZ0ZhbmcgU0MsTWljcm9zb2Z0IFlhSGVpLHNhbnMtc2VyaWYiPgogIDxyZWN0IHdpZHRoPSI4MjAiIGhlaWdodD0iNDYwIiBmaWxsPSIjMGYxMjIwIi8+CiAgPHRleHQgeD0iNDEwIiB5PSI0NCIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIyOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC13ZWlnaHQ9ImJvbGQiPue7meWutuS6uua8lOekuiAzIOWIhumSnzwvdGV4dD4KCiAgPCEtLSDlsI/ovaYgLS0+CiAgPHJlY3QgeD0iMTIwIiB5PSIzMDAiIHdpZHRoPSIyMDAiIGhlaWdodD0iNzAiIHJ4PSIxNCIgZmlsbD0iIzI2MzA0ZiIgc3Ryb2tlPSIjNGNjOWYwIiBzdHJva2Utd2lkdGg9IjMiLz4KICA8Y2lyY2xlIGN4PSIxNjAiIGN5PSIzODAiIHI9IjIwIiBmaWxsPSIjMmUzYTYzIiBzdHJva2U9IiM5YWEzYjgiLz4KICA8Y2lyY2xlIGN4PSIyODAiIGN5PSIzODAiIHI9IjIwIiBmaWxsPSIjMmUzYTYzIiBzdHJva2U9IiM5YWEzYjgiLz4KICA8Y2lyY2xlIGN4PSIyMDAiIGN5PSIyOTIiIHI9IjEyIiBmaWxsPSIjZmZkMTY2Ii8+CiAgPGNpcmNsZSBjeD0iMjUwIiBjeT0iMjkyIiByPSIxMiIgZmlsbD0iI2ZmZDE2NiIvPgogIDx0ZXh0IHg9IjIyMCIgeT0iMzQ1IiBmaWxsPSIjZjdmOGZiIiBmb250LXNpemU9IjIwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj7miJHnmoTlsI/ovaY8L3RleHQ+CgogIDwhLS0g5bCP5Lq6IC0tPgogIDxjaXJjbGUgY3g9IjUyMCIgY3k9IjE1MCIgcj0iMzQiIGZpbGw9IiNmZmQxNjYiLz4KICA8dGV4dCB4PSI1MjAiIHk9IjE2MCIgZmlsbD0iIzBmMTIyMCIgZm9udC1zaXplPSIyNiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5oiRPC90ZXh0PgogIDxyZWN0IHg9IjQ5NCIgeT0iMTg4IiB3aWR0aD0iNTIiIGhlaWdodD0iMTEwIiByeD0iMTYiIGZpbGw9IiM0Y2M5ZjAiLz4KICA8cGF0aCBkPSJNNTIwIDIyMCBMNDcwIDI3MCIgc3Ryb2tlPSIjNGNjOWYwIiBzdHJva2Utd2lkdGg9IjE0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KCiAgPCEtLSDlrrbkurogLS0+CiAgPGNpcmNsZSBjeD0iNjgwIiBjeT0iMjIwIiByPSIzMCIgZmlsbD0iIzYzZTZiZSIvPgogIDxyZWN0IHg9IjY1OCIgeT0iMjU0IiB3aWR0aD0iNDQiIGhlaWdodD0iOTAiIHJ4PSIxNCIgZmlsbD0iIzYzZTZiZSIvPgogIDxjaXJjbGUgY3g9Ijc0MCIgY3k9IjIzMCIgcj0iMjYiIGZpbGw9IiM2M2U2YmUiLz4KICA8cmVjdCB4PSI3MjIiIHk9IjI1OCIgd2lkdGg9IjM4IiBoZWlnaHQ9IjgwIiByeD0iMTIiIGZpbGw9IiM2M2U2YmUiLz4KICA8dGV4dCB4PSI2OTAiIHk9IjQwMCIgZmlsbD0iIzlhYTNiOCIgZm9udC1zaXplPSIxNyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5a625Lq66KeC5LyXPC90ZXh0PgoKICA8dGV4dCB4PSI0MTAiIHk9IjQ0MCIgZmlsbD0iI2ZmZDE2NiIgZm9udC1zaXplPSIxOSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+6K+05riF77ya5a6D5piv5LuA5LmIIMK3IOaAjuS5iOWBmueahCDCtyDmnIDpmr7lnKjlk6ogwrcg6L+Y5oOz5pS55LuA5LmIPC90ZXh0Pgo8L3N2Zz4K" alt="给家人演示"><div class="notes">备注：按展示脚本：是什么 / 怎么做 / 最难在哪 / 还想改什么。家长计时并提 1 个问题。</div></section>
+<section class="slide" data-layout="title"><h1>恭喜过关</h1>
+<p>你现在是「小工程师」了</p><div class="notes">备注：盖章、发最高称号。预告：下一步可以加蜂鸣器、蓝牙遥控，或者挑战机械臂。</div></section>
+</div>
+<div id="num"></div><div id="hint">← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 导出 PDF</div>
+<script>
+const slides=[...document.querySelectorAll('.slide')];
+let i=0;
+function show(n){
+  i=Math.max(0,Math.min(slides.length-1,n));
+  slides.forEach((s,k)=>s.classList.toggle('on',k===i));
+  document.getElementById('bar').style.width=((i+1)/slides.length*100)+'%';
+  document.getElementById('num').textContent=(i+1)+' / '+slides.length;
+  history.replaceState(null,'','#'+(i+1));
+}
+function toggleNotes(){document.body.classList.toggle('notes-on');}
+addEventListener('keydown',e=>{
+  const k=e.key;
+  if(k==='ArrowRight'||k===' '||k==='PageDown'||k==='j'){show(i+1);e.preventDefault();}
+  else if(k==='ArrowLeft'||k==='PageUp'||k==='k'){show(i-1);e.preventDefault();}
+  else if(k==='Home'){show(0);} else if(k==='End'){show(slides.length-1);}
+  else if(k==='n'||k==='N'){toggleNotes();}
+  else if(k==='f'||k==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+  else if(k==='?'||k==='/'){alert('← → 翻页 ｜ F 全屏 ｜ N 备注 ｜ Ctrl+P 打印成 PDF');}
+});
+addEventListener('click',e=>{show(i+(e.clientX>innerWidth/2?1:-1));});
+show(parseInt(location.hash.slice(1)||'1',10)-1);
+</script>
+</body></html>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 460" font-family="PingFang SC,Microsoft YaHei,sans-serif">
+  <rect width="820" height="460" fill="#0f1220"/>
+  <text x="410" y="44" fill="#ffd166" font-size="28" text-anchor="middle" font-weight="bold">给家人演示 3 分钟</text>
+
+  <!-- 小车 -->
+  <rect x="120" y="300" width="200" height="70" rx="14" fill="#26304f" stroke="#4cc9f0" stroke-width="3"/>
+  <circle cx="160" cy="380" r="20" fill="#2e3a63" stroke="#9aa3b8"/>
+  <circle cx="280" cy="380" r="20" fill="#2e3a63" stroke="#9aa3b8"/>
+  <circle cx="200" cy="292" r="12" fill="#ffd166"/>
+  <circle cx="250" cy="292" r="12" fill="#ffd166"/>
+  <text x="220" y="345" fill="#f7f8fb" font-size="20" text-anchor="middle">我的小车</text>
+
+  <!-- 小人 -->
+  <circle cx="520" cy="150" r="34" fill="#ffd166"/>
+  <text x="520" y="160" fill="#0f1220" font-size="26" text-anchor="middle">我</text>
+  <rect x="494" y="188" width="52" height="110" rx="16" fill="#4cc9f0"/>
+  <path d="M520 220 L470 270" stroke="#4cc9f0" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- 家人 -->
+  <circle cx="680" cy="220" r="30" fill="#63e6be"/>
+  <rect x="658" y="254" width="44" height="90" rx="14" fill="#63e6be"/>
+  <circle cx="740" cy="230" r="26" fill="#63e6be"/>
+  <rect x="722" y="258" width="38" height="80" rx="12" fill="#63e6be"/>
+  <text x="690" y="400" fill="#9aa3b8" font-size="17" text-anchor="middle">家人观众</text>
+
+  <text x="410" y="440" fill="#ffd166" font-size="19" text-anchor="middle">说清：它是什么 · 怎么做的 · 最难在哪 · 还想改什么</text>
+</svg>

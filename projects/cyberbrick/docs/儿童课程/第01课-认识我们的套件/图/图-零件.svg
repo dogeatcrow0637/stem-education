@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+  <rect width="800" height="600" fill="#101528"/>
+  <text x="400" y="52" fill="#ffd166" font-size="34" text-anchor="middle" font-weight="bold">盒子里有什么</text>
+
+  <!-- core board -->
+  <rect x="70" y="110" width="180" height="110" rx="12" fill="#4cc9f0"/>
+  <text x="160" y="175" fill="#0f1220" font-size="24" text-anchor="middle" font-weight="bold">核心板</text>
+  <text x="160" y="250" fill="#9aa3b8" font-size="22" text-anchor="middle">大脑</text>
+
+  <!-- receiver base -->
+  <rect x="310" y="110" width="180" height="110" rx="12" fill="#63e6be"/>
+  <text x="400" y="168" fill="#0f1220" font-size="22" text-anchor="middle" font-weight="bold">接收底板</text>
+  <text x="400" y="250" fill="#9aa3b8" font-size="22" text-anchor="middle">装在车上</text>
+
+  <!-- transmitter base -->
+  <rect x="550" y="110" width="180" height="110" rx="12" fill="#f4a261"/>
+  <text x="640" y="168" fill="#0f1220" font-size="22" text-anchor="middle" font-weight="bold">发射底板</text>
+  <text x="640" y="250" fill="#9aa3b8" font-size="22" text-anchor="middle">装在遥控里</text>
+
+  <!-- modules -->
+  <circle cx="120" cy="360" r="40" fill="#ffd166"/>
+  <text x="120" y="370" fill="#0f1220" font-size="22" text-anchor="middle">电机</text>
+  <circle cx="260" cy="360" r="40" fill="#ff6b6b"/>
+  <text x="260" y="370" fill="#0f1220" font-size="22" text-anchor="middle">舵机</text>
+  <rect x="340" y="325" width="90" height="70" rx="10" fill="#c77dff"/>
+  <text x="385" y="368" fill="#0f1220" font-size="22" text-anchor="middle">灯珠</text>
+  <rect x="470" y="325" width="110" height="70" rx="10" fill="#90e0ef"/>
+  <text x="525" y="368" fill="#0f1220" font-size="22" text-anchor="middle">摇杆</text>
+  <rect x="620" y="325" width="120" height="70" rx="10" fill="#ffe066"/>
+  <text x="680" y="368" fill="#0f1220" font-size="22" text-anchor="middle">电池</text>
+
+  <text x="400" y="520" fill="#9aa3b8" font-size="22" text-anchor="middle">全部免焊，插上就用</text>
+</svg>

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+  <rect width="800" height="600" fill="#101528"/>
+  <text x="400" y="54" fill="#ffd166" font-size="34" text-anchor="middle" font-weight="bold">慢 慢 推，别硬掰</text>
+
+  <rect x="180" y="420" width="440" height="60" rx="10" fill="#3a4360"/>
+  <text x="400" y="460" fill="#9aa3b8" font-size="24" text-anchor="middle">桌面</text>
+
+  <circle cx="300" cy="360" r="34" fill="#63e6be"/>
+  <text x="300" y="370" fill="#0f1220" font-size="28" text-anchor="middle" font-weight="bold">1</text>
+
+  <line x1="300" y1="326" x2="300" y2="220" stroke="#63e6be" stroke-width="16" stroke-linecap="round"/>
+
+  <!-- hand -->
+  <path d="M470 300 q-40 -10 -60 10 q-14 14 -2 30 q12 16 40 14 l60 -4" fill="none" stroke="#f4a261" stroke-width="12" stroke-linecap="round"/>
+  <text x="600" y="330" fill="#f4a261" font-size="26" text-anchor="middle">两只手扶住</text>
+
+  <!-- arrow -->
+  <path d="M400 200 q60 0 90 40" fill="none" stroke="#ffd166" stroke-width="7" stroke-linecap="round"/>
+  <path d="M490 240 l-2 -24 l-22 12 z" fill="#ffd166"/>
+  <text x="470" y="170" fill="#ffd166" font-size="26" text-anchor="middle">很慢地转</text>
+
+  <text x="400" y="546" fill="#9aa3b8" font-size="22" text-anchor="middle">手里会感觉到一点点"弹"，那是电机在里面</text>
+</svg>

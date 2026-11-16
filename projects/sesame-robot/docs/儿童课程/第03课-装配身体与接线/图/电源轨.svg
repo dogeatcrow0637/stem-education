@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">电源两条轨</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">5V 红线 · GND 棕黑线</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <path d="M220 300 L1060 300" stroke="#E4572E" stroke-width="16"/>
+  <path d="M220 440 L1060 440" stroke="#5A4A42" stroke-width="16"/>
+  <text x="250" y="270" font-size="34" fill="#E4572E">5V</text>
+  <text x="250" y="490" font-size="34" fill="#5A4A42">GND</text>
+  <g fill="#4C8BF5" stroke="#233" stroke-width="4">
+    <rect x="360" y="320" width="90" height="100" rx="10"/><rect x="520" y="320" width="90" height="100" rx="10"/>
+    <rect x="680" y="320" width="90" height="100" rx="10"/><rect x="840" y="320" width="90" height="100" rx="10"/>
+  </g>
+  <text x="420" y="580" font-size="28">8 个舵机并联</text>
+  </g>
+</svg>

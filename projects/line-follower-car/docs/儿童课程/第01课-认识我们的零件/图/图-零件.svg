@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 480" font-family="PingFang SC,Microsoft YaHei,sans-serif">
+  <rect width="800" height="480" fill="#0f1220"/>
+  <text x="400" y="46" fill="#ffd166" font-size="30" text-anchor="middle" font-weight="bold">我们的 5 个零件</text>
+
+  <g>
+    <rect x="50" y="90" width="200" height="140" rx="14" fill="#1b2340" stroke="#4cc9f0" stroke-width="3"/>
+    <circle cx="90" cy="120" r="14" fill="#4cc9f0"/><text x="90" y="126" fill="#0f1220" font-size="16" text-anchor="middle" font-weight="bold">1</text>
+    <text x="150" y="180" fill="#f7f8fb" font-size="22" text-anchor="middle">主控</text>
+    <text x="150" y="210" fill="#9aa3b8" font-size="15" text-anchor="middle">UNO · 小脑袋</text>
+  </g>
+  <g>
+    <rect x="300" y="90" width="200" height="140" rx="14" fill="#1b2340" stroke="#4cc9f0" stroke-width="3"/>
+    <circle cx="340" cy="120" r="14" fill="#4cc9f0"/><text x="340" y="126" fill="#0f1220" font-size="16" text-anchor="middle" font-weight="bold">2</text>
+    <text x="400" y="180" fill="#f7f8fb" font-size="22" text-anchor="middle">驱动板</text>
+    <text x="400" y="210" fill="#9aa3b8" font-size="15" text-anchor="middle">L298N · 大力士</text>
+  </g>
+  <g>
+    <rect x="550" y="90" width="200" height="140" rx="14" fill="#1b2340" stroke="#4cc9f0" stroke-width="3"/>
+    <circle cx="590" cy="120" r="14" fill="#4cc9f0"/><text x="590" y="126" fill="#0f1220" font-size="16" text-anchor="middle" font-weight="bold">3</text>
+    <text x="650" y="180" fill="#f7f8fb" font-size="22" text-anchor="middle">底盘轮子</text>
+    <text x="650" y="210" fill="#9aa3b8" font-size="15" text-anchor="middle">2 个电机</text>
+  </g>
+  <g>
+    <rect x="175" y="270" width="200" height="140" rx="14" fill="#1b2340" stroke="#ffd166" stroke-width="3"/>
+    <circle cx="215" cy="300" r="14" fill="#ffd166"/><text x="215" y="306" fill="#0f1220" font-size="16" text-anchor="middle" font-weight="bold">4</text>
+    <text x="275" y="360" fill="#f7f8fb" font-size="22" text-anchor="middle">循迹探头</text>
+    <text x="275" y="390" fill="#9aa3b8" font-size="15" text-anchor="middle">会数光的眼睛</text>
+  </g>
+  <g>
+    <rect x="425" y="270" width="200" height="140" rx="14" fill="#1b2340" stroke="#63e6be" stroke-width="3"/>
+    <circle cx="465" cy="300" r="14" fill="#63e6be"/><text x="465" y="306" fill="#0f1220" font-size="16" text-anchor="middle" font-weight="bold">5</text>
+    <text x="525" y="360" fill="#f7f8fb" font-size="22" text-anchor="middle">电池 + 线</text>
+    <text x="525" y="390" fill="#9aa3b8" font-size="15" text-anchor="middle">小水库</text>
+  </g>
+</svg>

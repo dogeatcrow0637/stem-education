@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif">
+<rect width="960" height="540" fill="#0f1220"/>
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa3b8"/></marker></defs>
+<text x="480" y="44" fill="#ffd166" font-size="30" text-anchor="middle" font-weight="700">缸里的四个活儿</text>
+<rect x="40" y="190" width="200" height="130" rx="10" fill="#151a2b" stroke="#4cc9f0" stroke-width="2"/>
+<text x="140.0" y="251.0" fill="#4cc9f0" font-size="26" text-anchor="middle" font-weight="600">过滤</text>
+<text x="140.0" y="281.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">拦住脏东西</text>
+<path d="M245,255 L260,255" stroke="#9aa3b8" stroke-width="3" marker-end="url(#ar)"/>
+<rect x="265" y="190" width="200" height="130" rx="10" fill="#151a2b" stroke="#63e6be" stroke-width="2"/>
+<text x="365.0" y="251.0" fill="#63e6be" font-size="26" text-anchor="middle" font-weight="600">分离</text>
+<text x="365.0" y="281.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">吹走脏东西</text>
+<path d="M470,255 L485,255" stroke="#9aa3b8" stroke-width="3" marker-end="url(#ar)"/>
+<rect x="490" y="190" width="200" height="130" rx="10" fill="#151a2b" stroke="#ffd166" stroke-width="2"/>
+<text x="590.0" y="251.0" fill="#ffd166" font-size="26" text-anchor="middle" font-weight="600">水流</text>
+<text x="590.0" y="281.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">别让水积住</text>
+<path d="M695,255 L710,255" stroke="#9aa3b8" stroke-width="3" marker-end="url(#ar)"/>
+<rect x="715" y="190" width="200" height="130" rx="10" fill="#151a2b" stroke="#ff6b6b" stroke-width="2"/>
+<text x="815.0" y="251.0" fill="#ff6b6b" font-size="26" text-anchor="middle" font-weight="600">稀释</text>
+<text x="815.0" y="281.0" fill="#9aa3b8" font-size="15" text-anchor="middle" font-weight="400">换水带走硝酸盐</text>
+<text x="480" y="380" fill="#9aa3b8" font-size="22" text-anchor="middle" font-weight="400">不是靠换滤芯，是靠一个活着的小生态</text>
+<text x="480" y="492" fill="#9aa3b8" font-size="20" text-anchor="middle" font-weight="400">四步接力，缺一步水就浑</text>
+</svg>

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 480" font-family="PingFang SC,Microsoft YaHei,sans-serif">
+  <rect width="860" height="480" fill="#0f1220"/>
+  <text x="430" y="44" fill="#ffd166" font-size="28" text-anchor="middle" font-weight="bold">程序里的 4 条规则</text>
+
+  <!-- 起点 -->
+  <rect x="60" y="200" width="120" height="80" rx="14" fill="#26304f" stroke="#4cc9f0" stroke-width="3"/>
+  <text x="120" y="235" fill="#f7f8fb" font-size="19" text-anchor="middle">读两个</text>
+  <text x="120" y="260" fill="#f7f8fb" font-size="19" text-anchor="middle">探头</text>
+
+  <!-- 四个分支 -->
+  <g>
+    <line x1="180" y1="240" x2="250" y2="110" stroke="#9aa3b8" stroke-width="2"/>
+    <rect x="250" y="70" width="540" height="70" rx="12" fill="#1b2340" stroke="#63e6be" stroke-width="2"/>
+    <text x="270" y="114" fill="#63e6be" font-size="19">都看不到黑线 → 直走</text>
+  </g>
+  <g>
+    <line x1="180" y1="240" x2="250" y2="200" stroke="#9aa3b8" stroke-width="2"/>
+    <rect x="250" y="165" width="540" height="70" rx="12" fill="#1b2340" stroke="#4cc9f0" stroke-width="2"/>
+    <text x="270" y="209" fill="#4cc9f0" font-size="19">左边看到黑线 → 往左拐</text>
+  </g>
+  <g>
+    <line x1="180" y1="240" x2="250" y2="290" stroke="#9aa3b8" stroke-width="2"/>
+    <rect x="250" y="255" width="540" height="70" rx="12" fill="#1b2340" stroke="#4cc9f0" stroke-width="2"/>
+    <text x="270" y="299" fill="#4cc9f0" font-size="19">右边看到黑线 → 往右拐</text>
+  </g>
+  <g>
+    <line x1="180" y1="240" x2="250" y2="380" stroke="#9aa3b8" stroke-width="2"/>
+    <rect x="250" y="345" width="540" height="70" rx="12" fill="#1b2340" stroke="#ffd166" stroke-width="2"/>
+    <text x="270" y="389" fill="#ffd166" font-size="19">两边都看到 → 直走（跨过宽线）</text>
+  </g>
+</svg>

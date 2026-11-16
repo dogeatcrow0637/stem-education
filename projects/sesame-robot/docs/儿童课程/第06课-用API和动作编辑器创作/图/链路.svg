@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">请求 → 固件 → 舵机</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">三站接力</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <g font-size="28" text-anchor="middle" fill="#233">
+    <rect x="120" y="280" width="260" height="150" rx="22" fill="#DDE7E7"/><text x="250" y="370">浏览器</text>
+    <rect x="510" y="280" width="260" height="150" rx="22" fill="#F3E3C8"/><text x="640" y="350">固件</text><text x="640" y="395" font-size="22">小脑</text>
+    <rect x="900" y="280" width="260" height="150" rx="22" fill="#F2C9C0"/><text x="1030" y="370">8 个舵机</text>
+  </g>
+  <g stroke="#E4572E" stroke-width="10" fill="none" stroke-linecap="round">
+    <path d="M390 355 L490 355"/><path d="M780 355 L880 355"/>
+  </g>
+  </g>
+</svg>

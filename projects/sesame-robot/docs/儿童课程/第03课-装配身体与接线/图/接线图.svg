@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">先看接线图</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">照表接，不靠记忆</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <rect x="220" y="180" width="840" height="420" rx="20" fill="#FFFFFF" stroke="#233" stroke-width="6"/>
+  <rect x="300" y="250" width="220" height="150" rx="14" fill="#2F6B4F"/>
+  <text x="330" y="340" font-size="30" fill="#fff">主控</text>
+  <rect x="760" y="250" width="200" height="150" rx="14" fill="#4C8BF5"/>
+  <text x="790" y="340" font-size="30" fill="#fff">舵机</text>
+  <g stroke="#E4572E" stroke-width="6">
+    <path d="M520 300 L760 300"/><path d="M520 340 L760 340"/><path d="M520 380 L760 380"/>
+  </g>
+  <text x="560" y="500" font-size="28">S0–S7 一对一</text>
+  </g>
+</svg>

@@ -1,0 +1,30 @@
+# 项目元数据：供索引、脚本与统计读取
+# 修改后请同步 projects/README.md 的索引表
+id: "03"                  # 两位项目编号，如 "01"
+slug: "cyberbrick"              # 目录名
+name: "拓竹 CyberBrick 模块化遥控套件"              # 中文项目名
+name_en: "Bambu Lab CyberBrick"                           # 英文名（可选）
+status: "资料整理"                     # 资料整理 | 复刻中 | 已完成 | 维护中 | 已归档
+direction: ["遥控模型", "3D打印", "入门教学"]                         # 方向标签，如 ["机器人", "具身智能"]
+created: "2026-10-20"
+updated: "2026-10-20"
+owner: ""                             # 负责人/小组
+
+platform:                             # 运行平台
+  mcu: "CyberBrick 核心板 XA003（ESP32-C3，MicroPython）"   # 主控型号，如 STM32F407 / ESP32-S3
+  host: "手机 / PC（CyberBrick App 配置）+ 可选 Thonny / VS Code（MicroPython）"            # 上位机系统，如 Ubuntu 22.04
+  runtime: "核心板出厂固件 + App 图形化配置；进阶用 MicroPython（boot.py）"   # runtime/框架，如 ROS2 Humble / LeRobot
+
+external:                             # 外部资源主入口
+  repo: "https://github.com/CyberBrick-Official/CyberBrick_Controller_Core"   # 官方代码库（社区转述，未直连验证）
+  wiki: "https://wiki.bambulab.com/zh/makerworld/cyberbrick/intro"
+  video: ""
+
+license:
+  hardware: ""                        # 未在 Wiki/商店页找到明确许可声明，待确认
+  software: ""                        # 官方代码库许可未核验，待确认
+  note: "官方 Wiki 称硬件的设计规范与参考设计属「开放」，但未找到许可证文件；MakerWorld 上的模型与工程许可各自以其页面为准（多为厂商/创作者自定）。商业使用前必须逐一核验。"
+
+cost:                                 # 参考成本（人民币，可留空）
+  total: "MVP 约 ￥300–360（入门套件 + 耗材）；需自备或外协 3D 打印"
+  note: "京东拓竹官方旗舰店页面价：入门硬件套装 ¥199、超级组合硬件套装 ¥329（经比价页转述，原价口径）；海外官方店 CyberBrick Hardware Kit 页面显示 from $14.99 USD（另有模型页显示 Beginner Kit ZK004 起价 $31.49）。价格为量级参考，下单前以页面为准（访问日期 2026-10-20），明细见 hardware/bom/bom_cyberbrick_zk004.csv"

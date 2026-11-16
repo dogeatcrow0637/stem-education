@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" font-family="PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif">
+<rect width="960" height="540" fill="#0f1220"/>
+<text x="480" y="44" fill="#ffd166" font-size="30" text-anchor="middle" font-weight="700">八周的曲线</text>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ffd166"/></marker><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4cc9f0"/></marker></defs>
+<rect x="90" y="110" width="800" height="320" fill="none" stroke="#9aa3b8" stroke-width="2"/>
+<polyline points="90,330 300,150 420,300 780,400" fill="none" stroke="#ffd166" stroke-width="4"/>
+<polyline points="90,398 360,398 450,180 700,380 800,396" fill="none" stroke="#ff6b6b" stroke-width="4" stroke-dasharray="8 6"/>
+<text x="160" y="140" fill="#ffd166" font-size="20" text-anchor="start" font-weight="600">氨</text>
+<text x="600" y="205" fill="#ff6b6b" font-size="18" text-anchor="start" font-weight="400">亚硝酸盐（虚线）</text>
+<text x="660" y="320" fill="#63e6be" font-size="18" text-anchor="start" font-weight="400">硝酸盐 慢慢升</text>
+<text x="480" y="472" fill="#9aa3b8" font-size="20" text-anchor="middle" font-weight="400">第 1 周  →  第 4 周  →  第 6 周  →  第 8 周</text>
+<text x="480" y="512" fill="#63e6be" font-size="22" text-anchor="middle" font-weight="700">两条毒线都归零 = 缸成熟了</text>
+</svg>

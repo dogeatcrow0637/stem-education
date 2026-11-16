@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 420" font-family="PingFang SC,Microsoft YaHei,sans-serif">
+  <rect width="840" height="420" fill="#0f1220"/>
+  <text x="420" y="44" fill="#ffd166" font-size="28" text-anchor="middle" font-weight="bold">我们的赛道</text>
+
+  <!-- 赛道白底 -->
+  <rect x="60" y="100" width="720" height="240" rx="20" fill="#eef1f7"/>
+  <!-- 黑线：直道 + 缓弯 -->
+  <path d="M100 220 L430 220 C520 220 560 150 650 150 L740 150"
+        fill="none" stroke="#141414" stroke-width="20" stroke-linecap="round"/>
+  <!-- 起点终点 -->
+  <circle cx="100" cy="220" r="12" fill="#63e6be"/>
+  <text x="100" y="270" fill="#0f1220" font-size="17" text-anchor="middle">起点</text>
+  <circle cx="740" cy="150" r="12" fill="#ff6b6b"/>
+  <text x="735" y="120" fill="#0f1220" font-size="17" text-anchor="middle">终点</text>
+
+  <text x="420" y="386" fill="#9aa3b8" font-size="18" text-anchor="middle">先跑通 1 米直道，再加一个缓弯（别一上来就 S 弯）</text>
+</svg>

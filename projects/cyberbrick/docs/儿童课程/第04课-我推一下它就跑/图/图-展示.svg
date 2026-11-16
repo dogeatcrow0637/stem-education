@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+  <rect width="800" height="600" fill="#101528"/>
+  <text x="400" y="60" fill="#ffd166" font-size="40" text-anchor="middle" font-weight="bold">通关！</text>
+  <text x="400" y="130" fill="#63e6be" font-size="28" text-anchor="middle">我的车跑起来了</text>
+
+  <!-- trophy -->
+  <path d="M330 250 h140 v60 a70 70 0 0 1 -140 0 z" fill="#ffd166"/>
+  <path d="M330 258 h-40 a40 40 0 0 0 40 46 z" fill="none" stroke="#ffd166" stroke-width="10"/>
+  <path d="M470 258 h40 a40 40 0 0 1 -40 46 z" fill="none" stroke="#ffd166" stroke-width="10"/>
+  <rect x="378" y="378" width="44" height="50" fill="#ffd166"/>
+  <rect x="340" y="428" width="120" height="22" rx="6" fill="#ffd166"/>
+
+  <text x="400" y="520" fill="#9aa3b8" font-size="24" text-anchor="middle">你是「驾驶员」了</text>
+  <text x="400" y="562" fill="#9aa3b8" font-size="20" text-anchor="middle">下一关：换个壳，就是一台新车</text>
+</svg>

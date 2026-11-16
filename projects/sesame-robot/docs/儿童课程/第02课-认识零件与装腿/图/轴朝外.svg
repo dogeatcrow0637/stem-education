@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFBF2"/>
+  <rect x="0" y="0" width="1280" height="104" fill="#3E7C7B"/>
+  <text x="48" y="68" font-size="42" font-weight="700" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">舵机轴朝外</text>
+  <text x="48" y="672" font-size="30" fill="#5A6B6B" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">线从侧槽穿出来</text>
+  <g font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+
+  <path d="M400 230 L400 560 L880 560 L880 230" stroke="#233" stroke-width="8" fill="#F3E3C8"/>
+  <rect x="540" y="300" width="200" height="150" rx="14" fill="#4C8BF5" stroke="#233" stroke-width="5"/>
+  <circle cx="640" cy="300" r="24" fill="#F2B134" stroke="#233" stroke-width="4"/>
+  <path d="M740 360 Q820 360 840 430" stroke="#E4572E" stroke-width="8" fill="none"/>
+  <text x="470" y="220" font-size="30">轴朝外</text>
+  <text x="760" y="300" font-size="26" fill="#E4572E">线走侧槽</text>
+  </g>
+</svg>

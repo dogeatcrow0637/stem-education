@@ -1,0 +1,49 @@
+menu "English Pet Watch UI Demo"
+
+config EPW_WIFI_SSID
+    string "Wi-Fi hotspot SSID"
+    default ""
+    help
+        SSID of the 2.4GHz hotspot. Put the real value in sdkconfig
+        (or sdkconfig.local) and do not commit it.
+
+config EPW_WIFI_PASSWORD
+    string "Wi-Fi hotspot password"
+    default ""
+    help
+        WPA2 password. Put the real value in sdkconfig (or sdkconfig.local)
+        and do not commit it.
+
+config EPW_WIFI_MAX_RETRY
+    int "Initial reconnect attempts"
+    default 20
+    help
+        After this many quick retries the firmware waits 15 seconds
+        and tries again, forever.
+
+config EPW_PET_BRIDGE_URL
+    string "Doubao pet bridge URL"
+    default ""
+    help
+        Optional HTTP(S) GET endpoint returning
+        {"emotion":"happy","text":"Hello"}.
+        The real Doubao / xiaozhi-server call stays on the server; the
+        device only polls this lightweight JSON. Leave empty to use the
+        built-in local scenario engine only.
+
+config EPW_PET_BRIDGE_INTERVAL_MS
+    int "Pet bridge poll interval (ms)"
+    default 8000
+    range 2000 60000
+    help
+        Poll period for the pet bridge endpoint.
+
+config EPW_BOOT_SHOTS
+    bool "Boot-time screenshot capture"
+    default n
+    help
+        Enable only for demo/QA builds: after boot the firmware cycles
+        through all pages and dumps LVGL snapshots as base64 over serial.
+        Keep disabled for normal firmware.
+
+endmenu

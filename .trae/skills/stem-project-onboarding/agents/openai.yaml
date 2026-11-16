@@ -1,0 +1,4 @@
+interface:
+  display_name: "STEM 项目拆解与教学产出"
+  short_description: "拆 STEM 项目为六维，产出家长实现手册、按课时分目录的儿童课程（课件）与知识卡"
+  default_prompt: "用 $stem-project-onboarding 拆解 projects/<项目>，生成工程文档与三份教学材料（家长实现手册 / 儿童课程课件 / 知识卡）"
