@@ -42,11 +42,103 @@ const char *slashes = "甲/*乙*/丙//丁\\\"戊";
 /* "错字" */ const char *last = "萧山";
 ''')
             self.assertEqual(literals_cjk(path), set('中央气象台甲乙丙丁戊萧山'))
-        weather_text = set('萧山天气等待更新中央气象台暂不可用')
+        weather_text = set('萧山')
         self.assertTrue(weather_text <= (literals_cjk(MAIN / 'weather.c') |
                                          literals_cjk(MAIN / 'ui.c')))
         glyphs = font_codepoints(MAIN / 'assets/epw_cjk_20.c')
         self.assertTrue({ord(c) for c in weather_text} <= glyphs)
+
+    def test_home_snapshot_reuse_and_failure_fallback(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+typedef struct {bool hidden;} lv_obj_t;
+typedef int lv_draw_buf_t;
+#define LV_COLOR_FORMAT_RGB565 1
+#define LV_RESULT_OK 0
+#define LV_OBJ_FLAG_HIDDEN 1
+#define ESP_LOGW(...) ((void)0)
+static lv_obj_t home, image = {.hidden=true};
+static lv_obj_t *s_home=&home, *s_home_snap_img=&image;
+static lv_draw_buf_t buffer, *s_home_snap;
+static bool s_home_snap_showing, s_home_snap_valid, s_home_snap_dirty=true;
+static bool allocation_fails, render_fails;
+static int allocations, captures, sources;
+static lv_draw_buf_t *lv_snapshot_create_draw_buf(lv_obj_t *o, int fmt) {
+    allocations++; return allocation_fails ? NULL : &buffer;
+}
+static int lv_snapshot_take_to_draw_buf(lv_obj_t *o, int fmt, lv_draw_buf_t *buf) {
+    captures++; return render_fails ? 1 : LV_RESULT_OK;
+}
+static void lv_image_cache_drop(lv_draw_buf_t *buf) {}
+static void lv_image_set_src(lv_obj_t *o, lv_draw_buf_t *buf) {sources++;}
+static void lv_obj_add_flag(lv_obj_t *o,int flag) {o->hidden=true;}
+static void lv_obj_remove_flag(lv_obj_t *o,int flag) {o->hidden=false;}
+'''
+        source += function('ui.c', 'static void home_snap_refresh(void)')
+        source += function('ui.c', 'static void home_snap_begin(void)')
+        source += function('ui.c', 'static void home_snap_end(void)')
+        source += r'''
+int main(void) {
+    home_snap_begin();
+    assert(home.hidden && !image.hidden && s_home_snap_showing);
+    assert(allocations==1 && captures==1 && sources==1);
+    home_snap_begin(); assert(allocations==1 && captures==1);
+    home_snap_end(); assert(!home.hidden && image.hidden && !s_home_snap_showing);
+    s_home_snap_dirty=true;home_snap_begin(); assert(allocations==1 && captures==1);
+    s_home_snap_dirty=true; home_snap_refresh(); assert(captures==1);
+    home_snap_end(); home_snap_refresh(); assert(captures==2 && !s_home_snap_dirty);
+    render_fails=true; s_home_snap_dirty=true; home_snap_refresh();
+    int failed_captures=captures;home_snap_refresh();assert(captures==failed_captures);
+    home_snap_begin(); assert(!home.hidden && image.hidden && !s_home_snap_showing);
+    render_fails=false; allocation_fails=true; s_home_snap=NULL;
+    home_snap_begin(); assert(!home.hidden && image.hidden && !s_home_snap_showing);
+    allocation_fails=false; home_snap_begin(); assert(s_home_snap_showing);
+    home_snap_end(); home_snap_end(); assert(!home.hidden && image.hidden);
+    return 0;
+}
+'''
+        run_c(source)
+
+    def test_wake_consumes_press_and_restores_brightness(self):
+        source = r'''#include <assert.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
+typedef int lv_obj_t;
+typedef int lv_indev_t;
+#define LV_OBJ_FLAG_HIDDEN 1
+#define LV_INDEV_STATE_PRESSED 1
+#define ESP_LOGI(...) ((void)0)
+static bool s_screen_off = true, s_torch_open;
+static lv_obj_t wake_obj, *s_wake_layer = &wake_obj;
+static uint32_t s_last_activity;
+static int pressed = 1, waits, hides, brightness, applies;
+static lv_indev_t input;
+static lv_indev_t *bsp_display_get_input_dev(void) {return &input;}
+static int lv_indev_get_state(lv_indev_t *i) {return pressed;}
+static void lv_indev_wait_release(lv_indev_t *i) {waits++;}
+static void lv_obj_add_flag(lv_obj_t *o, int flag) {hides++;}
+static void bsp_display_brightness_set(int value) {brightness = value;}
+static void brightness_apply(void) {applies++;}
+static void home_snap_refresh(void) {}
+static uint32_t lv_tick_get(void) {return 123;}
+'''
+        source += function('ui.c', 'static void screen_wake(void)')
+        source += r'''
+int main(void) {
+    screen_wake();
+    assert(!s_screen_off && waits == 1 && hides == 1 && applies == 1);
+    assert(s_last_activity == 123);
+    screen_wake(); assert(waits == 1 && applies == 1);
+    s_screen_off = true; s_torch_open = true; pressed = 0;
+    screen_wake(); assert(brightness == 100 && waits == 1 && applies == 1);
+    return 0;
+}
+'''
+        run_c(source)
 
     def test_weather_validation(self):
         source = r'''#define _POSIX_C_SOURCE 200809L
@@ -60,13 +152,16 @@ const char *slashes = "甲/*乙*/丙//丁\\\"戊";
 #include "cJSON.h"
 #define WEATHER_MAX_AGE 7200
 '''
-        source += function('weather.c', 'static bool parse_weather(const char *body, time_t now, float *temperature, time_t *published)')
+        source += '#include "weather.h"\n'
+        source += function('weather.c', 'static epw_weather_kind_t weather_kind(const char *info)')
+        source += function('weather.c', 'static epw_weather_kind_t forecast_kind(const cJSON *data, time_t now)')
+        source += function('weather.c', 'static bool parse_weather(const char *body, time_t now, float *temperature, time_t *published, epw_weather_kind_t *kind)')
         source += r'''
 static bool check(const char *code, const char *date, const char *temp, time_t now) {
     char body[512];
-    snprintf(body, sizeof(body), "{\"station\":{\"code\":\"%s\"},\"publish_time\":\"%s\",\"weather\":{\"temperature\":%s}}", code, date, temp);
-    float t = 0; time_t p = 0;
-    bool ok = parse_weather(body, now, &t, &p);
+    snprintf(body, sizeof(body), "{\"data\":{\"real\":{\"station\":{\"code\":\"%s\"},\"publish_time\":\"%s\",\"weather\":{\"temperature\":%s}}}}", code, date, temp);
+    float t = 0; time_t p = 0; epw_weather_kind_t kind;
+    bool ok = parse_weather(body, now, &t, &p, &kind);
     if (ok) { assert(fabsf(t-13.4f) < 0.01f); assert(p <= now); }
     return ok;
 }
@@ -81,9 +176,37 @@ int main(void) {
     assert(!check("wdcXE", "2026-02-30 10:40", "13.4", now));
     assert(!check("wdcXE", "2026-11-17 10:40", "9999", now));
     assert(!check("wdcXE", "2026-11-17 10:40", "\"13.4\"", now));
-    float t; time_t p;
-    assert(!parse_weather("{}", now, &t, &p));
-    assert(!parse_weather("{", now, &t, &p));
+    float t; time_t p; epw_weather_kind_t kind;
+    assert(!parse_weather("{}", now, &t, &p, &kind));
+    assert(!parse_weather("{", now, &t, &p, &kind));
+    assert(weather_kind("晴") == EPW_WEATHER_SUNNY);
+    assert(weather_kind("多云") == EPW_WEATHER_PARTLY_CLOUDY);
+    assert(weather_kind("多云转晴") == EPW_WEATHER_CLEARING);
+    assert(weather_kind("晴转多云") == EPW_WEATHER_PARTLY_CLOUDY);
+    assert(weather_kind("小雨") == EPW_WEATHER_RAIN);
+    assert(weather_kind("雷阵雨") == EPW_WEATHER_STORM);
+    assert(weather_kind("雨夹雪") == EPW_WEATHER_SNOW);
+    assert(weather_kind("雾") == EPW_WEATHER_FOG);
+    assert(weather_kind("-") == EPW_WEATHER_UNKNOWN);
+    assert(weather_kind(NULL) == EPW_WEATHER_UNKNOWN);
+    const char *forecast = "{\"predict\":{\"station\":{\"code\":\"wdcXE\"},\"publish_time\":\"2026-11-17 08:00\",\"detail\":[{\"date\":\"2026-11-17\",\"day\":{\"weather\":{\"info\":\"小雨\"}},\"night\":{\"weather\":{\"info\":\"晴\"}}}]}}";
+    cJSON *data = cJSON_Parse(forecast); assert(data);
+    assert(forecast_kind(data, now) == EPW_WEATHER_RAIN);
+    assert(forecast_kind(data, now+8*3600) == EPW_WEATHER_SUNNY);
+    assert(forecast_kind(data, now+86400) == EPW_WEATHER_UNKNOWN);
+    cJSON *real = cJSON_Parse("{\"station\":{\"code\":\"wdcXE\"},\"publish_time\":\"2026-11-17 10:40\",\"weather\":{\"temperature\":13.4,\"info\":\"-\"}}");
+    cJSON_AddItemToObject(data, "real", real);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddItemToObject(root, "data", data);
+    char *body = cJSON_PrintUnformatted(root);
+    assert(parse_weather(body, now, &t, &p, &kind) && kind == EPW_WEATHER_RAIN);
+    free(body);
+    cJSON *weather = cJSON_GetObjectItemCaseSensitive(real, "weather");
+    cJSON_ReplaceItemInObjectCaseSensitive(weather, "info", cJSON_CreateString("晴"));
+    body = cJSON_PrintUnformatted(root);
+    assert(parse_weather(body, now, &t, &p, &kind) && kind == EPW_WEATHER_SUNNY);
+    free(body);
+    cJSON_Delete(root);
     return 0;
 }
 '''
@@ -178,7 +301,7 @@ enum {LV_EVENT_PRESSED=1, LV_EVENT_PRESSING, LV_EVENT_RELEASED, LV_EVENT_PRESS_L
 #define LV_OBJ_FLAG_HIDDEN 1
 #define LV_OBJ_FLAG_CLICKABLE 2
 #define LV_UNUSED(x) (void)(x)
-static bool s_center_open,s_center_dragging,s_center_drag_engaged;
+static bool s_center_open,s_center_dragging,s_center_drag_engaged,s_home_snap_dirty;
 static int s_center_press_y,s_center_press_reveal,s_center_reveal;
 static bool s_wifipwd_open,s_wifi_open,s_apps_open,s_status_open,s_torch_open,s_slider_open,s_pet_open;
 static int fake_indev, point_y;
@@ -242,11 +365,13 @@ int main(void){
     lv_obj_t grand={.clickable=true},child={.clickable=true,.child=&grand},root={.clickable=true,.child=&child};
     clear_clickable_tree(&root);assert(root.clickable && !child.clickable && !grand.clickable);
     ui_update_battery(50,false,true);assert(!s_charging && s_usb_powered);
-    ui_update_battery(50,true,true);assert(s_charging && s_usb_powered);
+    s_home_snap_dirty=false;ui_update_battery(50,false,true);assert(!s_home_snap_dirty);
+    ui_update_battery(50,true,true);assert(s_charging && s_usb_powered && s_home_snap_dirty);
     fake_tm.tm_year=70;time_tick_cb(NULL);assert(time_obj.hidden && !strcmp(date_obj.text,"等待校时"));
     fake_tm=(struct tm){.tm_year=126,.tm_mon=0,.tm_mday=17,.tm_yday=16,.tm_wday=6,.tm_hour=12};
     time_tick_cb(NULL);assert(!time_obj.hidden && !strcmp(time_obj.text,"12:00"));
     assert(!strcmp(date_obj.text,"1月17日 周六"));
+    assert(s_home_snap_dirty);s_home_snap_dirty=false;time_tick_cb(NULL);assert(!s_home_snap_dirty);
     fake_tm.tm_mon=1;fake_tm.tm_yday=47;fake_tm.tm_wday=2;time_tick_cb(NULL);
     assert(!strcmp(date_obj.text,"2月17日 周二"));
     return 0;

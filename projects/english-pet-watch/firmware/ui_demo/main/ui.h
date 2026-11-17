@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include "weather.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,7 +25,7 @@ typedef enum {
 void ui_init(void);
 
 /** 刷新萧山实况；调用前需持有 LVGL 锁。 */
-void ui_update_weather(const char *text);
+void ui_update_weather(float temperature, epw_weather_kind_t kind);
 
 /**
  * 刷新电池显示。percent < 0 表示未知；

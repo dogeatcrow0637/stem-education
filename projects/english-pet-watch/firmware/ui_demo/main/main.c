@@ -39,7 +39,9 @@ void app_main(void)
 
     /* 屏幕 + 触摸 + LVGL */
     bsp_display_start();
+    bsp_display_lock(-1);
     bsp_display_brightness_set(80);
+    bsp_display_unlock();
 
     /* AXP2101 电量 */
     power_init();
