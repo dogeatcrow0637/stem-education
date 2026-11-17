@@ -21,6 +21,16 @@ typedef enum {
     UI_PET_STATE_COUNT,
 } ui_pet_state_t;
 
+/** 开机 Logo；调用前持有显示锁，复用 Mimi 素材。 */
+void ui_boot_logo_show(void);
+void ui_boot_logo_hide(void);
+/** 长按电源键打开关机确认；仅滑动到底并松手才提交。 */
+void ui_power_menu_open(void);
+/** 物理短按取消确认；返回 true 表示已消费，关机提交后不可取消。 */
+bool ui_power_menu_cancel(void);
+/** 断电失败时恢复可操作的确认页。 */
+void ui_power_shutdown_failed(void);
+
 /** 创建表盘、应用桌面、宠物页、控制中心与状态页。调用前需持有 LVGL 锁。 */
 void ui_init(void);
 
@@ -75,7 +85,7 @@ void ui_demo_close_torch(void);
  */
 void ui_demo_power_mode(int mode);
 
-/** 物理大按钮 / 演示用：打开应用桌面（华为手表风格 2×3 网格，上下拖动整页滚动）。 */
+/** 物理大按钮 / 演示用：打开八方向拖动的应用桌面，图标下显示名称。 */
 void ui_demo_open_apps(void);
 
 /** 关闭应用桌面。 */
@@ -96,6 +106,15 @@ void ui_demo_open_pet(void);
 
 /** 关闭宠物页。 */
 void ui_demo_close_pet(void);
+
+/** 演示/调试用：从左侧滑入 3S 英语儿歌页。 */
+void ui_demo_open_nursery(void);
+
+/** 演示/调试用：关闭 3S 英语儿歌页。 */
+void ui_demo_close_nursery(void);
+
+/** 演示/调试用：切换睡眠表盘（内部自行加锁，可从截图任务调用）。 */
+void ui_debug_sleep_check(bool on);
 
 /** 小按钮切换宠物页。 */
 void ui_demo_toggle_pet(void);

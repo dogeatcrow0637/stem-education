@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -22,11 +23,21 @@ bool power_is_charging(void);
 /** 是否插着 USB / 有 VBUS。 */
 bool power_is_vbus(void);
 
-/** 使能并清空 PWR 键短按 IRQ（AXP2101 REG41/REG49）。 */
-void power_pwrkey_irq_init(void);
+enum {
+    POWER_KEY_RELEASE = 0x01,
+    POWER_KEY_PRESS = 0x02,
+    POWER_KEY_LONG = 0x04,
+    POWER_KEY_SHORT = 0x08,
+};
 
-/** PWR 键短按事件：有则清除标志并返回 true。 */
-bool power_pwrkey_short_pressed(void);
+/** 读取并清除本次按键事件；读取失败不伪造松手或持续按下。 */
+esp_err_t power_key_read(uint8_t *events);
+/** 配置软件确认关机、128ms 硬件唤醒与按键边沿 IRQ。 */
+esp_err_t power_key_configure(void);
+/** 冷启动由电源键触发时，黑屏等待本次连续长按满约 5 秒。 */
+esp_err_t power_boot_wait(void);
+/** AXP2101 关闭电源输出；不擦除 NVS。 */
+esp_err_t power_shutdown(void);
 
 #ifdef __cplusplus
 }
