@@ -54,7 +54,7 @@ bool wifi_scan_busy(void);
  */
 int wifi_scan_copy(epw_wifi_ap_t *out, int max);
 
-/** 连接指定热点，并把账号写入 NVS；函数不阻塞。 */
+/** 请求连接 WPA2/WPA3 或开放热点；获得 IP 后才保存账号。 */
 esp_err_t wifi_connect_to(const char *ssid, const char *password);
 
 /** 主动断开，不再自动重连。 */

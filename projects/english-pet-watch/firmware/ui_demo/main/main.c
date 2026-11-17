@@ -8,12 +8,12 @@
 #include "nvs_flash.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
-#include "audio.h"
 #include "button.h"
 #include "doubao_bridge.h"
 #include "power.h"
 #include "shot.h"
 #include "ui.h"
+#include "voice_client.h"
 #include "wifi.h"
 
 /* IDF 的 time.h 未在 gnu23 下声明 tzset，但 esp_libc 已实现。 */
@@ -40,9 +40,6 @@ void app_main(void)
     bsp_display_start();
     bsp_display_brightness_set(80);
 
-    /* 音频输出（ES8311）：音量页现在会真正调节扬声器 */
-    audio_init();
-
     /* AXP2101 电量 */
     power_init();
 
@@ -59,6 +56,9 @@ void app_main(void)
 
     /* 可选：豆包宠物状态桥（服务端返回 emotion + text） */
     doubao_bridge_init();
+
+    /* 只创建语音控制任务；用户左滑聊天且联网后才启动音频。 */
+    voice_client_init();
 
 #if CONFIG_EPW_BOOT_SHOTS
     /* 演示/验收：开机自动巡页并截图（正常固件关闭） */

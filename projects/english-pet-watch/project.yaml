@@ -7,7 +7,7 @@ name_en: "English Pet Watch"
 status: "UI 原型（真机验证）"
 direction: ["语音交互", "大模型", "儿童英语", "可穿戴"]
 created: "2026-11-13"
-updated: "2026-11-16"
+updated: "2026-11-17"
 owner: ""
 
 platform:
@@ -19,6 +19,7 @@ external:
   repo: "https://github.com/78/xiaozhi-esp32"
   wiki: "https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75C"
   video: ""
+  cjson: "https://components.espressif.com/components/espressif/cjson"
 
 board:
   sku: "esp32-s3-touch-amoled-1.75c"
@@ -35,7 +36,7 @@ board:
 
 license:
   hardware: "开发板为商品；本项目自绘外壳与文档建议 CERN-OHL-W-2.0（待定）"
-  software: "xiaozhi-esp32：MIT；xiaozhi-esp32-server：MIT（均以仓库 LICENSE 为准）"
+  software: "xiaozhi-esp32：MIT；xiaozhi-esp32-server：MIT；cJSON：MIT（均以仓库 LICENSE 为准）"
   note: "保留上游版权声明；不引入来源不明的模型权重"
 
 cost:
