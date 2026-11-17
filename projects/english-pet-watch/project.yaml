@@ -19,6 +19,7 @@ external:
   repo: "https://github.com/78/xiaozhi-esp32"
   wiki: "https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75C"
   video: ""
+  weather: "https://www.nmc.cn/publish/forecast/AZJ/xiaoshan.html"
   cjson: "https://components.espressif.com/components/espressif/cjson"
 
 board:

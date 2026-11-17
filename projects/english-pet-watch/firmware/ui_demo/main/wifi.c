@@ -4,10 +4,15 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/time.h>
+#include <time.h>
 #include "esp_log.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
+#include "esp_http_client.h"
+#include "http_date.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -25,6 +30,7 @@ static volatile epw_wifi_state_t s_state = EPW_WIFI_OFF;
 static int s_retry_num;
 static bool s_hinted_no_ap;
 static bool s_sntp_started;
+static bool s_time_worker_started;
 static char s_ip[16] = "--";
 
 static bool s_inited;
@@ -101,13 +107,79 @@ static void creds_erase(void)
 /* 网络事件                                                                     */
 /* -------------------------------------------------------------------------- */
 
+static void time_sync_log(struct timeval *tv)
+{
+    struct tm now;
+    localtime_r(&tv->tv_sec, &now);
+    ESP_LOGI(TAG, "time synced: %04d-%02d-%02d %02d:%02d:%02d CST",
+             now.tm_year + 1900, now.tm_mon + 1, now.tm_mday,
+             now.tm_hour, now.tm_min, now.tm_sec);
+}
+
+static esp_err_t time_header_cb(esp_http_client_event_t *evt)
+{
+    if (evt->event_id == HTTP_EVENT_ON_HEADER && evt->header_key != NULL &&
+        strcasecmp(evt->header_key, "Date") == 0) {
+        *(time_t *)evt->user_data = epw_http_date(evt->header_value);
+    }
+    return ESP_OK;
+}
+
+static void time_fallback_task(void *arg)
+{
+    (void)arg;
+    /* 公共服务的固定入口无需 DNS；热点 DNS 故障时仍能取得响应时间。 */
+    const char *urls[] = {"http://223.5.5.5", "http://1.1.1.1", "http://www.baidu.com"};
+    vTaskDelay(pdMS_TO_TICKS(10000));
+    while (time(NULL) < 1704067200) {
+        for (size_t i = 0; i < sizeof(urls) / sizeof(urls[0]); i++) {
+            if (wifi_get_state() != EPW_WIFI_CONNECTED || time(NULL) >= 1704067200) {
+                break;
+            }
+            time_t timestamp = 0;
+            esp_http_client_config_t cfg = {
+                .url = urls[i], .method = HTTP_METHOD_HEAD, .timeout_ms = 4000,
+                .disable_auto_redirect = true, .event_handler = time_header_cb,
+                .user_data = &timestamp,
+            };
+            esp_http_client_handle_t client = esp_http_client_init(&cfg);
+            if (client == NULL) {
+                continue;
+            }
+            esp_err_t err = esp_http_client_perform(client);
+            esp_http_client_cleanup(client);
+            if (err == ESP_OK && timestamp != 0 && time(NULL) < 1704067200) {
+                struct timeval tv = {.tv_sec = timestamp};
+                if (settimeofday(&tv, NULL) == 0) {
+                    ESP_LOGI(TAG, "HTTP Date fallback succeeded");
+                    time_sync_log(&tv);
+                }
+            }
+        }
+        if (time(NULL) < 1704067200) {
+            ESP_LOGW(TAG, "time sync pending; retrying HTTP Date in 20s");
+            vTaskDelay(pdMS_TO_TICKS(20000));
+        }
+    }
+    vTaskDelete(NULL);
+}
+
 static void sntp_start_once(void)
 {
+    if (!s_time_worker_started) {
+        s_time_worker_started = xTaskCreate(time_fallback_task, "epw_time", 4096, NULL, 3, NULL) == pdPASS;
+    }
     if (s_sntp_started) {
         return;
     }
-    esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("ntp.aliyun.com");
+#if CONFIG_LWIP_SNTP_MAX_SERVERS >= 3
+    cfg.num_of_servers = 3;
+    cfg.servers[1] = "ntp.tencent.com";
+    cfg.servers[2] = "cn.pool.ntp.org";
+#endif
     cfg.wait_for_sync = false; /* 不阻塞 Wi-Fi 事件任务 */
+    cfg.sync_cb = time_sync_log;
     esp_err_t err = esp_netif_sntp_init(&cfg);
     if (err == ESP_OK) {
         s_sntp_started = true;
@@ -143,6 +215,20 @@ static bool disconnect_is_fatal(uint8_t reason)
     default:
         return false;
     }
+}
+
+static void configure_dns(void)
+{
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif == NULL) {
+        return;
+    }
+    esp_netif_dns_info_t dns = {.ip.type = ESP_IPADDR_TYPE_V4};
+    dns.ip.u_addr.ip4.addr = esp_ip4addr_aton("223.5.5.5");
+    esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns);
+    dns.ip.u_addr.ip4.addr = esp_ip4addr_aton("119.29.29.29");
+    esp_netif_set_dns_info(netif, ESP_NETIF_DNS_FALLBACK, &dns);
+    ESP_LOGI(TAG, "public backup DNS configured");
 }
 
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -211,6 +297,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         s_user_connect = false;
         s_auto_retry = true; /* 掉线后继续自动重连 */
         s_state = EPW_WIFI_CONNECTED;
+        configure_dns();
         sntp_start_once();
     }
 done:

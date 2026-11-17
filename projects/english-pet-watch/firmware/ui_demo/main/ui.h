@@ -23,6 +23,9 @@ typedef enum {
 /** 创建表盘、应用桌面、宠物页、控制中心与状态页。调用前需持有 LVGL 锁。 */
 void ui_init(void);
 
+/** 刷新萧山实况；调用前需持有 LVGL 锁。 */
+void ui_update_weather(const char *text);
+
 /**
  * 刷新电池显示。percent < 0 表示未知；
  * charging 为 PMU 的真实充电状态；usb_powered 仅表示外部供电。
