@@ -1,16 +1,14 @@
-# ---------------------------------------------------------------------------
-# 本地补丁：Waveshare BSP 把 LVGL 分块高度写死为 50 行（466×50×2≈46KB）。
-# LVGL 画布在 PSRAM，SPI 每次刷新要申请同样大小的内部 DMA 反弹缓冲；
-# Wi-Fi 扫描时内部堆碎片化（最大连续块约 24KB），整屏刷新会失败。
-# managed_components 重新拉取会覆盖，这里在配置阶段幂等改成 10 行（≈9KB）。
-# ---------------------------------------------------------------------------
+# 50 行 RGB565 内部单缓冲（约 46KB），启动时预分配，避免 PSRAM 刷屏的临时 DMA 拷贝。
+# 保持较大分块以降低 SPI 提交次数；托管 BSP 更新后仍在配置阶段幂等应用。
 set(EPW_BSP_SRC "${CMAKE_CURRENT_LIST_DIR}/../managed_components/waveshare__esp32_s3_touch_amoled_1_75c/esp32_s3_touch_amoled_1_75c.c")
 if(EXISTS "${EPW_BSP_SRC}")
     file(READ "${EPW_BSP_SRC}" _epw_bsp_src)
-    string(REPLACE ".buffer_height = 50," ".buffer_height = 10," _epw_bsp_patched "${_epw_bsp_src}")
+    string(REGEX REPLACE "[.]buffer_height = (10|50),[^\r\n]*" ".buffer_height = 50," _epw_bsp_patched "${_epw_bsp_src}")
+    string(REPLACE ".use_psram = true," ".use_psram = false," _epw_bsp_patched "${_epw_bsp_patched}")
+    string(REPLACE ".require_double_buffer = true," ".require_double_buffer = false," _epw_bsp_patched "${_epw_bsp_patched}")
     if(NOT _epw_bsp_patched STREQUAL _epw_bsp_src)
         file(WRITE "${EPW_BSP_SRC}" "${_epw_bsp_patched}")
-        message(STATUS "epw: patched BSP LVGL draw buffer height 50 -> 10")
+        message(STATUS "epw: patched BSP to a 50-line internal single draw buffer")
     endif()
 endif()
 

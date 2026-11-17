@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #include "esp_psram.h"
 #include "lvgl.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
 #include "src/core/lv_obj_draw_private.h" /* lv_obj_get_ext_draw_size（LVGL 9.5 未公开到头文件） */
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -131,9 +132,14 @@ static int s_center_press_y;
 static int s_center_press_reveal;
 static int s_center_reveal;
 
-/* 下拉/收起时只移动一张预渲染快照：真实面板有 7 个磁贴（圆环 + 图标 + 文字），
- * 每帧重绘整屏会明显掉帧；用一张 RGB565 图做抽屉内容，底层只做一次位图搬运。
+/* 下拉/收起时只移动一张预渲染快照：真实面板有 6 个磁贴（圆环 + 图标 + 文字），
+ * 每帧重绘整屏会明显掉帧；抽屉和底层表盘均用 RGB565 快照，拖动时只做位图搬运。
  * 快照创建失败时自动退回直接移动真实面板。 */
+static lv_obj_t *s_home_snap_img;
+static lv_draw_buf_t *s_home_snap;
+static bool s_home_snap_showing;
+static bool s_home_snap_valid;
+static bool s_home_snap_dirty = true;
 static lv_obj_t *s_center_snap_img;   /* 抽屉快照图层（纯显示，不可点） */
 static lv_draw_buf_t *s_center_snap;  /* RGB565 快照（PSRAM，约 434KB） */
 static bool s_center_snap_valid;
@@ -147,6 +153,7 @@ static uint32_t s_page_anim_until;
 static lv_obj_t *s_time;
 static lv_obj_t *s_date;
 static lv_obj_t *s_weather;
+static lv_obj_t *s_weather_icon;
 /* 表盘装饰层（外环 / 电量 / 天气 / Wi-Fi / 日期）：睡眠模式下整层隐藏，只留时间 */
 static lv_obj_t *s_dial_deco;
 static bool s_sleep_mode;
@@ -801,6 +808,8 @@ void ui_update_battery(int percent, bool charging, bool usb_powered)
         usb_powered = (s_power_override == 1);
         charging = usb_powered;
     }
+    if (percent != s_bat_percent || charging != s_charging || usb_powered != s_usb_powered)
+        s_home_snap_dirty = true;
     s_bat_percent = percent;
     s_charging = charging;
     s_usb_powered = usb_powered;
@@ -825,6 +834,7 @@ static void time_tick_cb(lv_timer_t *timer)
     time_t now = time(NULL);
     localtime_r(&now, &tm_now);
     if (tm_now.tm_year + 1900 < 2024) {
+        if (s_last_h != -1) s_home_snap_dirty = true;
         lv_obj_add_flag(s_time, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(s_date, "等待校时");
         s_last_h = s_last_m = s_last_day = -1;
@@ -832,12 +842,14 @@ static void time_tick_cb(lv_timer_t *timer)
     }
     lv_obj_remove_flag(s_time, LV_OBJ_FLAG_HIDDEN);
     if (tm_now.tm_hour != s_last_h || tm_now.tm_min != s_last_m) {
+        s_home_snap_dirty = true;
         lv_label_set_text_fmt(s_time, "%02d:%02d", tm_now.tm_hour, tm_now.tm_min);
         s_last_h = tm_now.tm_hour;
         s_last_m = tm_now.tm_min;
     }
     int date_key = tm_now.tm_year * 366 + tm_now.tm_yday;
     if (date_key != s_last_day) {
+        s_home_snap_dirty = true;
         lv_label_set_text_fmt(s_date, "%d月%d日 %s", tm_now.tm_mon + 1,
                               tm_now.tm_mday, s_week_cn[tm_now.tm_wday]);
         s_last_day = date_key;
@@ -871,6 +883,11 @@ static void network_timer_cb(lv_timer_t *timer)
     }
 
     epw_wifi_state_t state = wifi_get_state();
+    static int previous_state = -1;
+    if ((int)state != previous_state) {
+        s_home_snap_dirty = true;
+        previous_state = state;
+    }
 
     lv_color_t color = COL_MUTED;
     if (state == EPW_WIFI_CONNECTED) {
@@ -910,6 +927,45 @@ static bool pages_busy_except_center(void)
 {
     return s_status_open || s_slider_open || s_torch_open || s_apps_open ||
            s_pet_open || s_wifi_open || s_wifipwd_open;
+}
+
+/* 表盘快照只在内容变化且手指离开时预热，拖动入口不做昂贵重绘。 */
+static void home_snap_refresh(void)
+{
+    if (s_home_snap_showing || !s_home_snap_dirty) return;
+    /* 失败后等内容变化或下一次拖动再试，避免空闲轮询反复申请大块内存。 */
+    s_home_snap_dirty = false;
+    if (!s_home_snap) s_home_snap = lv_snapshot_create_draw_buf(s_home, LV_COLOR_FORMAT_RGB565);
+    if (!s_home_snap || lv_snapshot_take_to_draw_buf(s_home, LV_COLOR_FORMAT_RGB565, s_home_snap) != LV_RESULT_OK) {
+        s_home_snap_valid = false;
+        ESP_LOGW(TAG, "home snapshot unavailable; using live background");
+        return;
+    }
+    lv_image_cache_drop(s_home_snap);
+    lv_image_set_src(s_home_snap_img, s_home_snap);
+    s_home_snap_valid = true;
+}
+
+static void home_snap_begin(void)
+{
+    if (s_home_snap_showing || !s_home_snap_img) return;
+    if (!s_home_snap_valid) {
+        s_home_snap_dirty = true;
+        home_snap_refresh();
+    }
+    if (!s_home_snap_valid) return;
+    lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_home_snap_img, LV_OBJ_FLAG_HIDDEN);
+    s_home_snap_showing = true;
+}
+
+static void home_snap_end(void)
+{
+    if (!s_home_snap_showing) return;
+    /* shortcut: 恢复实时表盘仍有一次长帧；需降低收尾延迟时再改为常驻表盘缓存。 */
+    lv_obj_add_flag(s_home_snap_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_home, LV_OBJ_FLAG_HIDDEN);
+    s_home_snap_showing = false;
 }
 
 static void center_snap_invalidate(void)
@@ -970,6 +1026,7 @@ static void center_anim_stop(void)
  * 真实面板的磁贴加过 PRESS_LOCK，事件仍会持续冒泡，不会因为面板隐藏而断掉拖动。 */
 static void center_drawer_begin(void)
 {
+    home_snap_begin();
     if (s_center_snap_valid && s_center_snap_img != NULL) {
         lv_obj_add_flag(s_center, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_pos(s_center_snap_img, -s_center_snap_ext,
@@ -984,6 +1041,7 @@ static void center_drawer_begin(void)
 /* 抽屉落定：展开 → 真实磁贴接管交互；收起 → 两层都隐藏 */
 static void center_drawer_finish(bool open)
 {
+    home_snap_end();
     if (s_center_snap_img != NULL) {
         lv_obj_add_flag(s_center_snap_img, LV_OBJ_FLAG_HIDDEN);
     }
@@ -1099,6 +1157,7 @@ static void center_close(void)
 
 static void center_close_now(void)
 {
+    home_snap_end();
     status_close_now();
     slider_close_now();
     torch_close_now();
@@ -1710,6 +1769,7 @@ static void center_torch_cb(lv_event_t *e)
 static void sleep_mode_apply(bool on)
 {
     s_sleep_mode = on;
+    s_home_snap_dirty = true;
 
     if (s_dial_deco != NULL) {
         if (on) {
@@ -1731,6 +1791,7 @@ static void sleep_mode_apply(bool on)
         center_snap_invalidate();
         center_snap_ensure();
     }
+    home_snap_refresh();
     ESP_LOGI(TAG, "sleep mode %s", on ? "on" : "off");
 }
 
@@ -2464,8 +2525,12 @@ static void build_dial(lv_obj_t *page)
     /* Wi-Fi 状态：只保留图标，用颜色表达（青=在线 / 琥珀=连接中 / 珊瑚=断开） */
     draw_wifi(deco, 372, 102, COL_TEAL);
 
-    s_weather = mk_label(deco, "萧山天气\n等待更新", &epw_cjk_20, COL_TEXT,
-                         98, 116, 270, LV_TEXT_ALIGN_CENTER);
+    s_weather_icon = mk_box(deco, 154, 43, 52, 50, COL_BG, LV_OPA_TRANSP, 0);
+    s_weather = mk_label(deco, "--°C", &epw_cjk_20, COL_TEXT,
+                         216, 51, 110, LV_TEXT_ALIGN_LEFT);
+    mk_label(deco, "萧山", &epw_cjk_20, COL_MUTED,
+             0, 94, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    ui_update_weather(NAN, EPW_WEATHER_UNKNOWN);
 
     /* 中央：超大号圆润数字时间，垂直居中并整体下移，不再顶在上沿。
      * 时间不放进装饰层，睡眠模式下要单独保留。 */
@@ -3763,6 +3828,10 @@ static void screen_wake(void)
         return;
     }
     s_screen_off = false;
+    lv_indev_t *indev = bsp_display_get_input_dev();
+    if (indev != NULL && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) {
+        lv_indev_wait_release(indev);
+    }
     if (s_wake_layer != NULL) {
         lv_obj_add_flag(s_wake_layer, LV_OBJ_FLAG_HIDDEN);
     }
@@ -3771,6 +3840,7 @@ static void screen_wake(void)
     } else {
         brightness_apply();
     }
+    home_snap_refresh();
     s_last_activity = lv_tick_get();
     ESP_LOGI(TAG, "display wake");
 }
@@ -3781,7 +3851,7 @@ static void screen_sleep(void)
         return;
     }
     s_screen_off = true;
-    /* 先盖上整屏黑色点击层，再关背光：熄屏后的第一下触摸只负责点亮 */
+    /* 关亮度即可；透明触摸层保留屏内画面，唤醒不会出现逐行揭开黑幕。 */
     if (s_wake_layer != NULL) {
         lv_obj_remove_flag(s_wake_layer, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(s_wake_layer);
@@ -3822,6 +3892,9 @@ static void idle_timer_cb(lv_timer_t *timer)
     }
     if (!s_screen_off && lv_tick_elaps(s_last_activity) >= UI_IDLE_TIMEOUT_MS) {
         screen_sleep();
+    } else if (!s_screen_off && !s_center_dragging &&
+               !pages_busy_except_center() && !page_anim_busy()) {
+        home_snap_refresh();
     }
 }
 
@@ -3861,6 +3934,10 @@ void ui_init(void)
     lv_obj_remove_flag(s_home, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
     build_dial(s_home);
+    s_home_snap_img = lv_image_create(s_screen);
+    lv_obj_remove_flag(s_home_snap_img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_home_snap_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(s_home_snap_img, 0, 0);
     build_center();
     build_status();
     build_slider();
@@ -3879,22 +3956,24 @@ void ui_init(void)
                              0, 11, 300, LV_TEXT_ALIGN_CENTER);
     lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
 
-    /* 熄屏唤醒层：全屏黑色，仅熄屏时出现，吞掉点亮屏幕的第一下触摸 */
+    /* 透明唤醒层：仅熄屏时接收触摸，吞掉点亮屏幕的第一下按压。 */
     s_wake_layer = mk_box(s_screen, 0, 0, SCREEN_W, SCREEN_H,
-                          lv_color_black(), LV_OPA_COVER, 0);
-    lv_obj_add_flag(s_wake_layer, LV_OBJ_FLAG_CLICKABLE);
+                          lv_color_black(), LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(s_wake_layer, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
     lv_obj_add_event_cb(s_wake_layer, wake_layer_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_flag(s_wake_layer, LV_OBJ_FLAG_HIDDEN);
 
     /* 开机一次性预渲染控制中心抽屉快照（约 434KB PSRAM），
      * 之后每次下拉都只移动这一张图，不会在第一次拖动时临时卡一下。 */
     center_snap_ensure();
+    s_home_snap = lv_snapshot_create_draw_buf(s_home, LV_COLOR_FORMAT_RGB565);
 
     s_last_activity = lv_tick_get();
 
     time_tick_cb(NULL);
     ui_update_battery(power_battery_percent(), power_is_charging(), power_is_vbus());
     brightness_apply();
+    home_snap_refresh();
 
     lv_timer_create(time_tick_cb, 1000, NULL);
     lv_timer_create(battery_timer_cb, 3000, NULL);
@@ -4114,9 +4193,68 @@ void ui_pet_set_state_by_name(const char *emotion, const char *text)
     pet_apply(state, text);
 }
 
-void ui_update_weather(const char *text)
+static void draw_weather_cloud(lv_obj_t *parent, lv_color_t color)
 {
-    if (!s_weather) return;
-    lv_label_set_text(s_weather, text);
-    center_snap_invalidate();
+    mk_circle(parent, 16, 25, 20, color, LV_OPA_COVER);
+    mk_circle(parent, 27, 20, 25, color, LV_OPA_COVER);
+    mk_circle(parent, 39, 27, 18, color, LV_OPA_COVER);
+    mk_box(parent, 7, 26, 40, 10, color, LV_OPA_COVER, 5);
+}
+
+void ui_update_weather(float temperature, epw_weather_kind_t kind)
+{
+    if (!s_weather || !s_weather_icon) return;
+    s_home_snap_dirty = true;
+    if (isfinite(temperature)) lv_label_set_text_fmt(s_weather, "%.1f°C", temperature);
+    else lv_label_set_text(s_weather, "--°C");
+    static int previous_kind = -1;
+    if ((int)kind == previous_kind) return;
+    previous_kind = kind;
+    lv_obj_clean(s_weather_icon);
+    switch (kind) {
+    case EPW_WEATHER_SUNNY:
+        draw_sun_duo(s_weather_icon, 26, 24, 9, COL_AMBER, COL_RING_YELLOW);
+        break;
+    case EPW_WEATHER_PARTLY_CLOUDY: {
+        lv_obj_t *back = mk_box(s_weather_icon, 5, -5, 52, 50, COL_BG, LV_OPA_TRANSP, 0);
+        draw_weather_cloud(back, COL_MUTED);
+        draw_weather_cloud(s_weather_icon, COL_TEXT);
+        break;
+    }
+    case EPW_WEATHER_CLEARING:
+        draw_sun_duo(s_weather_icon, 35, 14, 6, COL_AMBER, COL_RING_YELLOW);
+        draw_weather_cloud(s_weather_icon, COL_TEXT);
+        break;
+    case EPW_WEATHER_CLOUDY:
+    case EPW_WEATHER_RAIN:
+    case EPW_WEATHER_STORM:
+    case EPW_WEATHER_SNOW:
+    case EPW_WEATHER_FOG:
+        draw_weather_cloud(s_weather_icon, kind == EPW_WEATHER_CLOUDY ? COL_MUTED : COL_TEXT);
+        if (kind == EPW_WEATHER_RAIN) {
+            for (int i = 0; i < 3; i++) {
+                lv_obj_t *drop = mk_box(s_weather_icon, 13 + i * 11, 39, 3, 8, COL_BLUE, LV_OPA_COVER, 2);
+                lv_obj_set_style_transform_rotation(drop, 200, 0);
+            }
+        } else if (kind == EPW_WEATHER_STORM) {
+            static const lv_point_precise_t bolt[] = {{28, 33}, {21, 41}, {28, 41}, {23, 49}};
+            lv_obj_t *line = lv_line_create(s_weather_icon);
+            lv_line_set_points(line, bolt, 4);
+            lv_obj_set_style_line_width(line, 3, 0);
+            lv_obj_set_style_line_color(line, COL_AMBER, 0);
+        } else if (kind == EPW_WEATHER_SNOW) {
+            for (int i = 0; i < 3; i++) {
+                mk_box(s_weather_icon, 14 + i * 11, 39, 2, 8, COL_BLUE, LV_OPA_COVER, 1);
+                mk_box(s_weather_icon, 11 + i * 11, 42, 8, 2, COL_BLUE, LV_OPA_COVER, 1);
+            }
+        } else if (kind == EPW_WEATHER_FOG) {
+            mk_box(s_weather_icon, 8, 39, 34, 2, COL_MUTED, LV_OPA_COVER, 1);
+            mk_box(s_weather_icon, 13, 45, 31, 2, COL_MUTED, LV_OPA_COVER, 1);
+        }
+        break;
+    default:
+        mk_label(s_weather_icon, "?", &epw_cjk_20, COL_MUTED, 0, 12, 52, LV_TEXT_ALIGN_CENTER);
+        break;
+    }
+    clear_clickable_tree(s_weather_icon);
 }
