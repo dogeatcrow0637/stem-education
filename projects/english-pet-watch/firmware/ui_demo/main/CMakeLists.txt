@@ -16,7 +16,7 @@ endif()
 
 idf_component_register(
     SRCS "main.c" "ui.c" "power.c" "wifi.c" "shot.c" "button.c" "doubao_bridge.c"
-         "audio.c" "voice_client.c"
+         "audio.c" "voice_client.c" "weather.c"
          "assets/epw_cjk_16.c" "assets/epw_cjk_20.c" "assets/epw_time_150.c"
          "assets/pip_faces.c"
     INCLUDE_DIRS "." "assets"

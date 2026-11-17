@@ -30,6 +30,47 @@ def run_c(source, json=False):
 
 
 class FirmwareTests(unittest.TestCase):
+    def test_weather_validation(self):
+        source = r'''#define _POSIX_C_SOURCE 200809L
+#include <assert.h>
+#include <stdbool.h>
+#include <math.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include "cJSON.h"
+#define WEATHER_MAX_AGE 7200
+'''
+        source += function('weather.c', 'static bool parse_weather(const char *body, time_t now, float *temperature, time_t *published)')
+        source += r'''
+static bool check(const char *code, const char *date, const char *temp, time_t now) {
+    char body[512];
+    snprintf(body, sizeof(body), "{\"station\":{\"code\":\"%s\"},\"publish_time\":\"%s\",\"weather\":{\"temperature\":%s}}", code, date, temp);
+    float t = 0; time_t p = 0;
+    bool ok = parse_weather(body, now, &t, &p);
+    if (ok) { assert(fabsf(t-13.4f) < 0.01f); assert(p <= now); }
+    return ok;
+}
+int main(void) {
+    setenv("TZ", "CST-8", 1); tzset();
+    struct tm now_tm = {.tm_year=126, .tm_mon=10, .tm_mday=17, .tm_hour=11};
+    time_t now = mktime(&now_tm);
+    assert(check("wdcXE", "2026-11-17 10:40", "13.4", now));
+    assert(!check("HIieJ", "2026-11-17 10:40", "13.4", now));
+    assert(!check("wdcXE", "2026-11-17 07:00", "13.4", now));
+    assert(!check("wdcXE", "2026-11-17 12:00", "13.4", now));
+    assert(!check("wdcXE", "2026-02-30 10:40", "13.4", now));
+    assert(!check("wdcXE", "2026-11-17 10:40", "9999", now));
+    assert(!check("wdcXE", "2026-11-17 10:40", "\"13.4\"", now));
+    float t; time_t p;
+    assert(!parse_weather("{}", now, &t, &p));
+    assert(!parse_weather("{", now, &t, &p));
+    return 0;
+}
+'''
+        run_c(source, json=True)
+
     def test_protocol_and_session(self):
         self.assertTrue((CJSON / 'cJSON.c').exists(), '先运行 idf.py build 获取依赖')
         source = r'''
@@ -243,6 +284,7 @@ static int esp_wifi_connect(void){return ESP_OK;}
 static int esp_wifi_set_config(int iface,wifi_config_t *cfg){last_config=*cfg;return ESP_OK;}
 static void creds_save(const char *ssid,const char *pass){saves++;snprintf(saved_ssid,sizeof(saved_ssid),"%s",ssid);}
 static void sntp_start_once(void){}
+static void configure_dns(void){}
 '''
         for signature in ('static bool disconnect_is_fatal(uint8_t reason)',
                           'static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)',
@@ -324,6 +366,26 @@ int main(void){
 }
 '''
         run_c(source)
+
+    def test_http_date_utc_and_invalid_dates(self):
+        run_c(r'''
+#include <assert.h>
+#include "http_date.h"
+int main(void) {
+    time_t t = epw_http_date("Tue, 17 Nov 2026 02:54:19 GMT");
+    assert(t > 0);
+    struct tm *utc = gmtime(&t);
+    assert(utc->tm_year == 126 && utc->tm_mon == 10 && utc->tm_mday == 17);
+    assert(utc->tm_hour == 2 && utc->tm_min == 54 && utc->tm_sec == 19);
+    assert(epw_http_date("Thu, 29 Feb 2024 00:00:00 GMT") > 0);
+    assert(epw_http_date("Sat, 29 Feb 2025 00:00:00 GMT") == 0);
+    assert(epw_http_date("Tue, 17 Nov 2026 24:00:00 GMT") == 0);
+    assert(epw_http_date("Tue, 17 Nov 2026 02:54:19 CST") == 0);
+    assert(epw_http_date("Tue, 17 Nov 2026 02:54:19 GMT junk") == 0);
+    assert(epw_http_date("bad") == 0 && epw_http_date(NULL) == 0);
+    return 0;
+}
+''')
 
     def test_keyboard_all_printable_ascii(self):
         source = (MAIN / 'ui.c').read_text()

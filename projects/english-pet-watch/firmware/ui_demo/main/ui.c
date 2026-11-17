@@ -146,6 +146,7 @@ static uint32_t s_page_anim_until;
 /* 表盘 */
 static lv_obj_t *s_time;
 static lv_obj_t *s_date;
+static lv_obj_t *s_weather;
 /* 表盘装饰层（外环 / 电量 / 天气 / Wi-Fi / 日期）：睡眠模式下整层隐藏，只留时间 */
 static lv_obj_t *s_dial_deco;
 static bool s_sleep_mode;
@@ -2463,6 +2464,9 @@ static void build_dial(lv_obj_t *page)
     /* Wi-Fi 状态：只保留图标，用颜色表达（青=在线 / 琥珀=连接中 / 珊瑚=断开） */
     draw_wifi(deco, 372, 102, COL_TEAL);
 
+    s_weather = mk_label(deco, "萧山天气\n等待更新", &epw_cjk_20, COL_TEXT,
+                         98, 116, 270, LV_TEXT_ALIGN_CENTER);
+
     /* 中央：超大号圆润数字时间，垂直居中并整体下移，不再顶在上沿。
      * 时间不放进装饰层，睡眠模式下要单独保留。 */
     s_time = mk_label(page, "", &epw_time_150, COL_TEXT,
@@ -4108,4 +4112,11 @@ void ui_pet_set_state_by_name(const char *emotion, const char *text)
     /* 豆包桥接只更新状态/台词，不主动弹出宠物页，避免打扰当前操作。 */
     s_pet_bridge_ms = lv_tick_get();
     pet_apply(state, text);
+}
+
+void ui_update_weather(const char *text)
+{
+    if (!s_weather) return;
+    lv_label_set_text(s_weather, text);
+    center_snap_invalidate();
 }
