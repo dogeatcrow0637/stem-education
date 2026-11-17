@@ -38,11 +38,10 @@ def literals_cjk(path: Path) -> set:
     text = path.read_text(encoding="utf-8")
     if path.suffix == ".py":
         text = re.sub(r"(?m)^\s*#.*$", "", text)
-    else:
-        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-        text = re.sub(r"//[^\n]*", "", text)
-    literals = "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', text))
-    literals += "".join(re.findall(r"'((?:[^'\\]|\\.)*)'", text))
+    # 按顺序识别字符串与注释，避免把 URL 的 // 或字符串中的 /* 当作注释。
+    tokens = re.finditer(r'''"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|/\*.*?\*/|//[^\n]*''',
+                         text, flags=re.S)
+    literals = "".join(token[0][1:-1] for token in tokens if token[0][0] in "\"'")
     return {c for c in literals if "\u4e00" <= c <= "\u9fff"}
 
 

@@ -30,6 +30,24 @@ def run_c(source, json=False):
 
 
 class FirmwareTests(unittest.TestCase):
+    def test_font_literals_with_urls_and_comments(self):
+        from check_font_coverage import literals_cjk, font_codepoints
+        with tempfile.TemporaryDirectory(prefix='epw-font-test-') as tmp:
+            path = Path(tmp) / 'sample.c'
+            path.write_text(r'''
+// 注释不可收录 "假字"
+const char *url = "https://example.com";
+const char *text = "中央气象台";
+const char *slashes = "甲/*乙*/丙//丁\\\"戊";
+/* "错字" */ const char *last = "萧山";
+''')
+            self.assertEqual(literals_cjk(path), set('中央气象台甲乙丙丁戊萧山'))
+        weather_text = set('萧山天气等待更新中央气象台暂不可用')
+        self.assertTrue(weather_text <= (literals_cjk(MAIN / 'weather.c') |
+                                         literals_cjk(MAIN / 'ui.c')))
+        glyphs = font_codepoints(MAIN / 'assets/epw_cjk_20.c')
+        self.assertTrue({ord(c) for c in weather_text} <= glyphs)
+
     def test_weather_validation(self):
         source = r'''#define _POSIX_C_SOURCE 200809L
 #include <assert.h>
