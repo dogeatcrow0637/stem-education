@@ -60,3 +60,8 @@ CONFIG_CJSON_NESTING_LIMIT=16
 
 # 热点网络校时：国内主备 NTP，HTTP Date 仅用于首次校时兜底。
 CONFIG_LWIP_SNTP_MAX_SERVERS=3
+
+# mbedTLS 缓冲区放 PSRAM：内部 RAM 要留给 LVGL 绘制与音频 DMA。
+# 默认 INTERNAL 模式下 TLS 输入 16KB + 输出 4KB 只能挤内部 RAM，
+# 萧山天气 HTTPS 建链时 mbedtls_ssl_setup 会因内存不足返回 -0x008D。
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y

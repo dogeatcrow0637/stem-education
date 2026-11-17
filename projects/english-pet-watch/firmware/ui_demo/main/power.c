@@ -2,6 +2,10 @@
 
 #include <stdint.h>
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "driver/i2c_master.h"
 #include "bsp/esp-bsp.h"
 
@@ -17,10 +21,10 @@ static const char *TAG = "epw-power";
 #define AXP_REG_BAT_VOLT_L      0x35
 #define AXP_REG_BAT_PERCENT     0xA4
 
-/* IRQ Enable 1 / Status 1：bit3 = PWRON 短按 */
+/* IRQ 1：bit0 松开、bit1 按下、bit2 硬件长按、bit3 短按。 */
 #define AXP_REG_IRQ_ENABLE1     0x41
 #define AXP_REG_IRQ_STATUS1     0x49
-#define AXP_IRQ_PWRKEY_SHORT    0x08
+#define AXP_IRQ_PWRKEY_MASK     0x0F
 
 static i2c_master_dev_handle_t s_dev;
 
@@ -157,26 +161,69 @@ bool power_is_vbus(void)
     return vbus;
 }
 
-void power_pwrkey_irq_init(void)
+esp_err_t power_key_read(uint8_t *events)
 {
-    uint8_t en = 0;
-    if (reg_read(AXP_REG_IRQ_ENABLE1, &en, 1) == ESP_OK &&
-        (en & AXP_IRQ_PWRKEY_SHORT) == 0) {
-        reg_write(AXP_REG_IRQ_ENABLE1, (uint8_t)(en | AXP_IRQ_PWRKEY_SHORT));
+    *events = 0;
+    uint8_t st;
+    esp_err_t err = reg_read(AXP_REG_IRQ_STATUS1, &st, 1);
+    if (err != ESP_OK) return err;
+    st &= AXP_IRQ_PWRKEY_MASK;
+    if (st != 0) {
+        err = reg_write(AXP_REG_IRQ_STATUS1, st); /* RW1C，只清按键位 */
+        if (err != ESP_OK) return err;
     }
-    /* 清掉上电时可能残留的短按标志，避免一开机就弹菜单。 */
-    reg_write(AXP_REG_IRQ_STATUS1, AXP_IRQ_PWRKEY_SHORT);
+    *events = st;
+    return ESP_OK;
 }
 
-bool power_pwrkey_short_pressed(void)
+esp_err_t power_key_configure(void)
 {
-    uint8_t st = 0;
-    if (reg_read(AXP_REG_IRQ_STATUS1, &st, 1) != ESP_OK) {
-        return false;
+    uint8_t value;
+    esp_err_t err = reg_read(0x22, &value, 1);
+    if (err != ESP_OK) return err;
+    /* 长按只弹确认框，不能被 PMU 的 4 秒硬关机提前截断。 */
+    err = reg_write(0x22, value & ~0x02);
+    if (err != ESP_OK) return err;
+    err = reg_read(0x27, &value, 1);
+    if (err != ESP_OK) return err;
+    err = reg_write(0x27, value & ~0x03); /* 128ms 唤醒，剩余长按由固件检查 */
+    if (err != ESP_OK) return err;
+    err = reg_read(AXP_REG_IRQ_ENABLE1, &value, 1);
+    if (err != ESP_OK) return err;
+    return reg_write(AXP_REG_IRQ_ENABLE1, value | AXP_IRQ_PWRKEY_MASK);
+}
+
+esp_err_t power_shutdown(void)
+{
+    uint8_t value;
+    esp_err_t err = reg_read(0x10, &value, 1);
+    return err == ESP_OK ? reg_write(0x10, value | 0x01) : err;
+}
+
+esp_err_t power_boot_wait(void)
+{
+    uint8_t source, events;
+    esp_err_t err = reg_read(0x20, &source, 1);
+    if (err != ESP_OK) return err;
+    /* USB 烧录/软件复位不复用 PMU 中残留的“电源键上电”来源。 */
+    if (esp_reset_reason() != ESP_RST_POWERON || (source & 0x01) == 0) {
+        return power_key_read(&events);
     }
-    if ((st & AXP_IRQ_PWRKEY_SHORT) == 0) {
-        return false;
+    ESP_LOGI(TAG, "power-key cold boot: waiting for 5s hold");
+    while (true) {
+        err = power_key_read(&events);
+        if (err != ESP_OK) return err;
+        if (events & (POWER_KEY_RELEASE | POWER_KEY_SHORT)) {
+            ESP_LOGI(TAG, "power-on hold cancelled");
+            err = power_shutdown();
+            if (err != ESP_OK) return err;
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            return ESP_FAIL; /* 外部供电未断时保留可恢复的错误路径 */
+        }
+        /* esp_timer 从系统启动计时，另计入 PMU 的 128ms；引导加载耗时有误差。 */
+        if (esp_timer_get_time() >= 4872000) break;
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
-    reg_write(AXP_REG_IRQ_STATUS1, AXP_IRQ_PWRKEY_SHORT); /* RW1C */
-    return true;
+    ESP_LOGI(TAG, "power-on hold accepted");
+    return ESP_OK;
 }

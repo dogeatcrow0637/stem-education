@@ -20,6 +20,7 @@ external:
   wiki: "https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75C"
   video: ""
   weather: "https://www.nmc.cn/publish/forecast/AZJ/xiaoshan.html"
+  power_reference: "https://github.com/lewisxhe/XPowersLib" # MIT，仅寄存器参考，未引入库
   cjson: "https://components.espressif.com/components/espressif/cjson"
 
 board:

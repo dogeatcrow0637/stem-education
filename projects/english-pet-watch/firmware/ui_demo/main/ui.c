@@ -4,6 +4,7 @@
  * 音量页只显示静音；宠物页左滑启动真实聊天，右滑/退出/熄屏停止语音。
  */
 #include "ui.h"
+#include "button.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -18,10 +19,13 @@
 #include "esp_psram.h"
 #include "lvgl.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
+#include "src/draw/lv_draw_buf_private.h" /* 图标缓存指定 PSRAM 分配器 */
 #include "src/core/lv_obj_draw_private.h" /* lv_obj_get_ext_draw_size（LVGL 9.5 未公开到头文件） */
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "bsp/esp-bsp.h"
+#include "nursery.h"
+#include "watch_system.h"
 #include "voice_client.h"
 #include "power.h"
 #include "wifi.h"
@@ -58,22 +62,17 @@ extern const lv_font_t epw_time_150;
 #define SLIDER_TRACK_TOP (CENTER_Y - SLIDER_TRACK_H / 2)
 #define SLIDER_TRACK_X   (CENTER_X - SLIDER_TRACK_W / 2)
 
-/* 应用桌面：华为手表风格 2 列网格，上下拖动整页像布一样滚动，
- * 中心行最大、上下行渐小；只能再按大按钮退出，不支持滑动退出。
- * 只保留 Mimi / 状态 / 天气；音量、亮度、手电只属于控制中心。 */
-#define APP_COUNT          3
-#define APP_COLS           2
-#define APP_ROWS           ((APP_COUNT + APP_COLS - 1) / APP_COLS)
-#define APP_ICON_D         96
+/* 应用桌面：二维气泡画布，任意方向拖动；PWR 返回，点按进入应用。 */
+#define APP_COUNT          6
+#define APP_ICON_D         120
 #define APP_ROOT_W         APP_ICON_D
 #define APP_ROOT_H         APP_ICON_D
-#define APP_GRID_DX        150   /* 列间距（px） */
-#define APP_GRID_DY        140   /* 行间距（px） */
-#define APP_GRID_CY        233   /* 中心行图标圆心 y */
-#define APP_GRID_HOME_ROW  0     /* 默认停靠行（0 起） */
-#define APP_GRID_SCALE_DROP 0.32f /* 每偏中心一行，缩放减少量 */
-#define APP_GRID_MIN_SCALE  0.46f
-#define APP_GRID_DRAG_TH    22    /* 超过该位移才算拖动，否则视为点按（圆屏手指易抖动） */
+#define APP_ICON_MIN_D     64
+#define APP_GRID_STEP      136
+#define APP_LABEL_W        112
+#define APP_PAN_LIMIT      APP_GRID_STEP
+#define APP_PAN_OVERSHOOT  28
+#define APP_GRID_DRAG_TH   16
 
 static const char *TAG = "epw-ui";
 
@@ -101,6 +100,7 @@ static const char *TAG = "epw-ui";
 #define COL_RING_SKY    lv_color_hex(0x00BFFF)
 /* 天气分割线绿色；调节页用科技感浅绿 */
 #define COL_GREEN       lv_color_hex(0x2EE66B)
+#define COL_SLEEP_ACTIVE lv_color_hex(0x58408F)
 #define COL_TECH_GREEN  lv_color_hex(0x5CF39A)
 
 /* -------------------------------------------------------------------------- */
@@ -115,6 +115,7 @@ static lv_obj_t *s_slider;
 static lv_obj_t *s_torch;
 static lv_obj_t *s_apps;
 static lv_obj_t *s_pet;
+static lv_obj_t *s_nursery;
 
 static bool s_center_open;
 static bool s_status_open;
@@ -122,6 +123,7 @@ static bool s_slider_open;
 static bool s_torch_open;
 static bool s_apps_open;
 static bool s_pet_open;
+static bool s_nursery_open;
 
 /* 控制中心抽屉式滑动：s_center_reveal 表示整块面板从顶部滑下的距离 0..SCREEN_H，
  * 面板 y = reveal - SCREEN_H，内容（标题、磁贴）随面板一起平移 */
@@ -145,6 +147,19 @@ static lv_draw_buf_t *s_center_snap;  /* RGB565 快照（PSRAM，约 434KB） */
 static bool s_center_snap_valid;
 static int s_center_snap_ext;         /* 快照外扩像素，贴图时对消 */
 
+/* 儿歌页同样做成抽屉：表盘左滑跟手拉入，页内右滑跟手退出。
+ * 滑入移动页面快照（页面关闭后预渲染），滑出移动真实页面以保持进度实时。 */
+#define NUR_DRAG_TH  8
+static bool s_nur_dragging;
+static bool s_nur_drag_engaged;
+static int s_nur_press_x;
+static int s_nur_press_y;
+static int s_nur_reveal = -SCREEN_W;  /* 0=完全打开，-SCREEN_W=收在主屏左侧 */
+static lv_obj_t *s_nur_snap_img;
+static lv_draw_buf_t *s_nur_snap;
+static bool s_nur_snap_valid;
+static int s_nur_snap_ext;
+
 /* 页面切换动画期间短暂屏蔽抽屉手势：避免上一页还在滑动时又拉出控制中心，
  * 出现两个页面同屏。 */
 static uint32_t s_page_anim_until;
@@ -167,14 +182,30 @@ static lv_obj_t *s_home_wifi[4]; /* 3 段弧 + 底部圆点，用颜色表达联
 
 /* 控制中心睡眠磁贴（用于显示开/关状态） */
 static lv_obj_t *s_cc_sleep;
+static lv_obj_t *s_cc_sleep_off;
+static lv_obj_t *s_cc_sleep_on;
 
-/* 应用桌面：纵向网格滚动状态（拖动整页，不再单独拖图标） */
+/* 图标位置、缩放和命中都使用同一二维坐标。 */
 static lv_obj_t *s_app_icons[APP_COUNT];
-static float s_app_scroll;      /* 当前滚动位置，单位 = 一行 */
+static lv_draw_buf_t *s_app_art[APP_COUNT];
+static lv_draw_buf_t *s_app_scaled[APP_COUNT];
+static int s_app_pixel_size[APP_COUNT];
+static lv_obj_t *s_app_labels[APP_COUNT];
+static lv_obj_t *s_tools, *s_settings_page, *s_timer_page, *s_timer_value, *s_timer_hint;
+static lv_obj_t *s_timer_action, *s_timer_reset_label;
+static lv_obj_t *s_idle_options[6], *s_timer_presets[6];
+static bool s_tools_open;
+static int s_tools_kind;
+static const uint32_t s_idle_choices[] = {15000, 30000, 60000, 120000, 300000, 0};
+static const uint32_t s_timer_choices[] = {60, 180, 300, 600, 1800, 3600};
+static const char *s_app_names[APP_COUNT] = {"Mimi", "英语儿歌", "状态", "网络", "设置", "计时器"};
+static lv_point_t s_app_pan;
+static lv_point_t s_app_pan_start;
+static lv_point_t s_app_settle_from;
+static lv_point_t s_app_settle_to;
 static bool s_app_drag_active;
 static bool s_app_drag_moved;
 static lv_point_t s_app_press;
-static float s_app_scroll_start;
 
 /* 宠物页 */
 #define PET_IMG_SIZE 208
@@ -194,6 +225,47 @@ static int s_pet_pop;
 static int s_pet_last_bob;
 static bool s_pet_long_pressed; /* 长按已触发，拦截随后的 CLICKED */
 static int s_pet_scene_idx;
+
+/* 3S 英语儿歌：播放器 / 本周曲库两张卡片，同页上下切换。
+ * 卡片直接挂在页面下，纵向坐标由 s_nur_card 决定：
+ * 播放器 100，本周曲库 522；切换时两张卡同时上移。 */
+#define NUR_CARD_X       44
+#define NUR_CARD_W       378
+#define NUR_CARD_H       284
+#define NUR_CARD_PLAYER_Y 100
+#define NUR_CARD_WEEK_Y   (SCREEN_H + 56)
+#define NUR_CARD_SHIFT    (NUR_CARD_WEEK_Y - NUR_CARD_PLAYER_Y)
+static int s_nur_card; /* 0 = 播放器，1 = 本周曲库 */
+static lv_obj_t *s_nur_player_card;
+static lv_obj_t *s_nur_week_card;
+static lv_obj_t *s_nur_arc;
+static lv_obj_t *s_nur_title;
+static lv_obj_t *s_nur_lyric;
+static lv_obj_t *s_nur_library_label;
+static lv_obj_t *s_nur_time;
+static lv_obj_t *s_nur_play_btn;
+static lv_obj_t *s_nur_mode_btn;
+static lv_obj_t *s_nur_prev_btn;
+static lv_obj_t *s_nur_next_btn;
+static lv_obj_t *s_nur_icon_play;
+static lv_obj_t *s_nur_icon_pause;
+static lv_obj_t *s_nur_mode_label;
+static lv_obj_t *s_nur_stars[5];
+static lv_obj_t *s_nur_slot[3];
+static lv_obj_t *s_nur_slot_label[3];
+static lv_obj_t *s_nur_week_stars;
+static lv_obj_t *s_nur_week_row[EPW_NURSERY_WEEKLY_MAX];
+static lv_obj_t *s_nur_week_title[EPW_NURSERY_WEEKLY_MAX];
+static lv_obj_t *s_nur_week_meta[EPW_NURSERY_WEEKLY_MAX];
+static lv_obj_t *s_nur_wish_btn;
+static lv_obj_t *s_nur_wish_label;
+static bool s_nur_catalog_seen;
+static int s_nur_last_done;
+static int s_nur_last_stars;
+static bool s_nur_slot_long;
+static uint32_t s_nur_ui_ms;
+/* 拍快照时临时放开隐藏页的 UI 刷新，让滑入的第一帧就是真实内容 */
+static bool s_nur_force_update;
 static uint32_t s_pet_bridge_ms;
 
 /* 状态页 */
@@ -253,7 +325,7 @@ static int s_bat_percent = -1;
 static int s_brightness = 80;
 
 /* 熄屏：30s 无操作关背光；点屏幕或按任意键点亮 */
-#define UI_IDLE_TIMEOUT_MS 30000
+#define UI_IDLE_TIMEOUT_MS watch_idle_timeout_ms()
 #define UI_IDLE_POLL_MS    100
 static bool s_screen_off;
 static uint32_t s_last_activity;
@@ -291,11 +363,21 @@ static void apps_open(void);
 static void apps_close(void);
 static void apps_close_now(void);
 static void apps_layout_icons(void);
-static void app_scroll_clamp(void);
+static void tools_open(int kind);
+static void tools_close(void);
+static void build_tools(void);
+static void app_pan_anim_cb(void *var, int32_t value);
+static int app_pan_bound(int value, bool elastic);
 static void pet_open(void);
 static void pet_close(void);
 static void pet_close_now(void);
 static void pet_apply(ui_pet_state_t state, const char *text);
+static void nursery_open(void);
+static void nursery_close(void);
+static void nursery_close_now(void);
+static void nursery_refresh_week(void);
+static void nursery_update_ui(void);
+static void nursery_card_set(int card, bool animate);
 static void brightness_apply(void);
 static void clear_clickable_tree(lv_obj_t *o);
 static void wifi_open(void);
@@ -425,89 +507,98 @@ static void draw_sun_duo(lv_obj_t *parent, int cx, int cy, int r,
 
 
 
-static void draw_info(lv_obj_t *parent, int cx, int cy, lv_color_t color)
+/* 儿歌 App 图标：双音符（两个符头 + 符干 + 连梁） */
+static void draw_note_icon(lv_obj_t *parent, int cx, int cy, lv_color_t color)
 {
-    mk_circle(parent, cx, cy - 13, 7, color, LV_OPA_COVER);
-    mk_box(parent, cx - 3, cy - 3, 6, 20, color, LV_OPA_COVER, 3);
-}
+    mk_circle(parent, cx - 15, cy + 17, 15, color, LV_OPA_COVER);
+    mk_circle(parent, cx + 15, cy + 11, 15, color, LV_OPA_COVER);
+    mk_box(parent, cx - 10, cy - 22, 5, 40, color, LV_OPA_COVER, 2);
+    mk_box(parent, cx + 20, cy - 28, 5, 40, color, LV_OPA_COVER, 2);
 
-/* 状态磁贴：芯片造型（引脚 + 深色内芯 + 在线点），与普通圆形入口区分 */
-static void draw_status_icon(lv_obj_t *parent, int cx, int cy)
-{
-    /* 四边引脚 */
-    for (int i = 0; i < 3; i++) {
-        int d = -10 + i * 10;
-        mk_box(parent, cx + d - 2, cy - 26, 5, 8, COL_TEAL, LV_OPA_COVER, 2);
-        mk_box(parent, cx + d - 2, cy + 18, 5, 8, COL_TEAL, LV_OPA_COVER, 2);
-        mk_box(parent, cx - 26, cy + d - 2, 8, 5, COL_TEAL, LV_OPA_COVER, 2);
-        mk_box(parent, cx + 18, cy + d - 2, 8, 5, COL_TEAL, LV_OPA_COVER, 2);
-    }
-    /* 芯片本体 + 深色内芯 + 中心状态点 */
-    lv_obj_t *body = mk_box(parent, cx - 18, cy - 18, 36, 36, COL_TEAL, LV_OPA_COVER, 8);
-    mk_box(body, 7, 7, 22, 22, COL_INK, LV_OPA_COVER, 5);
-    mk_circle(body, 18, 18, 10, COL_TEAL, LV_OPA_COVER);
-}
-
-/* 电量磁贴：白描边电池 + 绿色电量 + 黄色闪电 */
-static void draw_battery_icon(lv_obj_t *parent, int cx, int cy)
-{
-    lv_obj_t *body = mk_box(parent, cx - 22, cy - 10, 44, 20, COL_TEXT, LV_OPA_TRANSP, 5);
-    lv_obj_set_style_border_width(body, 2, 0);
-    lv_obj_set_style_border_color(body, COL_TEXT, 0);
-    mk_box(parent, cx + 23, cy - 4, 4, 8, COL_TEXT, LV_OPA_COVER, 2);
-    mk_box(parent, cx - 19, cy - 7, 38, 14, COL_GREEN, LV_OPA_COVER, 3);
-
-    static const lv_point_precise_t bolt[] = {
-        {6, 0}, {1, 8}, {5, 8}, {2, 16}, {11, 6}, {6, 6}, {6, 0},
+    static const lv_point_precise_t beam[] = {
+        {0, 0}, {30, -6}, {30, 4}, {0, 10}, {0, 0},
     };
     lv_obj_t *b = lv_line_create(parent);
-    lv_line_set_points(b, bolt, 7);
-    lv_obj_set_pos(b, cx - 5, cy - 8);
-    lv_obj_set_style_line_width(b, 2, 0);
-    lv_obj_set_style_line_color(b, lv_color_hex(0xFFFF00), 0);
-    lv_obj_set_style_line_rounded(b, true, 0);
-}
-
-static void draw_speaker(lv_obj_t *parent, int x, int y, lv_color_t color)
-{
-    static const lv_point_precise_t body[] = {
-        {0, 7}, {8, 7}, {17, 0}, {17, 22}, {8, 15}, {0, 15}, {0, 7},
-    };
-    lv_obj_t *b = lv_line_create(parent);
-    lv_line_set_points(b, body, 7);
-    lv_obj_set_pos(b, x, y);
+    lv_line_set_points(b, beam, 5);
+    lv_obj_set_pos(b, cx - 10, cy - 22);
     lv_obj_set_style_line_width(b, 3, 0);
     lv_obj_set_style_line_color(b, color, 0);
     lv_obj_set_style_line_rounded(b, true, 0);
-
-    static const lv_point_precise_t slash[] = {{20, 0}, {32, 22}};
-    lv_obj_t *s = lv_line_create(parent);
-    lv_line_set_points(s, slash, 2);
-    lv_obj_set_pos(s, x, y);
-    lv_obj_set_style_line_width(s, 3, 0);
-    lv_obj_set_style_line_color(s, COL_CORAL, 0);
-    lv_obj_set_style_line_rounded(s, true, 0);
 }
 
-/* 手电图标：灯头 + 手柄 + 三束光 */
+/* 控制中心图标统一为 44px 画布、3px 圆角线条。 */
+static void icon_line(lv_obj_t *parent, const lv_point_precise_t *points, uint32_t count,
+                      int cx, int cy, lv_color_t color)
+{
+    lv_obj_t *line = lv_line_create(parent);
+    lv_line_set_points(line, points, count);
+    lv_obj_set_pos(line, cx - 22, cy - 22);
+    lv_obj_set_style_line_width(line, 3, 0);
+    lv_obj_set_style_line_color(line, color, 0);
+    lv_obj_set_style_line_rounded(line, true, 0);
+}
+
+static void icon_ring(lv_obj_t *parent, int cx, int cy, int diameter, lv_color_t color)
+{
+    lv_obj_t *ring = mk_circle(parent, cx, cy, diameter, color, LV_OPA_TRANSP);
+    lv_obj_set_style_border_width(ring, 3, 0);
+    lv_obj_set_style_border_color(ring, color, 0);
+}
+
+static void draw_status_icon(lv_obj_t *parent, int cx, int cy)
+{
+    icon_ring(parent, cx, cy, 38, COL_TEAL);
+    mk_circle(parent, cx, cy - 9, 5, COL_TEXT, LV_OPA_COVER);
+    mk_box(parent, cx - 2, cy - 2, 4, 14, COL_TEXT, LV_OPA_COVER, 2);
+}
+
+static void draw_battery_icon(lv_obj_t *parent, int cx, int cy)
+{
+    lv_obj_t *body = mk_box(parent, cx - 22, cy - 12, 42, 24, COL_GREEN, LV_OPA_TRANSP, 5);
+    lv_obj_set_style_border_width(body, 3, 0);
+    lv_obj_set_style_border_color(body, COL_GREEN, 0);
+    mk_box(parent, cx + 22, cy - 5, 3, 10, COL_GREEN, LV_OPA_COVER, 1);
+    static const lv_point_precise_t bolt[] = {{25, 14}, {18, 23}, {25, 23}, {20, 30}};
+    icon_line(parent, bolt, 4, cx, cy, COL_TEXT);
+}
+
+static void draw_brightness_icon(lv_obj_t *parent, int cx, int cy)
+{
+    icon_ring(parent, cx, cy, 22, COL_AMBER);
+    for (int i = 0; i < 8; i++) {
+        float rad = (float)i * (float)M_PI / 4.0f;
+        int x = cx + (int)lroundf(20.0f * sinf(rad));
+        int y = cy - (int)lroundf(20.0f * cosf(rad));
+        lv_obj_t *ray = mk_box(parent, x - 1, y - 3, 3, 7, COL_AMBER, LV_OPA_COVER, 2);
+        lv_obj_set_style_transform_rotation(ray, i * 450, 0);
+    }
+}
+
+static void draw_speaker(lv_obj_t *parent, int cx, int cy, lv_color_t color)
+{
+    static const lv_point_precise_t body[] = {
+        {4, 16}, {13, 16}, {23, 7}, {23, 37}, {13, 28}, {4, 28}, {4, 16},
+    };
+    static const lv_point_precise_t cross_a[] = {{30, 16}, {33, 22}, {30, 28}};
+    static const lv_point_precise_t cross_b[] = {{36, 10}, {41, 22}, {36, 34}};
+    icon_line(parent, body, 7, cx, cy, color);
+    icon_line(parent, cross_a, 3, cx, cy, color);
+    icon_line(parent, cross_b, 3, cx, cy, color);
+}
+
 static void draw_torch(lv_obj_t *parent, int cx, int cy, lv_color_t color)
 {
-    mk_box(parent, cx - 12, cy - 22, 24, 13, color, LV_OPA_COVER, 4);
-    mk_box(parent, cx - 6, cy - 9, 12, 24, COL_MUTED, LV_OPA_COVER, 4);
-    /* 灯头玻璃反光 */
-    mk_box(parent, cx - 8, cy - 19, 16, 4, COL_TEXT, LV_OPA_80, 2);
-
-    static const lv_point_precise_t beams[3][2] = {
-        {{0, 0}, {-7, -9}}, {{4, 0}, {4, -11}}, {{8, 0}, {15, -9}},
+    static const lv_point_precise_t body[] = {
+        {11, 13}, {33, 13}, {28, 23}, {28, 39}, {16, 39}, {16, 23}, {11, 13},
     };
-    for (int i = 0; i < 3; i++) {
-        lv_obj_t *b = lv_line_create(parent);
-        lv_line_set_points(b, beams[i], 2);
-        lv_obj_set_pos(b, cx - 4, cy - 24);
-        lv_obj_set_style_line_width(b, 3, 0);
-        lv_obj_set_style_line_color(b, i == 1 ? COL_TEXT : color, 0);
-        lv_obj_set_style_line_rounded(b, true, 0);
-    }
+    static const lv_point_precise_t neck[] = {{16, 23}, {28, 23}};
+    static const lv_point_precise_t beam[][2] = {
+        {{22, 2}, {22, 7}}, {{9, 4}, {12, 8}}, {{35, 4}, {32, 8}},
+    };
+    icon_line(parent, body, 7, cx, cy, COL_TEXT);
+    icon_line(parent, neck, 2, cx, cy, color);
+    for (int i = 0; i < 3; i++) icon_line(parent, beam[i], 2, cx, cy, color);
+    mk_circle(parent, cx, cy + 8, 4, color, LV_OPA_COVER);
 }
 
 /* 网络 App 图标：三层 Wi-Fi 弧 + 底部圆点 */
@@ -641,6 +732,14 @@ static void toast_show(const char *text)
 /* 亮度                                                                        */
 /* -------------------------------------------------------------------------- */
 
+static int brightness_level(void)
+{
+    if (s_screen_off) return 0;
+    if (s_sleep_mode) return 10;
+    if (s_torch_open) return 100;
+    return s_brightness;
+}
+
 static void brightness_apply(void)
 {
     if (s_brightness < 10) {
@@ -650,7 +749,7 @@ static void brightness_apply(void)
         s_brightness = 100;
     }
 
-    bsp_display_brightness_set(s_brightness);
+    bsp_display_brightness_set(brightness_level());
     slider_refresh();
 }
 
@@ -660,20 +759,21 @@ static void slider_refresh(void)
         return;
     }
 
-    if (s_slider_kind == SLIDER_VOLUME) {
-        lv_label_set_text(s_slider_value, "静音");
+    if (s_slider_kind == SLIDER_BRIGHT && s_sleep_mode) {
+        lv_label_set_text(s_slider_value, "睡眠锁定 10%");
         lv_obj_set_style_text_font(s_slider_value, &epw_cjk_20, 0);
         lv_obj_set_y(s_slider_value, CENTER_Y - 12);
         lv_obj_add_flag(s_slider_track, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_slider_fill, LV_OBJ_FLAG_HIDDEN);
         return;
     }
+    /* 亮度 / 音量显示当前数值。 */
+    int v = s_slider_kind == SLIDER_VOLUME ? nursery_get_volume() : s_brightness;
+    int h = SLIDER_TRACK_H * v / 100;
+
     lv_obj_set_style_text_font(s_slider_value, &lv_font_montserrat_28, 0);
     lv_obj_set_y(s_slider_value, 52);
     lv_obj_remove_flag(s_slider_track, LV_OBJ_FLAG_HIDDEN);
-    int v = s_brightness;
-    int h = SLIDER_TRACK_H * v / 100;
-
     if (s_slider_value != NULL) {
         lv_label_set_text_fmt(s_slider_value, "%d", v);
     }
@@ -698,8 +798,15 @@ static void slider_apply_value(int v)
     }
 
     if (s_slider_kind == SLIDER_BRIGHT) {
+        /* 睡眠表盘锁在 10，不把用户设定值改掉；退出睡眠后自动恢复 */
+        if (s_sleep_mode || s_screen_off || s_torch_open) {
+            return;
+        }
         s_brightness = v;
         brightness_apply();
+    } else if (s_slider_kind == SLIDER_VOLUME) {
+        nursery_set_volume(v);
+        slider_refresh();
     }
 }
 
@@ -707,9 +814,6 @@ static void slider_apply_value(int v)
 static void slider_press_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
-    if (s_slider_kind != SLIDER_BRIGHT) {
-        return;
-    }
     if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
         s_slider_dragging = false;
         return;
@@ -926,7 +1030,7 @@ static void network_timer_cb(lv_timer_t *timer)
 static bool pages_busy_except_center(void)
 {
     return s_status_open || s_slider_open || s_torch_open || s_apps_open ||
-           s_pet_open || s_wifi_open || s_wifipwd_open;
+           s_pet_open || s_wifi_open || s_wifipwd_open || s_tools_open;
 }
 
 /* 表盘快照只在内容变化且手指离开时预热，拖动入口不做昂贵重绘。 */
@@ -1119,6 +1223,7 @@ static void center_open(void)
     apps_close_now();
     wifi_close_now();
     pet_close_now();
+    nursery_close_now();
 
     s_center_open = true;
 
@@ -1195,7 +1300,7 @@ static void home_pull_cb(lv_event_t *e)
         s_center_press_y = p.y;
         s_center_press_reveal = s_center_reveal;
     } else if (code == LV_EVENT_PRESSING) {
-        if (!s_center_dragging) {
+        if (!s_center_dragging || s_nur_drag_engaged) {
             return;
         }
         int dy = p.y - s_center_press_y;
@@ -1451,11 +1556,12 @@ static void torch_open(void)
     /* 手电与状态页、亮度/音量页互斥 */
     status_close_now();
     slider_close_now();
+    nursery_close_now();
     s_torch_open = true;
     s_torch_last_click = 0;
 
-    /* 手电就是纯白满亮度；关闭时恢复到进入前的亮度 */
-    bsp_display_brightness_set(100);
+    /* 普通模式全亮；睡眠模式保持 10%，关闭后恢复当前模式亮度 */
+    brightness_apply();
     lv_obj_remove_flag(s_torch, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_torch);
 
@@ -1480,7 +1586,7 @@ static void torch_close(void)
         lv_timer_del(s_torch_hint_timer);
         s_torch_hint_timer = NULL;
     }
-    bsp_display_brightness_set(s_brightness);
+    brightness_apply();
     ESP_LOGI(TAG, "torch close");
 }
 
@@ -1497,7 +1603,7 @@ static void torch_close_now(void)
         s_torch_hint_timer = NULL;
     }
     if (was_open) {
-        bsp_display_brightness_set(s_brightness);
+        brightness_apply();
     }
 }
 
@@ -1545,10 +1651,9 @@ static void apps_open(void)
     lv_anim_delete(s_apps, NULL);
     lv_obj_remove_flag(s_apps, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_apps);
-    /* 每次进入都让最近一次拖动的停靠位置对齐中心，避免半格状态 */
     s_app_drag_active = false;
-    s_app_scroll = roundf(s_app_scroll);
-    app_scroll_clamp();
+    s_app_pan.x = app_pan_bound(s_app_pan.x, false);
+    s_app_pan.y = app_pan_bound(s_app_pan.y, false);
     apps_layout_icons();
     lv_obj_set_style_opa(s_apps, LV_OPA_TRANSP, 0);
     lv_obj_set_y(s_apps, 20);
@@ -1579,6 +1684,7 @@ static void apps_close(void)
         return;
     }
     s_apps_open = false;
+    s_app_drag_active = false;
 
     lv_anim_delete(s_apps, NULL);
     lv_anim_t a;
@@ -1608,6 +1714,7 @@ static void apps_close_now(void)
         return;
     }
     s_apps_open = false;
+    s_app_drag_active = false;
     lv_anim_delete(s_apps, NULL);
     lv_obj_add_flag(s_apps, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_y(s_apps, 0);
@@ -1624,6 +1731,9 @@ static void pet_open(void)
         return;
     }
     /* 宠物页为最上层覆盖页：先收起控制中心 / 状态页 / 应用桌面 */
+    /* 儿歌与语音聊天共用 I2S：进宠物页前停止外放并收起儿歌页 */
+    nursery_close_now();
+    nursery_stop();
     center_close_now();
     status_close_now();
     apps_close_now();
@@ -1669,6 +1779,392 @@ static void pet_close_now(void)
 }
 
 /* -------------------------------------------------------------------------- */
+/* 3S 英语儿歌页 抽屉式滑入滑出                                                 */
+/* -------------------------------------------------------------------------- */
+
+/* 页面关闭后预渲染最近状态；
+ * 下一次右滑只搬运这张位图，手感和控制中心下拉一致。 */
+static void nursery_snap_refresh(void)
+{
+    if (s_nursery == NULL || s_nur_snap_img == NULL) {
+        return;
+    }
+    s_nur_force_update = true;
+    nursery_update_ui();
+    s_nur_force_update = false;
+    if (s_nur_snap == NULL) {
+        s_nur_snap = lv_snapshot_create_draw_buf(s_nursery, LV_COLOR_FORMAT_RGB565);
+    }
+    if (s_nur_snap == NULL ||
+        lv_snapshot_take_to_draw_buf(s_nursery, LV_COLOR_FORMAT_RGB565,
+                                     s_nur_snap) != LV_RESULT_OK) {
+        s_nur_snap_valid = false;
+        s_nur_snap_ext = 0;
+        ESP_LOGW(TAG, "nursery snapshot unavailable; drag uses live page");
+        return;
+    }
+    s_nur_snap_ext = lv_obj_get_ext_draw_size(s_nursery);
+    lv_image_cache_drop(s_nur_snap);
+    lv_image_set_src(s_nur_snap_img, s_nur_snap);
+    lv_obj_set_pos(s_nur_snap_img, -SCREEN_W - s_nur_snap_ext, -s_nur_snap_ext);
+    s_nur_snap_valid = true;
+}
+
+static lv_obj_t *nursery_drawer_obj(void)
+{
+    return (s_nur_snap_valid && s_nur_snap_img != NULL) ? s_nur_snap_img : s_nursery;
+}
+
+/* 开始滑入：冻结下层表盘，只移动儿歌页快照（无快照时退回真实页面）。 */
+static void nursery_drawer_begin(void)
+{
+    home_snap_begin();
+    if (s_nur_snap_valid && s_nur_snap_img != NULL) {
+        lv_obj_add_flag(s_nursery, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_pos(s_nur_snap_img, s_nur_reveal - s_nur_snap_ext, -s_nur_snap_ext);
+        lv_obj_remove_flag(s_nur_snap_img, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(s_nursery, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_x(s_nursery, s_nur_reveal);
+    }
+}
+
+static void anim_nur_open_x_cb(void *obj, int32_t value)
+{
+    s_nur_reveal = (int)value;
+    lv_obj_set_x((lv_obj_t *)obj, value - s_nur_snap_ext);
+}
+
+static void anim_nur_close_x_cb(void *obj, int32_t value)
+{
+    s_nur_reveal = (int)value;
+    lv_obj_set_x((lv_obj_t *)obj, value);
+}
+
+/* 滑入阶段跟手：直接设置快照横向位置 */
+static void nursery_set_reveal(int x)
+{
+    if (x < -SCREEN_W) {
+        x = -SCREEN_W;
+    } else if (x > 0) {
+        x = 0;
+    }
+    s_nur_reveal = x;
+    lv_obj_set_x(nursery_drawer_obj(), x - s_nur_snap_ext);
+}
+
+/* 滑出阶段跟手：移动真实页面，歌词与进度不会停在旧画面 */
+static void nursery_set_reveal_real(int x)
+{
+    if (x < -SCREEN_W) {
+        x = -SCREEN_W;
+    } else if (x > 0) {
+        x = 0;
+    }
+    s_nur_reveal = x;
+    lv_obj_set_x(s_nursery, x);
+}
+
+static void nursery_open_done(lv_anim_t *anim)
+{
+    LV_UNUSED(anim);
+    home_snap_end();
+    if (s_nur_snap_img != NULL) {
+        lv_obj_add_flag(s_nur_snap_img, LV_OBJ_FLAG_HIDDEN);
+    }
+    s_nur_reveal = 0;
+    lv_obj_set_x(s_nursery, 0);
+    lv_obj_remove_flag(s_nursery, LV_OBJ_FLAG_HIDDEN);
+    s_nursery_open = true;
+    nursery_update_ui();
+}
+
+static void nursery_open_abort_done(lv_anim_t *anim)
+{
+    LV_UNUSED(anim);
+    home_snap_end();
+    if (s_nur_snap_img != NULL) {
+        lv_obj_add_flag(s_nur_snap_img, LV_OBJ_FLAG_HIDDEN);
+    }
+    s_nursery_open = false;
+    s_nur_reveal = -SCREEN_W;
+    lv_obj_add_flag(s_nursery, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(s_nursery, -SCREEN_W);
+}
+
+static void nursery_close_done(lv_anim_t *anim)
+{
+    LV_UNUSED(anim);
+    home_snap_end();
+    s_nursery_open = false;
+    s_nur_reveal = -SCREEN_W;
+    lv_obj_add_flag(s_nursery, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(s_nursery, -SCREEN_W);
+    nursery_card_set(0, false);
+    /* 内容已定格，立刻给下一次右滑预渲染 */
+    s_nur_snap_valid = false;
+    s_nur_snap_ext = 0;
+    nursery_snap_refresh();
+}
+
+static void nursery_close_abort_done(lv_anim_t *anim)
+{
+    LV_UNUSED(anim);
+    home_snap_end();
+    s_nur_reveal = 0;
+    lv_obj_set_x(s_nursery, 0);
+    lv_obj_remove_flag(s_nursery, LV_OBJ_FLAG_HIDDEN);
+    s_nursery_open = true;
+}
+
+static void nursery_open(void)
+{
+    if (s_nursery == NULL || s_nursery_open || s_screen_off) {
+        return;
+    }
+    /* 儿歌播放与语音聊天共用 I2S：进入儿歌页先停掉录音，避免抢总线 */
+    voice_client_set_active(false);
+    center_close_now();
+    status_close_now();
+    slider_close_now();
+    torch_close_now();
+    apps_close_now();
+    wifi_close_now();
+    pet_close_now();
+
+    s_nur_dragging = false;
+    s_nur_drag_engaged = false;
+    nursery_card_set(0, false);
+    s_nur_catalog_seen = nursery_catalog_ready();
+    lv_obj_set_pos(s_nur_player_card, NUR_CARD_X, NUR_CARD_PLAYER_Y);
+    lv_obj_set_pos(s_nur_week_card, NUR_CARD_X, NUR_CARD_WEEK_Y);
+    /* 复用空闲时预热的快照，避免按下后临时渲染整页。 */
+    s_nur_reveal = -SCREEN_W;
+    if (!s_nur_snap_valid) {
+        nursery_snap_refresh();
+    }
+
+    nursery_drawer_begin();
+
+    lv_obj_t *drawer = nursery_drawer_obj();
+    lv_anim_delete(drawer, anim_nur_open_x_cb);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, drawer);
+    lv_anim_set_values(&a, s_nur_reveal, 0);
+    lv_anim_set_duration(&a, 240);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, anim_nur_open_x_cb);
+    lv_anim_set_completed_cb(&a, nursery_open_done);
+    lv_anim_start(&a);
+    page_anim_lock(240 + 60);
+    ESP_LOGI(TAG, "nursery open");
+}
+
+static void nursery_close(void)
+{
+    if (s_nursery == NULL || !s_nursery_open) {
+        return;
+    }
+    /* 关闭移动真实页面，保持播放进度/歌词与当前状态一致 */
+    home_snap_begin();
+    lv_anim_delete(s_nursery, anim_nur_close_x_cb);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_nursery);
+    lv_anim_set_values(&a, s_nur_reveal, -SCREEN_W);
+    lv_anim_set_duration(&a, 220);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_exec_cb(&a, anim_nur_close_x_cb);
+    lv_anim_set_completed_cb(&a, nursery_close_done);
+    lv_anim_start(&a);
+    page_anim_lock(220 + 60);
+    ESP_LOGI(TAG, "nursery close");
+}
+
+static void nursery_close_now(void)
+{
+    if (s_nursery == NULL) {
+        return;
+    }
+    bool was_open = s_nursery_open;
+    s_nur_dragging = false;
+    s_nur_drag_engaged = false;
+    s_nursery_open = false;
+    lv_anim_delete(s_nursery, anim_nur_open_x_cb);
+    lv_anim_delete(s_nursery, anim_nur_close_x_cb);
+    if (s_nur_snap_img != NULL) {
+        lv_anim_delete(s_nur_snap_img, anim_nur_open_x_cb);
+        lv_obj_add_flag(s_nur_snap_img, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_add_flag(s_nursery, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(s_nursery, -SCREEN_W);
+    s_nur_reveal = -SCREEN_W;
+    if (was_open) {
+        nursery_card_set(0, false);
+        /* 页面确实打开过才需要重拍；只是被别的页面顺手收起时保留原快照 */
+        s_nur_snap_valid = false;
+        s_nur_snap_ext = 0;
+        nursery_snap_refresh();
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 3S 英语儿歌页 手势（跟手抽屉）                                               */
+/* -------------------------------------------------------------------------- */
+
+/* 表盘右滑：跟手拉出儿歌页，超过 1/4 吸附打开。 */
+static void home_nursery_drag_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev == NULL) {
+        return;
+    }
+    if (s_screen_off || s_nursery_open || page_anim_busy() ||
+        s_center_open || pages_busy_except_center()) {
+        return;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    if (code == LV_EVENT_PRESSED) {
+        s_nur_dragging = true;
+        s_nur_drag_engaged = false;
+        s_nur_press_x = p.x;
+        s_nur_press_y = p.y;
+    } else if (code == LV_EVENT_PRESSING) {
+        if (!s_nur_dragging) {
+            return;
+        }
+        int dx = p.x - s_nur_press_x;
+        int dy = p.y - s_nur_press_y;
+        if (!s_nur_drag_engaged) {
+            /* 下拉已经接管（斜向下滑）时不抢手势 */
+            if (s_center_drag_engaged) {
+                return;
+            }
+            if (dx < NUR_DRAG_TH || LV_ABS(dx) <= LV_ABS(dy)) {
+                return;
+            }
+            s_nur_drag_engaged = true;
+            nursery_drawer_begin();
+        }
+        nursery_set_reveal(-SCREEN_W + dx);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        if (!s_nur_dragging) {
+            return;
+        }
+        s_nur_dragging = false;
+        if (!s_nur_drag_engaged) {
+            return;
+        }
+        s_nur_drag_engaged = false;
+
+        lv_obj_t *drawer = nursery_drawer_obj();
+        lv_anim_delete(drawer, anim_nur_open_x_cb);
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, drawer);
+        if (s_nur_reveal >= -SCREEN_W * 3 / 4) {
+            /* 拉过 1/4 就吸附打开，从当前位置继续滑到位 */
+            lv_anim_set_values(&a, s_nur_reveal, 0);
+            lv_anim_set_duration(&a, 220);
+            lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+            lv_anim_set_completed_cb(&a, nursery_open_done);
+        } else {
+            lv_anim_set_values(&a, s_nur_reveal, -SCREEN_W);
+            lv_anim_set_duration(&a, 180);
+            lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+            lv_anim_set_completed_cb(&a, nursery_open_abort_done);
+        }
+        lv_anim_set_exec_cb(&a, anim_nur_open_x_cb);
+        lv_anim_start(&a);
+        page_anim_lock(220 + 60);
+    }
+}
+
+/* 慢滑兜底：个别触摸序列只给 GESTURE 不给 PRESSING，
+ * 这里再补一次右滑打开；跟手拖动已经接管时绝不重复触发。 */
+static void home_nursery_gesture_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_GESTURE) {
+        return;
+    }
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev == NULL || lv_indev_get_gesture_dir(indev) != LV_DIR_RIGHT) {
+        return;
+    }
+    if (s_screen_off || s_nursery_open || s_nur_drag_engaged ||
+        s_center_drag_engaged || s_center_open || page_anim_busy() ||
+        pages_busy_except_center()) {
+        return;
+    }
+    nursery_open();
+}
+
+/* 儿歌页左滑：跟手退回表盘，超过 1/4 吸附退出。 */
+static void nursery_page_drag_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev == NULL || !s_nursery_open || s_screen_off || page_anim_busy()) {
+        return;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    if (code == LV_EVENT_PRESSED) {
+        s_nur_dragging = true;
+        s_nur_drag_engaged = false;
+        s_nur_press_x = p.x;
+        s_nur_press_y = p.y;
+    } else if (code == LV_EVENT_PRESSING) {
+        if (!s_nur_dragging) {
+            return;
+        }
+        int dx = p.x - s_nur_press_x;
+        int dy = p.y - s_nur_press_y;
+        if (!s_nur_drag_engaged) {
+            if (dx > -NUR_DRAG_TH || LV_ABS(dx) <= LV_ABS(dy)) {
+                return;
+            }
+            s_nur_drag_engaged = true;
+            home_snap_begin();
+        }
+        nursery_set_reveal_real(dx);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        if (!s_nur_dragging) {
+            return;
+        }
+        s_nur_dragging = false;
+        if (!s_nur_drag_engaged) {
+            return;
+        }
+        s_nur_drag_engaged = false;
+
+        lv_anim_delete(s_nursery, anim_nur_close_x_cb);
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, s_nursery);
+        if (s_nur_reveal <= -SCREEN_W / 4) {
+            lv_anim_set_values(&a, s_nur_reveal, -SCREEN_W);
+            lv_anim_set_duration(&a, 200);
+            lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+            lv_anim_set_completed_cb(&a, nursery_close_done);
+        } else {
+            lv_anim_set_values(&a, s_nur_reveal, 0);
+            lv_anim_set_duration(&a, 180);
+            lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+            lv_anim_set_completed_cb(&a, nursery_close_abort_done);
+        }
+        lv_anim_set_exec_cb(&a, anim_nur_close_x_cb);
+        lv_anim_start(&a);
+        page_anim_lock(200 + 60);
+    }
+}
+
+/* -------------------------------------------------------------------------- */
 /* 磁贴内容绘制                                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -1690,29 +2186,39 @@ static lv_obj_t *tile_create(lv_obj_t *parent, int cx, int cy, lv_color_t accent
     return root;
 }
 
-/* 睡眠磁贴图标：一弯月牙 + 两颗小星 */
-static void draw_moon(lv_obj_t *parent, int cx, int cy, lv_color_t color)
+static void draw_sleep_icon(lv_obj_t *parent, bool on)
 {
-    const int d = 46;
-    lv_obj_t *arc = lv_arc_create(parent);
-    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_pos(arc, cx - d / 2, cy - d / 2);
-    lv_obj_set_size(arc, d, d);
-    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
-    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(arc, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(arc, 0, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc, 11, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(arc, color, LV_PART_MAIN);
-    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
-    lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_INDICATOR);
-    lv_arc_set_rotation(arc, 0);
-    /* 缺口朝右上，形成月牙 */
-    lv_arc_set_bg_angles(arc, 30, 330);
-    lv_arc_set_angles(arc, 0, 0);
-
-    mk_circle(parent, cx + 15, cy - 16, 7, color, LV_OPA_COVER);
-    mk_circle(parent, cx + 21, cy + 4, 5, color, LV_OPA_COVER);
+    const int cx = TILE_D / 2, cy = TILE_D / 2;
+    if (on) {
+        mk_circle(parent, cx - 3, cy, 34, COL_TEXT, LV_OPA_COVER);
+        mk_circle(parent, cx + 7, cy - 8, 32, COL_SLEEP_ACTIVE, LV_OPA_COVER);
+        mk_box(parent, cx + 12, cy - 18, 9, 3, COL_TEXT, LV_OPA_COVER, 1);
+        mk_box(parent, cx + 15, cy - 21, 3, 9, COL_TEXT, LV_OPA_COVER, 1);
+        mk_circle(parent, cx + 18, cy + 1, 4, COL_TEXT, LV_OPA_COVER);
+        mk_circle(parent, cx + 24, cy + 24, 17, COL_TEXT, LV_OPA_COVER);
+        static const lv_point_precise_t check[] = {{42, 46}, {45, 49}, {51, 42}};
+        icon_line(parent, check, 3, cx, cy, COL_SLEEP_ACTIVE);
+    } else {
+        /* 原 14 点折线做 Catmull-Rom 平滑采样（1px 精度），轮廓尺寸不变，只把折角磨圆。 */
+        static const lv_point_precise_t moon[] = {
+            {25, 2}, {24, 2}, {23, 2}, {21, 2}, {19, 3}, {18, 3},
+            {16, 4}, {15, 5}, {13, 6}, {12, 7}, {10, 8}, {9, 10},
+            {8, 11}, {7, 12}, {6, 14}, {6, 16}, {5, 18}, {5, 19},
+            {5, 21}, {5, 23}, {6, 24}, {6, 26}, {7, 27}, {8, 29},
+            {9, 30}, {10, 31}, {11, 32}, {13, 34}, {14, 34}, {16, 35},
+            {17, 36}, {19, 37}, {20, 37}, {22, 37}, {24, 37}, {25, 37},
+            {27, 37}, {28, 37}, {30, 36}, {31, 35}, {33, 34}, {34, 33},
+            {35, 32}, {36, 31}, {37, 29}, {38, 28}, {39, 26}, {39, 25},
+            {39, 24}, {38, 24}, {37, 24}, {36, 25}, {34, 25}, {32, 26},
+            {31, 26}, {30, 26}, {28, 26}, {27, 25}, {25, 24}, {24, 24},
+            {23, 23}, {22, 22}, {21, 21}, {20, 20}, {19, 19}, {18, 17},
+            {18, 16}, {18, 15}, {18, 14}, {18, 12}, {18, 11}, {19, 10},
+            {19, 9}, {20, 8}, {21, 6}, {23, 5}, {24, 4}, {25, 3},
+        };
+        icon_line(parent, moon, 78, cx, cy, COL_PURPLE);
+        mk_circle(parent, cx + 24, cy + 24, 15, COL_LINE, LV_OPA_COVER);
+        mk_box(parent, cx + 20, cy + 23, 8, 2, COL_MUTED, LV_OPA_COVER, 1);
+    }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1755,7 +2261,7 @@ static void center_volume_cb(lv_event_t *e)
     slider_open(SLIDER_VOLUME);
 }
 
-/* 控制中心手电：整屏纯白 + 最大亮度 */
+/* 控制中心手电：整屏纯白，睡眠模式仍锁定 10% */
 static void center_torch_cb(lv_event_t *e)
 {
     if (tap_ignore(e)) {
@@ -1784,8 +2290,24 @@ static void sleep_mode_apply(bool on)
     /* 磁贴用边框亮度表示当前状态 */
     if (s_cc_sleep != NULL) {
         lv_obj_set_style_border_opa(s_cc_sleep, on ? LV_OPA_COVER : LV_OPA_30, 0);
-        lv_obj_set_style_bg_color(s_cc_sleep, on ? COL_SURF_HI : COL_SURF, 0);
+        lv_obj_set_style_bg_color(s_cc_sleep, on ? COL_SLEEP_ACTIVE : COL_SURF, 0);
     }
+    if (s_cc_sleep_off != NULL) {
+        if (on) {
+            lv_obj_add_flag(s_cc_sleep_off, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(s_cc_sleep_off, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_cc_sleep_on != NULL) {
+        if (on) {
+            lv_obj_remove_flag(s_cc_sleep_on, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_cc_sleep_on, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    /* 睡眠表盘只压暗背光，不改用户亮度设定 */
+    brightness_apply();
     /* 磁贴外观变了：立刻重建抽屉快照，避免下次拖动看到旧状态 */
     if (s_center_snap_valid) {
         center_snap_invalidate();
@@ -2041,6 +2563,7 @@ static void wifi_open(void)
      * 应用桌面作为父级保留，返回时还能回到它。 */
     center_close_now();
     pet_close_now();
+    nursery_close_now();
     s_wifi_open = true;
     s_wifi_ap_count = 0;
     s_wifi_scan_seen = false;
@@ -2582,12 +3105,12 @@ static void build_center(void)
     const int row_top = 158;
     const int row_bottom = 290;
 
-    /* 状态：青绿圆底 + 白色信息符号 */
+    /* 状态：青绿圆环 + 白色信息符号 */
     lv_obj_t *t_status = tile_create(s_center, cols3[0], row_top, COL_TEAL);
     lv_obj_add_event_cb(t_status, center_status_cb, LV_EVENT_CLICKED, NULL);
     draw_status_icon(t_status, TILE_D / 2, TILE_D / 2);
 
-    /* 电量：白描边电池 + 绿色电量 + 黄色闪电 */
+    /* 电量：绿色电池轮廓 + 白色闪电 */
     lv_obj_t *t_bat = tile_create(s_center, cols3[1], row_top, COL_GREEN);
     lv_obj_add_event_cb(t_bat, center_battery_cb, LV_EVENT_CLICKED, NULL);
     draw_battery_icon(t_bat, TILE_D / 2, TILE_D / 2);
@@ -2595,23 +3118,26 @@ static void build_center(void)
     /* 手电：整屏纯白 + 最大亮度，双击白屏退出 */
     lv_obj_t *t_torch = tile_create(s_center, cols3[2], row_top, COL_RING_YELLOW);
     lv_obj_add_event_cb(t_torch, center_torch_cb, LV_EVENT_CLICKED, NULL);
-    draw_torch(t_torch, TILE_D / 2, TILE_D / 2 + 6, COL_RING_YELLOW);
+    draw_torch(t_torch, TILE_D / 2, TILE_D / 2, COL_RING_YELLOW);
 
     /* 亮度：点开独立调节页，上下拖动 */
     lv_obj_t *t_bright = tile_create(s_center, cols3[0], row_bottom, COL_AMBER);
     lv_obj_add_event_cb(t_bright, center_bright_cb, LV_EVENT_CLICKED, NULL);
-    draw_sun_duo(t_bright, TILE_D / 2, TILE_D / 2, 5,
-                 COL_AMBER, lv_color_hex(0xFFFF00));
+    draw_brightness_icon(t_bright, TILE_D / 2, TILE_D / 2);
 
-    /* 音量：当前语音模式静音，只显示实际状态。 */
+    /* 音量：统一声波图标，调节儿歌播放音量。 */
     lv_obj_t *t_vol = tile_create(s_center, cols3[1], row_bottom, COL_PINK);
     lv_obj_add_event_cb(t_vol, center_volume_cb, LV_EVENT_CLICKED, NULL);
-    draw_speaker(t_vol, 26, 31, COL_TEXT);
+    draw_speaker(t_vol, TILE_D / 2, TILE_D / 2, COL_CORAL);
 
     /* 睡眠：点一下进入只显示时间黑白表盘，再点恢复 */
     s_cc_sleep = tile_create(s_center, cols3[2], row_bottom, COL_PURPLE);
     lv_obj_add_event_cb(s_cc_sleep, center_sleep_cb, LV_EVENT_CLICKED, NULL);
-    draw_moon(s_cc_sleep, TILE_D / 2, TILE_D / 2, COL_PURPLE);
+    s_cc_sleep_off = mk_box(s_cc_sleep, 0, 0, TILE_D, TILE_D, COL_BG, LV_OPA_TRANSP, 0);
+    draw_sleep_icon(s_cc_sleep_off, false);
+    s_cc_sleep_on = mk_box(s_cc_sleep, 0, 0, TILE_D, TILE_D, COL_BG, LV_OPA_TRANSP, 0);
+    draw_sleep_icon(s_cc_sleep_on, true);
+    lv_obj_add_flag(s_cc_sleep_on, LV_OBJ_FLAG_HIDDEN);
 
     /* 装饰子对象不参与命中，点击和拖动统一由磁贴接收。 */
     for (uint32_t i = 0; i < lv_obj_get_child_count(s_center); i++) {
@@ -2706,7 +3232,7 @@ static void build_status(void)
         "显示", "触摸", "电池", "音频", "网络", "IP", "芯片", "闪存", "内存",
     };
     static const char *values[] = {
-        "466 x 466", "CST9217", "--", "静音", "未连接", "--",
+        "466 x 466", "CST9217", "--", "16k 单声道", "未连接", "--",
         "ESP32-S3", "", "",
     };
     const lv_color_t dots[] = {
@@ -2827,73 +3353,109 @@ static void build_torch(void)
 }
 
 /* -------------------------------------------------------------------------- */
-/* 应用桌面（华为手表风格 2 列 × 3 行网格）                                      */
+/* 应用桌面（二维气泡画布）                                      */
 /* -------------------------------------------------------------------------- */
 
-/* 顺序即网格顺序：首行（Mimi / 状态）— 末行（网络，居中）
+/* 只保留应用入口，亮度 / 音量 / 手电 / 睡眠仍只属于控制中心。
  * 控制中心只从表盘下拉进入；音量 / 亮度 / 手电不放进应用桌面 */
 enum {
     APP_PET = 0,
+    APP_NURSERY,
     APP_STATUS,
     APP_WIFI,
+    APP_SETTINGS,
+    APP_TIMER,
 };
 
-/* 图标 i 所在行相对中心的偏移（单位：行），不做环形回绕：桌面有边界，像一张布上下滚 */
-static float app_row_delta(int i)
+/* 九宫格坐标；只放真实应用，中心为 Mimi，右下为空位。 */
+static lv_point_t app_icon_center(int i)
 {
-    return (float)(i / APP_COLS) - s_app_scroll;
+    static const lv_point_t positions[APP_COUNT] = {
+        {0, 0}, {-APP_GRID_STEP, 0}, {APP_GRID_STEP, 0},
+        {-APP_GRID_STEP, -APP_GRID_STEP}, {APP_GRID_STEP, -APP_GRID_STEP}, {0, APP_GRID_STEP},
+    };
+    return (lv_point_t){CENTER_X + positions[i].x + s_app_pan.x,
+                        CENTER_Y + positions[i].y + s_app_pan.y};
 }
 
-/* 离中心行越远越小：中心 1.0，相邻一行约 0.68，最外 0.46 */
-static int app_row_scale(float delta)
+static int app_icon_size(lv_point_t center)
 {
-    float s = 1.0f - APP_GRID_SCALE_DROP * fabsf(delta);
-    if (s < APP_GRID_MIN_SCALE) {
-        s = APP_GRID_MIN_SCALE;
-    }
-    return (int)(s * 256.0f);
+    float dx = center.x - CENTER_X, dy = center.y - CENTER_Y;
+    int size = (int)lroundf(APP_ICON_D - sqrtf(dx * dx + dy * dy) / 5.0f);
+    return size < APP_ICON_MIN_D ? APP_ICON_MIN_D : size;
 }
 
-/* 网格列圆心：偶数列也精确居中（2 列 → 158 / 308）；
- * 末行不足一整行时（如只剩天气）单独居中，不偏到左边 */
-static int app_col_x(int i)
+static uint16_t app_mix_rgb565(uint16_t a, uint16_t b, unsigned weight)
 {
-    int row = i / APP_COLS;
-    int in_row = APP_COUNT - row * APP_COLS;
-    if (in_row > APP_COLS) {
-        in_row = APP_COLS;
-    }
-    if (in_row == 1) {
-        return CENTER_X;
-    }
-    float half = ((float)APP_COLS - 1.0f) * 0.5f;
-    return CENTER_X + (int)lroundf(((float)(i % APP_COLS) - half) * (float)APP_GRID_DX);
+    unsigned inverse = 256 - weight;
+    unsigned r = (((a >> 11) * inverse + (b >> 11) * weight) >> 8) << 11;
+    unsigned g = (((((a >> 5) & 63) * inverse + ((b >> 5) & 63) * weight) >> 8)) << 5;
+    unsigned blue = ((a & 31) * inverse + (b & 31) * weight) >> 8;
+    return (uint16_t)(r | g | blue);
 }
 
-/* 整页按滚动位置重排：网格整体上下滚，位置、缩放、透明度一起变 */
+/* 目标缓冲启动时已分配；只在整数尺寸变化时重采样，绘制始终为 1:1。 */
+static void app_resize_rgb565(const lv_draw_buf_t *src, lv_draw_buf_t *dst, int size)
+{
+    uint16_t sample[APP_ICON_D], fraction[APP_ICON_D];
+    int width = src->header.w;
+    for (int x = 0; x < size; x++) {
+        unsigned position = x * (width - 1) * 256u / (size - 1);
+        sample[x] = position >> 8;
+        fraction[x] = position & 255;
+    }
+    for (int y = 0; y < size; y++) {
+        uint16_t *out = (uint16_t *)(dst->data + y * dst->header.stride);
+        if (size == width) {
+            memcpy(out, src->data + y * src->header.stride, size * 2);
+            continue;
+        }
+        int row = sample[y], next = row + (row + 1 < width);
+        const uint16_t *top = (const uint16_t *)(src->data + row * src->header.stride);
+        const uint16_t *bottom = (const uint16_t *)(src->data + next * src->header.stride);
+        for (int x = 0; x < size; x++) {
+            int col = sample[x], right = col + (col + 1 < width);
+            uint16_t a = app_mix_rgb565(top[col], top[right], fraction[x]);
+            uint16_t b = app_mix_rgb565(bottom[col], bottom[right], fraction[x]);
+            out[x] = app_mix_rgb565(a, b, fraction[y]);
+        }
+    }
+}
+
+static void app_art_resize(int i, int size)
+{
+    if (!s_app_scaled[i] || s_app_pixel_size[i] == size) return;
+    if (!lv_draw_buf_reshape(s_app_scaled[i], LV_COLOR_FORMAT_RGB565, size, size, LV_STRIDE_AUTO)) return;
+    app_resize_rgb565(s_app_art[i], s_app_scaled[i], size);
+    lv_image_cache_drop(s_app_scaled[i]);
+    lv_image_set_src(s_app_icons[i], s_app_scaled[i]);
+    s_app_pixel_size[i] = size;
+}
+
 static void apps_layout_icons(void)
 {
     for (int i = 0; i < APP_COUNT; i++) {
         lv_obj_t *icon = s_app_icons[i];
-        if (icon == NULL) {
-            continue;
+        if (icon == NULL) continue;
+        lv_point_t center = app_icon_center(i);
+        int size = app_icon_size(center);
+        if (s_app_art[i]) {
+            app_art_resize(i, size);
+            lv_obj_set_size(icon, size, size);
+            lv_obj_set_pos(icon, center.x - size / 2, center.y - size / 2);
+        } else {
+            /* 内存不足时保留可用的矢量图标。 */
+            int scale = size * 256 / APP_ICON_D;
+            lv_obj_set_style_transform_scale_x(icon, scale, 0);
+            lv_obj_set_style_transform_scale_y(icon, scale, 0);
+            lv_obj_set_pos(icon, center.x - APP_ICON_D / 2, center.y - APP_ICON_D / 2);
         }
-        float d = app_row_delta(i);
-        float ad = fabsf(d);
-        int cx = app_col_x(i);
-        int cy = (int)(APP_GRID_CY + d * APP_GRID_DY);
-        lv_obj_set_pos(icon, cx - APP_ROOT_W / 2, cy - APP_ROOT_H / 2);
-
-        int scale = app_row_scale(d);
-        lv_obj_set_style_transform_scale_x(icon, scale, 0);
-        lv_obj_set_style_transform_scale_y(icon, scale, 0);
-
-        int opa = 255 - (int)(95.0f * ad);
-        if (opa < 70) {
-            opa = 70;
+        if (s_app_labels[i] != NULL) {
+            lv_obj_set_pos(s_app_labels[i], center.x - APP_LABEL_W / 2,
+                            center.y + size / 2 + 3);
         }
-        lv_obj_set_style_opa(icon, (lv_opa_t)opa, 0);
     }
+
 }
 
 static void app_open_index(int idx)
@@ -2906,167 +3468,213 @@ static void app_open_index(int idx)
     case APP_PET:
         ui_pet_set_state(UI_PET_HAPPY, NULL);
         break;
+    case APP_NURSERY:
+        nursery_open();
+        break;
     case APP_STATUS:
         status_open();
         break;
     case APP_WIFI:
         wifi_open();
         break;
+    case APP_SETTINGS:
+        tools_open(0);
+        break;
+    case APP_TIMER:
+        tools_open(1);
+        break;
     default:
         break;
     }
 }
 
-/* 松手吸附到最近的一行；动画只改滚动值，位置/缩放统一由 apps_layout_icons 计算 */
-static void app_scroll_anim_cb(void *var, int32_t value)
+/* 画布超出边界时保留少量阻尼位移，松手平滑回到边界。 */
+static int app_pan_bound(int value, bool elastic)
+{
+    int sign = value < 0 ? -1 : 1;
+    int distance = abs(value);
+    if (distance <= APP_PAN_LIMIT) return value;
+    int extra = elastic ? (distance - APP_PAN_LIMIT) / 3 : 0;
+    if (extra > APP_PAN_OVERSHOOT) extra = APP_PAN_OVERSHOOT;
+    return sign * (APP_PAN_LIMIT + extra);
+}
+
+static void app_pan_anim_cb(void *var, int32_t value)
 {
     LV_UNUSED(var);
-    s_app_scroll = (float)value / 256.0f;
+    s_app_pan.x = s_app_settle_from.x +
+        (s_app_settle_to.x - s_app_settle_from.x) * value / 256;
+    s_app_pan.y = s_app_settle_from.y +
+        (s_app_settle_to.y - s_app_settle_from.y) * value / 256;
     apps_layout_icons();
 }
 
-static void app_scroll_clamp(void)
+static void apps_settle_bounds(void)
 {
-    if (s_app_scroll < 0.0f) {
-        s_app_scroll = 0.0f;
-    }
-    if (s_app_scroll > (float)(APP_ROWS - 1)) {
-        s_app_scroll = (float)(APP_ROWS - 1);
-    }
-}
-
-static void apps_snap(void)
-{
-    int32_t from;
-    int32_t to;
-
-    app_scroll_clamp();
-    from = (int32_t)lroundf(s_app_scroll * 256.0f);
-    s_app_scroll = lroundf(s_app_scroll);
-    app_scroll_clamp();
-    to = (int32_t)lroundf(s_app_scroll) * 256;
-
-    lv_anim_delete(s_apps, app_scroll_anim_cb);
-    if (from == to) {
-        apps_layout_icons();
-        return;
-    }
-
+    s_app_settle_from = s_app_pan;
+    s_app_settle_to = (lv_point_t){app_pan_bound(s_app_pan.x, false),
+                                  app_pan_bound(s_app_pan.y, false)};
+    lv_anim_delete(s_apps, app_pan_anim_cb);
+    if (s_app_settle_from.x == s_app_settle_to.x &&
+        s_app_settle_from.y == s_app_settle_to.y) return;
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_apps);
-    lv_anim_set_values(&a, from, to);
-    lv_anim_set_duration(&a, 260);
+    lv_anim_set_values(&a, 0, 256);
+    lv_anim_set_duration(&a, 180);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a, app_scroll_anim_cb);
+    lv_anim_set_exec_cb(&a, app_pan_anim_cb);
     lv_anim_start(&a);
 }
 
-/* 点按：按当前滚动位置做圆形命中检测，点到哪个图标就打开哪个 */
 static void apps_open_at(lv_point_t p)
 {
     int best = -1;
-    float best_d = 1e9f;
+    float best_distance = 1e9f;
     for (int i = 0; i < APP_COUNT; i++) {
-        float d = app_row_delta(i);
-        if (fabsf(d) > 1.2f) {
-            continue;
-        }
-        float scale = (float)app_row_scale(d) / 256.0f;
-        float cx = (float)app_col_x(i);
-        float cy = (float)APP_GRID_CY + d * (float)APP_GRID_DY;
-        float dx = (float)p.x - cx;
-        float dy = (float)p.y - cy;
-        float r = APP_ICON_D * 0.5f * scale + 14.0f;
-        float dist = sqrtf(dx * dx + dy * dy);
-        if (dist <= r && dist < best_d) {
-            best_d = dist;
+        lv_point_t center = app_icon_center(i);
+        float scale = (float)app_icon_size(center) / APP_ICON_D;
+        float dx = (float)p.x - center.x;
+        float dy = (float)p.y - center.y;
+        float radius = APP_ICON_D * 0.5f * scale + 10.0f;
+        float distance = dx * dx + dy * dy;
+        bool on_label = fabsf(dx) <= APP_LABEL_W / 2 &&
+                        dy >= radius - 8.0f && dy <= radius + 16.0f;
+        if ((distance <= radius * radius || on_label) && distance < best_distance) {
+            best_distance = distance;
             best = i;
         }
     }
-    if (best >= 0) {
-        app_open_index(best);
-    }
+    if (best >= 0) app_open_index(best);
 }
 
-/* 整页拖动：上下拖动整张网格像布一样滚动，松手吸附；不支持滑动退出 */
+/* 不锁定方向；拖动结束或失去触点均不打开应用。 */
 static void apps_touch_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
     lv_indev_t *indev = lv_event_get_indev(e);
-    if (indev == NULL) {
-        return;
-    }
+    if (indev == NULL) return;
     lv_point_t p;
     lv_indev_get_point(indev, &p);
-
     if (code == LV_EVENT_PRESSED) {
-        lv_anim_delete(s_apps, app_scroll_anim_cb);
+        if (page_anim_busy()) return;
+        lv_anim_delete(s_apps, app_pan_anim_cb);
         s_app_drag_active = true;
         s_app_drag_moved = false;
         s_app_press = p;
-        s_app_scroll_start = s_app_scroll;
+        s_app_pan_start = s_app_pan;
     } else if (code == LV_EVENT_PRESSING) {
-        if (!s_app_drag_active) {
-            return;
-        }
+        if (!s_app_drag_active) return;
+        int dx = p.x - s_app_press.x;
         int dy = p.y - s_app_press.y;
-        if (abs(dy) > APP_GRID_DRAG_TH) {
+        if (dx * dx + dy * dy > APP_GRID_DRAG_TH * APP_GRID_DRAG_TH)
             s_app_drag_moved = true;
-        }
         if (s_app_drag_moved) {
-            s_app_scroll = s_app_scroll_start - (float)dy / (float)APP_GRID_DY;
-            app_scroll_clamp();
+            s_app_pan.x = app_pan_bound(s_app_pan_start.x + dx, true);
+            s_app_pan.y = app_pan_bound(s_app_pan_start.y + dy, true);
             apps_layout_icons();
         }
-    } else if (code == LV_EVENT_RELEASED) {
-        if (!s_app_drag_active) {
-            return;
-        }
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        if (!s_app_drag_active) return;
         s_app_drag_active = false;
-        if (s_app_drag_moved) {
-            apps_snap();
+        int dx = p.x - s_app_press.x;
+        int dy = p.y - s_app_press.y;
+        if (dx * dx + dy * dy > APP_GRID_DRAG_TH * APP_GRID_DRAG_TH)
+            s_app_drag_moved = true;
+        if (s_app_drag_moved || code == LV_EVENT_PRESS_LOST) {
+            apps_settle_bounds();
         } else {
             apps_open_at(p);
         }
-    } else if (code == LV_EVENT_PRESS_LOST) {
-        if (!s_app_drag_active) {
-            return;
-        }
-        s_app_drag_active = false;
-        if (s_app_drag_moved) {
-            apps_snap();
-        }
     }
 }
 
-/* 图标内所有子对象都不接收点击，触摸统一交给 s_apps 做整页滚动 / 点按判定 */
-static void app_icon_clear_clickable(lv_obj_t *o)
+/* 图标只栅格化一次；拖动缩放单张 RGB565 位图，不变换控件树。 */
+static void app_draw_glyph(lv_obj_t *root, int kind, lv_color_t color)
 {
-    lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
-    uint32_t n = lv_obj_get_child_count(o);
-    for (uint32_t i = 0; i < n; i++) {
-        app_icon_clear_clickable(lv_obj_get_child(o, i));
+    const int c = APP_ICON_D / 2;
+    if (kind == APP_PET) {
+        static const lv_point_precise_t ears[] = {{4, 20}, {5, 3}, {19, 13}, {29, 13}, {40, 3}, {41, 20}};
+        icon_line(root, ears, 6, c, c, COL_TEXT);
+        mk_circle(root, c, c + 4, 42, COL_TEXT, LV_OPA_COVER);
+        mk_circle(root, c - 9, c + 2, 5, color, LV_OPA_COVER);
+        mk_circle(root, c + 9, c + 2, 5, color, LV_OPA_COVER);
+        mk_box(root, c - 4, c + 10, 8, 4, color, LV_OPA_COVER, 2);
+    } else if (kind == APP_NURSERY) draw_note_icon(root, c, c + 2, COL_TEXT);
+    else if (kind == APP_STATUS) {
+        icon_ring(root, c, c, 52, COL_TEXT);
+        static const lv_point_precise_t pulse[] = {{3,22},{12,22},{17,12},{25,32},{30,22},{41,22}};
+        icon_line(root, pulse, 6, c, c, COL_TEXT);
+    } else if (kind == APP_WIFI) draw_net_icon(root, c, c - 5, COL_TEXT);
+    else if (kind == APP_SETTINGS) {
+        icon_ring(root, c, c, 34, COL_TEXT);
+        icon_ring(root, c, c, 10, COL_TEXT);
+        for (int j = 0; j < 8; j++) {
+            float rad = j * (float)M_PI / 4;
+            int x = c + (int)lroundf(23 * sinf(rad));
+            int y = c - (int)lroundf(23 * cosf(rad));
+            lv_obj_t *tooth = mk_box(root, x - 3, y - 6, 6, 12, COL_TEXT, LV_OPA_COVER, 2);
+            lv_obj_set_style_transform_rotation(tooth, j * 450, 0);
+        }
+    } else {
+        icon_ring(root, c, c + 3, 42, COL_TEXT);
+        mk_box(root, c - 8, c - 28, 16, 5, COL_TEXT, LV_OPA_COVER, 2);
+        mk_box(root, c - 2, c - 23, 4, 6, COL_TEXT, LV_OPA_COVER, 1);
+        static const lv_point_precise_t hand[] = {{22, 11}, {22, 25}, {31, 25}};
+        icon_line(root, hand, 3, c, c, COL_TEXT);
     }
 }
 
-static lv_obj_t *app_icon_create(lv_obj_t *parent, lv_color_t accent)
+static void *app_art_alloc(size_t size, lv_color_format_t cf)
 {
-    lv_obj_t *root = mk_box(parent, 0, 0, APP_ROOT_W, APP_ROOT_H,
-                            COL_BG, LV_OPA_TRANSP, 0);
-    /* 以圆盘中心为缩放基准，避免图标放大时整体偏移 */
-    lv_obj_set_style_transform_pivot_x(root, APP_ROOT_W / 2, 0);
+    LV_UNUSED(cf);
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
+static lv_draw_buf_t *app_art_snapshot(lv_obj_t *root)
+{
+    static lv_draw_buf_handlers_t handlers;
+    static bool initialized;
+    if (!initialized) {
+        lv_draw_buf_init_with_default_handlers(&handlers);
+        handlers.buf_malloc_cb = app_art_alloc;
+        handlers.buf_free_cb = heap_caps_free;
+        initialized = true;
+    }
+    lv_obj_update_layout(root);
+    lv_draw_buf_t *buffer = lv_draw_buf_create_ex(&handlers, lv_obj_get_width(root),
+        lv_obj_get_height(root), LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO);
+    if (!buffer) return NULL;
+    if (lv_snapshot_take_to_draw_buf(root, LV_COLOR_FORMAT_RGB565, buffer) != LV_RESULT_OK) {
+        lv_draw_buf_destroy(buffer);
+        return NULL;
+    }
+    return buffer;
+}
+
+static lv_obj_t *app_icon_create(lv_obj_t *parent, int kind)
+{
+    static const uint32_t colors[APP_COUNT] = {0xC5487B, 0x009D87, 0x287DC9, 0x4958C8, 0x68778D, 0xDF7935};
+    lv_obj_t *root = mk_box(parent, 0, 0, APP_ICON_D, APP_ICON_D,
+                            lv_color_hex(0x0A1018), LV_OPA_COVER, 0);
+    lv_obj_set_style_transform_pivot_x(root, APP_ICON_D / 2, 0);
     lv_obj_set_style_transform_pivot_y(root, APP_ICON_D / 2, 0);
-
-    lv_obj_t *disc = mk_circle(root, APP_ROOT_W / 2, APP_ICON_D / 2, APP_ICON_D,
-                               COL_SURF_HI, LV_OPA_COVER);
-    lv_obj_set_style_border_width(disc, 1, 0);
-    lv_obj_set_style_border_color(disc, accent, 0);
-    lv_obj_set_style_border_opa(disc, LV_OPA_80, 0);
-    /* 去掉外阴影：网格整页滚动时每帧重绘阴影会明显掉帧 */
-
-    app_icon_clear_clickable(root);
-    return root;
+    lv_color_t color = lv_color_hex(colors[kind]);
+    lv_obj_t *disc = mk_circle(root, APP_ICON_D / 2, APP_ICON_D / 2, APP_ICON_D - 4, color, LV_OPA_COVER);
+    lv_obj_set_style_border_width(disc, 2, 0);
+    lv_obj_set_style_border_color(disc, COL_TEXT, 0);
+    lv_obj_set_style_border_opa(disc, LV_OPA_20, 0);
+    app_draw_glyph(root, kind, color);
+    clear_clickable_tree(root);
+    s_app_art[kind] = app_art_snapshot(root);
+    if (!s_app_art[kind]) return root;
+    s_app_scaled[kind] = app_art_snapshot(root);
+    s_app_pixel_size[kind] = APP_ICON_D;
+    lv_obj_delete(root);
+    lv_obj_t *image = lv_image_create(parent);
+    lv_image_set_src(image, s_app_scaled[kind] ? s_app_scaled[kind] : s_app_art[kind]);
+    lv_image_set_inner_align(image, LV_IMAGE_ALIGN_STRETCH);
+    return image;
 }
 
 static void build_apps(void)
@@ -3080,34 +3688,196 @@ static void build_apps(void)
     lv_obj_set_style_bg_color(s_apps, lv_color_hex(0x0A1018), 0);
     lv_obj_set_style_bg_opa(s_apps, LV_OPA_COVER, 0);
     lv_obj_add_flag(s_apps, LV_OBJ_FLAG_CLICKABLE);
-    /* 整页手势：按住任意位置上下拖动即可像布一样滚动，松手吸附；不支持滑动退出 */
+    lv_obj_add_flag(s_apps, LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_remove_flag(s_apps, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    /* 桌面内各方向均用于平移，通过实体按键退出。 */
     lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_PRESS_LOST, NULL);
 
-    /* 首行：Mimi 宠物 / 状态 */
-    s_app_icons[APP_PET] = app_icon_create(s_apps, COL_PINK);
-    lv_obj_t *disc = lv_obj_get_child(s_app_icons[APP_PET], 0);
-    lv_obj_t *img = lv_image_create(disc);
-    lv_image_set_src(img, &pip_face_happy);
-    lv_image_set_scale(img, 84);
-    lv_obj_remove_flag(img, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
-
-    s_app_icons[APP_STATUS] = app_icon_create(s_apps, COL_BLUE);
-    disc = lv_obj_get_child(s_app_icons[APP_STATUS], 0);
-    draw_info(disc, 48, 42, COL_BLUE);
-
-    /* 末行：网络（单图标居中） */
-    s_app_icons[APP_WIFI] = app_icon_create(s_apps, COL_BLUE);
-    disc = lv_obj_get_child(s_app_icons[APP_WIFI], 0);
-    draw_net_icon(disc, 48, 44, COL_BLUE);
-
+    for (int i = 0; i < APP_COUNT; i++) {
+        s_app_icons[i] = app_icon_create(s_apps, i);
+        s_app_labels[i] = mk_label(s_apps, s_app_names[i], &epw_cjk_16, COL_MUTED,
+                                   0, 0, APP_LABEL_W, LV_TEXT_ALIGN_CENTER);
+        lv_label_set_long_mode(s_app_labels[i], LV_LABEL_LONG_DOT);
+        lv_obj_set_height(s_app_labels[i], 22);
+    }
+    size_t bytes = 0;
+    int cached = 0;
+    for (int i = 0; i < APP_COUNT; i++) {
+        if (s_app_art[i]) {bytes += s_app_art[i]->data_size; cached++;}
+        if (s_app_scaled[i]) bytes += s_app_scaled[i]->data_size;
+    }
+    ESP_LOGI(TAG, "app icon cache: %d masters, %lu bytes", cached, (unsigned long)bytes);
     clear_clickable_tree(s_apps);
     lv_obj_add_flag(s_apps, LV_OBJ_FLAG_HIDDEN);
-    s_app_scroll = (float)APP_GRID_HOME_ROW;
+    s_app_pan = (lv_point_t){0, 0};
     apps_layout_icons();
+}
+
+/* 系统设置和计时器复用同一覆盖页，返回后保留应用画布位置。 */
+static void tools_refresh(void)
+{
+    static uint32_t previous_timeout = UINT32_MAX;
+    uint32_t timeout = watch_idle_timeout_ms();
+    if (timeout != previous_timeout) {
+        for (int i = 0; i < 6; i++) {
+            lv_obj_set_style_bg_color(s_idle_options[i], timeout == s_idle_choices[i] ? COL_TEAL : COL_SURF_HI, 0);
+        }
+        previous_timeout = timeout;
+    }
+    watch_timer_state_t state = watch_timer_state();
+    uint32_t seconds = watch_timer_remaining();
+    static uint32_t previous_seconds = UINT32_MAX;
+    static int previous_state = -1;
+    if (seconds != previous_seconds || (int)state != previous_state) {
+        lv_label_set_text_fmt(s_timer_value, "%02lu:%02lu", (unsigned long)(seconds / 60),
+                              (unsigned long)(seconds % 60));
+        lv_label_set_text(s_timer_hint, state == WATCH_TIMER_FINISHED ? "时间到" :
+                         state == WATCH_TIMER_RUNNING ? "计时中" :
+                         state == WATCH_TIMER_PAUSED ? "已暂停" : "选择时长");
+        lv_label_set_text(s_timer_action, state == WATCH_TIMER_RUNNING ? "暂停" :
+                         state == WATCH_TIMER_PAUSED ? "继续" :
+                         state == WATCH_TIMER_FINISHED ? "再来一次" : "开始");
+        lv_label_set_text(s_timer_reset_label, state == WATCH_TIMER_FINISHED ? "知道了" : "重置");
+        lv_obj_set_style_text_color(s_timer_hint, state == WATCH_TIMER_FINISHED ? COL_AMBER : COL_MUTED, 0);
+        for (int i = 0; i < 6; i++) {
+            if (state == WATCH_TIMER_RUNNING || state == WATCH_TIMER_PAUSED)
+                lv_obj_add_state(s_timer_presets[i], LV_STATE_DISABLED);
+            else lv_obj_remove_state(s_timer_presets[i], LV_STATE_DISABLED);
+        }
+        previous_seconds = seconds;
+        previous_state = state;
+    }
+}
+
+static void tools_close(void)
+{
+    if (!s_tools_open) return;
+    if (watch_timer_state() == WATCH_TIMER_FINISHED) watch_timer_reset();
+    s_tools_open = false;
+    lv_obj_add_flag(s_tools, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void tools_open(int kind)
+{
+    center_close_now();
+    status_close_now();
+    wifi_close_now();
+    slider_close_now();
+    torch_close_now();
+    pet_close_now();
+    nursery_close_now();
+    s_tools_kind = kind;
+    s_tools_open = true;
+    lv_obj_add_flag(kind ? s_settings_page : s_timer_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(kind ? s_timer_page : s_settings_page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_tools, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_tools);
+    tools_refresh();
+}
+
+static void tools_back_cb(lv_event_t *e)
+{
+    if (!tap_ignore(e)) tools_close();
+}
+
+static void idle_choice_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) return;
+    unsigned i = (uintptr_t)lv_event_get_user_data(e);
+    if (i >= 6) return;
+    esp_err_t err = watch_set_idle_timeout_ms(s_idle_choices[i]);
+    toast_show(err == ESP_OK ? "已保存" : "保存失败");
+    ui_activity();
+    tools_refresh();
+}
+
+static void timer_choice_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) return;
+    unsigned i = (uintptr_t)lv_event_get_user_data(e);
+    if (i < 6 && watch_timer_select(s_timer_choices[i])) tools_refresh();
+}
+
+static void timer_action_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) return;
+    if (watch_timer_state() == WATCH_TIMER_RUNNING) watch_timer_pause();
+    else watch_timer_start();
+    tools_refresh();
+}
+
+static void timer_reset_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) return;
+    bool finished = watch_timer_state() == WATCH_TIMER_FINISHED;
+    watch_timer_reset();
+    if (finished) tools_close();
+    tools_refresh();
+}
+
+static void tools_tick_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    if (watch_system_tick()) {
+        ui_activity();
+        lv_indev_t *input = bsp_display_get_input_dev();
+        if (input) lv_indev_wait_release(input);
+        s_app_drag_active = false;
+        tools_open(1);
+    }
+    if (s_tools_open && s_tools_kind == 1) tools_refresh();
+}
+
+static lv_obj_t *tools_button(lv_obj_t *parent, int x, int y, int width,
+                              const char *text, lv_event_cb_t cb, uintptr_t data)
+{
+    lv_obj_t *button = mk_box(parent, x, y, width, 46, COL_SURF_HI, LV_OPA_COVER, 18);
+    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *label = mk_label(button, text, &epw_cjk_20, COL_TEXT, 0, 11, width, LV_TEXT_ALIGN_CENTER);
+    lv_obj_remove_flag(label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, (void *)data);
+    lv_obj_set_style_opa(button, LV_OPA_40, LV_STATE_DISABLED);
+    return label;
+}
+
+static void build_tools(void)
+{
+    s_tools = mk_box(s_screen, 0, 0, SCREEN_W, SCREEN_H, COL_BG, LV_OPA_COVER, 0);
+    lv_obj_add_flag(s_tools, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_tools, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    s_settings_page = mk_box(s_tools, 0, 0, SCREEN_W, SCREEN_H, COL_BG, LV_OPA_COVER, 0);
+    s_timer_page = mk_box(s_tools, 0, 0, SCREEN_W, SCREEN_H, COL_BG, LV_OPA_COVER, 0);
+    mk_label(s_settings_page, "系统设置", &epw_cjk_20, COL_TEXT, 0, 52, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    mk_label(s_settings_page, "熄屏时间", &epw_cjk_20, COL_MUTED, 0, 110, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    const char *idle_labels[] = {"15 秒", "30 秒", "1 分钟", "2 分钟", "5 分钟", "常亮"};
+    for (int i = 0; i < 6; i++) {
+        lv_obj_t *label = tools_button(s_settings_page, 121 + (i % 2) * 116, 153 + (i / 2) * 60,
+                                       108, idle_labels[i], idle_choice_cb, i);
+        s_idle_options[i] = lv_obj_get_parent(label);
+    }
+    mk_label(s_settings_page, "到点提醒：亮屏", &epw_cjk_20, COL_MUTED, 0, 355, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    mk_label(s_timer_page, "计时器", &epw_cjk_20, COL_TEXT, 0, 52, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    s_timer_value = mk_label(s_timer_page, "01:00", &lv_font_montserrat_48, COL_TEXT,
+                              0, 119, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    s_timer_hint = mk_label(s_timer_page, "选择时长", &epw_cjk_20, COL_MUTED, 0, 184, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    const char *timer_labels[] = {"1 分钟", "3 分钟", "5 分钟", "10 分钟", "30 分钟", "1 小时"};
+    for (int i = 0; i < 6; i++) {
+        lv_obj_t *label = tools_button(s_timer_page, 87 + (i % 3) * 100, 235 + (i / 3) * 58,
+                                       92, timer_labels[i], timer_choice_cb, i);
+        s_timer_presets[i] = lv_obj_get_parent(label);
+    }
+    s_timer_action = tools_button(s_timer_page, 101, 363, 126, "开始", timer_action_cb, 0);
+    s_timer_reset_label = tools_button(s_timer_page, 239, 363, 126, "重置", timer_reset_cb, 0);
+    lv_obj_t *back = mk_circle(s_tools, 100, 72, 40, COL_SURF_HI, LV_OPA_COVER);
+    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(back, tools_back_cb, LV_EVENT_CLICKED, NULL);
+    mk_label(back, "<", &epw_cjk_20, COL_TEXT, 0, 6, 40, LV_TEXT_ALIGN_CENTER);
+    clear_clickable_tree(back);
+    lv_obj_add_flag(s_tools, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_create(tools_tick_cb, 100, NULL);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3609,6 +4379,7 @@ static void pet_anim_timer_cb(lv_timer_t *timer)
 
 static void pet_touch_cb(lv_event_t *e)
 {
+    if (voice_client_is_active()) return;
     /* 长按触发后 LVGL 还会补发 CLICKED，这里吞掉，避免“想”立刻变“摸头” */
     if (s_pet_long_pressed) {
         s_pet_long_pressed = false;
@@ -3633,6 +4404,7 @@ static void pet_press_cb(lv_event_t *e)
 
 static void pet_long_press_cb(lv_event_t *e)
 {
+    if (voice_client_is_active()) return;
     if (tap_ignore(e)) {
         return;
     }
@@ -3649,15 +4421,14 @@ static void pet_begin_chat(void)
         return;
     }
     if (!voice_client_set_active(true)) {
-        pet_apply(UI_PET_IDLE, "语音未配置。");
+        pet_apply(UI_PET_IDLE, "语音暂不可用，请检查配置或重启。");
         return;
     }
     pet_apply(UI_PET_THINKING, wifi_get_state() == EPW_WIFI_CONNECTED
                                  ? "连接语音…" : "等待网络…");
 }
 
-/* 页面空白区手势：只认「左→右滑退出」，其它方向一律不响应，
- * 这样空白处的滑动不会和宠物互动抢手势。 */
+/* 空白区与猫咪本体都支持左滑聊天，右滑退出。 */
 static void pet_page_gesture_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_GESTURE) {
@@ -3666,6 +4437,8 @@ static void pet_page_gesture_cb(lv_event_t *e)
     lv_indev_t *indev = lv_event_get_indev(e);
     if (indev != NULL && lv_indev_get_gesture_dir(indev) == LV_DIR_RIGHT) {
         pet_close();
+    } else if (indev != NULL && lv_indev_get_gesture_dir(indev) == LV_DIR_LEFT) {
+        pet_begin_chat();
     }
 }
 
@@ -3764,13 +4537,15 @@ static void build_pet(void)
     lv_obj_set_style_bg_opa(s_pet, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_pet, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_flag(s_pet, LV_OBJ_FLAG_CLICKABLE);
-    /* 页面空白区只监听右滑退出；宠物互动全部交给宠物区 */
+    /* 空白区同样支持左滑聊天与右滑退出。 */
     lv_obj_add_event_cb(s_pet, pet_page_gesture_cb, LV_EVENT_GESTURE, NULL);
 
     mk_label(s_pet, "Mimi Cat", &epw_cjk_20, COL_TEXT,
              0, 52, SCREEN_W, LV_TEXT_ALIGN_CENTER);
     s_pet_mood = mk_label(s_pet, "发呆", &epw_cjk_16, COL_TEAL,
                           0, 82, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    mk_label(s_pet, "左滑聊天 · 静音", &epw_cjk_16, COL_MUTED,
+             0, 418, SCREEN_W, LV_TEXT_ALIGN_CENTER);
 
     /* 宠物背后的柔光：两层同心圆纯色填充。
      * 不用 shadow（SW 模糊每帧重算，是宠物页卡顿的主因）。 */
@@ -3819,6 +4594,880 @@ static void build_pet(void)
 }
 
 /* -------------------------------------------------------------------------- */
+/* 3S 英语儿歌页                                                                */
+/* -------------------------------------------------------------------------- */
+
+static const char *nur_mode_text(void)
+{
+    switch (nursery_get_mode()) {
+    case EPW_NURSERY_MODE_SINGLE:
+        return "单曲循环";
+    case EPW_NURSERY_MODE_SHUFFLE:
+        return "随机播放";
+    case EPW_NURSERY_MODE_LIST:
+    default:
+        return "列表循环";
+    }
+}
+
+static void nur_format_time(uint32_t ms, char *out, size_t size)
+{
+    uint32_t sec = ms / 1000u;
+    snprintf(out, size, "%u:%02u", (unsigned)(sec / 60u), (unsigned)(sec % 60u));
+}
+
+/* 播放器 / 本周曲库：两张卡同页上下切换，不做第二层导航 */
+static void nursery_card_set(int card, bool animate)
+{
+    if (s_nur_player_card == NULL || s_nur_week_card == NULL) {
+        return;
+    }
+    s_nur_card = card == 1 ? 1 : 0;
+    lv_label_set_text(s_nur_library_label, s_nur_card ? "返回播放" : "本周曲库");
+    int player_to = s_nur_card == 0 ? NUR_CARD_PLAYER_Y
+                                    : NUR_CARD_PLAYER_Y - NUR_CARD_SHIFT;
+    int week_to = s_nur_card == 0 ? NUR_CARD_WEEK_Y : NUR_CARD_PLAYER_Y;
+
+    lv_anim_delete(s_nur_player_card, anim_y_cb);
+    lv_anim_delete(s_nur_week_card, anim_y_cb);
+    if (!animate) {
+        lv_obj_set_y(s_nur_player_card, player_to);
+        lv_obj_set_y(s_nur_week_card, week_to);
+        nursery_update_ui();
+        return;
+    }
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_nur_player_card);
+    lv_anim_set_values(&a, lv_obj_get_y(s_nur_player_card), player_to);
+    lv_anim_set_duration(&a, 220);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, anim_y_cb);
+    lv_anim_start(&a);
+
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_nur_week_card);
+    lv_anim_set_values(&a, lv_obj_get_y(s_nur_week_card), week_to);
+    lv_anim_set_duration(&a, 220);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, anim_y_cb);
+    lv_anim_start(&a);
+
+    s_nur_ui_ms = 0;
+    nursery_update_ui();
+}
+
+/* 本周星星 / 曲库列表 / 愿望卡：只在打开页面、换歌和定时慢刷新时整体重建 */
+static void nursery_refresh_week(void)
+{
+    if (s_nur_week_card == NULL) {
+        return;
+    }
+
+    int stars = nursery_checkin_week_stars();
+    int goal = nursery_checkin_star_goal();
+    for (int i = 0; i < 5; i++) {
+        if (s_nur_stars[i] == NULL) {
+            continue;
+        }
+        bool on = i < stars;
+        lv_obj_set_style_bg_color(s_nur_stars[i], on ? COL_AMBER : COL_SURF, 0);
+        lv_obj_set_style_border_color(s_nur_stars[i], on ? COL_AMBER : COL_LINE, 0);
+    }
+    if (s_nur_week_stars != NULL) {
+        lv_label_set_text_fmt(s_nur_week_stars, "%d/%d 星", stars, goal);
+        lv_obj_set_style_text_color(s_nur_week_stars,
+                                    stars >= goal ? COL_AMBER : COL_MUTED, 0);
+    }
+
+    int count = nursery_weekly_count();
+    for (int i = 0; i < EPW_NURSERY_WEEKLY_MAX; i++) {
+        if (s_nur_week_row[i] == NULL) {
+            continue;
+        }
+        const epw_nursery_song_t *song = NULL;
+        if (i < count) {
+            int idx = nursery_weekly_index(i);
+            song = idx >= 0 ? nursery_song(idx) : NULL;
+        }
+        if (song == NULL) {
+            lv_obj_add_flag(s_nur_week_row[i], LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_remove_flag(s_nur_week_row[i], LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(s_nur_week_title[i], song->title);
+        char meta[16];
+        nur_format_time((uint32_t)song->duration * 1000u, meta, sizeof(meta));
+        lv_label_set_text(s_nur_week_meta[i], meta);
+    }
+
+    if (s_nur_wish_btn != NULL) {
+        bool ready = nursery_checkin_wish_ready();
+        bool redeemed = nursery_checkin_wish_redeemed();
+        lv_obj_set_style_bg_color(s_nur_wish_btn,
+                                  ready ? COL_AMBER : COL_SURF, 0);
+        lv_obj_set_style_border_color(s_nur_wish_btn,
+                                      ready ? COL_AMBER : COL_LINE, 0);
+        lv_obj_set_style_text_color(s_nur_wish_label,
+                                    ready ? COL_INK : COL_MUTED, 0);
+        if (redeemed) {
+            lv_label_set_text(s_nur_wish_label, "愿望卡已兑换");
+        } else if (ready) {
+            lv_label_set_text(s_nur_wish_label, "兑换愿望卡");
+        } else {
+            lv_label_set_text_fmt(s_nur_wish_label, "集满 %d 星换愿望卡", goal);
+        }
+    }
+    s_nur_last_stars = stars;
+    s_nur_last_done = nursery_checkin_today_done();
+}
+
+static void nursery_update_ui(void)
+{
+    if (s_nur_drag_engaged || page_anim_busy() ||
+        (!s_nursery_open && !s_nur_force_update) || s_nur_player_card == NULL) {
+        return;
+    }
+
+    epw_nursery_state_t state = nursery_get_state();
+    int idx = nursery_current_index();
+    const epw_nursery_song_t *song = idx >= 0 ? nursery_song(idx) : NULL;
+
+    if (s_nur_mode_label != NULL) {
+        lv_label_set_text(s_nur_mode_label, nur_mode_text());
+    }
+    if (s_nur_title != NULL) {
+        const char *title = song != NULL ? song->title : NULL;
+        if (title == NULL) {
+            title = nursery_catalog_loading() ? "曲库加载中…" : "选一首儿歌";
+        }
+        lv_label_set_text(s_nur_title, title);
+    }
+
+    if (s_nur_lyric != NULL) {
+        char lyric[EPW_NURSERY_LYRIC_TEXT];
+        nursery_get_lyric(lyric, sizeof(lyric));
+        const char *text = lyric;
+        if (text[0] == '\0') {
+            const char *st = nursery_status_text();
+            text = nursery_catalog_loading() && song == NULL ? "" :
+                   (st[0] != '\0' ? st : (song != NULL ? "跟着一起唱吧" : "点播放开始"));
+        }
+        lv_label_set_text(s_nur_lyric, text);
+        lv_obj_set_style_text_color(s_nur_lyric,
+                                    state == EPW_NURSERY_ERROR ? COL_CORAL : COL_MUTED, 0);
+    }
+
+    uint32_t elapsed = nursery_elapsed_ms();
+    uint32_t duration = nursery_duration_s();
+    if (duration == 0 && song != NULL) {
+        duration = song->duration;
+    }
+    if (s_nur_time != NULL) {
+        if (duration > 0) {
+            char a[16], b[16];
+            nur_format_time(elapsed, a, sizeof(a));
+            nur_format_time(duration * 1000u, b, sizeof(b));
+            lv_label_set_text_fmt(s_nur_time, "%s / %s", a, b);
+        } else {
+            lv_label_set_text(s_nur_time, "");
+        }
+    }
+    if (s_nur_arc != NULL) {
+        int pct = duration > 0 ? (int)(elapsed * 100u / (duration * 1000u)) : 0;
+        if (pct < 0) {
+            pct = 0;
+        }
+        if (pct > 100) {
+            pct = 100;
+        }
+        lv_arc_set_angles(s_nur_arc, 0, pct > 0 ? pct * 359 / 100 : 0);
+    }
+    if (s_nur_icon_play != NULL && s_nur_icon_pause != NULL) {
+        bool playing = state == EPW_NURSERY_PLAYING;
+        if (playing) {
+            lv_obj_add_flag(s_nur_icon_play, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(s_nur_icon_pause, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(s_nur_icon_play, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_nur_icon_pause, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    /* 慢刷新：星星 / 打卡 / 愿望卡都要读 NVS，2 秒一次足够 */
+    uint32_t now = lv_tick_get();
+    bool heavy = s_nur_ui_ms == 0 || (uint32_t)(now - s_nur_ui_ms) >= 2000u;
+    if (heavy) {
+        s_nur_ui_ms = now;
+        nursery_refresh_week();
+        for (int i = 0; i < 3; i++) {
+            if (s_nur_slot[i] == NULL || s_nur_slot_label[i] == NULL) {
+                continue;
+            }
+            epw_nursery_session_t sess;
+            nursery_checkin_session(i, &sess);
+            static const char *const short_cn[3] = {"早", "午", "晚"};
+            char text[24];
+            lv_color_t accent = COL_MUTED;
+            lv_color_t bg = COL_SURF;
+            lv_color_t border = COL_LINE;
+            if (sess.done) {
+                snprintf(text, sizeof(text), "%s 完成", short_cn[i]);
+                accent = COL_AMBER;
+                bg = COL_SURF_HI;
+                border = COL_AMBER;
+            } else if (sess.active) {
+                if (sess.paused) {
+                    snprintf(text, sizeof(text), "%s 暂停", short_cn[i]);
+                } else {
+                    snprintf(text, sizeof(text), "%s %d/%d", short_cn[i],
+                             sess.elapsed_seconds / 60, sess.target_minutes);
+                }
+                accent = COL_TEAL;
+                bg = COL_SURF_HI;
+                border = COL_TEAL;
+            } else {
+                snprintf(text, sizeof(text), "%s %d", short_cn[i], sess.target_minutes);
+            }
+            lv_label_set_text(s_nur_slot_label[i], text);
+            lv_obj_set_style_text_color(s_nur_slot_label[i], accent, 0);
+            lv_obj_set_style_bg_color(s_nur_slot[i], bg, 0);
+            lv_obj_set_style_border_color(s_nur_slot[i], border, 0);
+        }
+    }
+
+    if (s_nur_wish_btn != NULL) {
+        if (s_nur_card == 1) {
+            lv_obj_remove_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+/* 儿歌页 500ms 心跳：推进播放进度 / 歌词 / 打卡。
+ * 打卡按真实播放时间累计，离开页面但歌曲仍在播时也要继续计时。 */
+static void nursery_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    nursery_checkin_tick();
+    if (!s_nur_drag_engaged && !page_anim_busy()) {
+        nursery_update_ui();
+    }
+    /* 拖动/打开期间不动快照，避免拖到一半图源被换掉 */
+    if (s_nursery_open || s_nur_dragging) {
+        return;
+    }
+    /* 曲库从「加载中」变成「就绪」时重拍快照，避免一直停在空壳画面 */
+    bool ready = nursery_catalog_ready();
+    if (ready != s_nur_catalog_seen) {
+        s_nur_catalog_seen = ready;
+        s_nur_snap_valid = false;
+        s_nur_snap_ext = 0;
+    }
+    /* 表盘空闲时预渲染：下一次右滑只搬这张位图，和控制中心下拉同一套做法 */
+    if (!s_nursery_open && !s_nur_dragging && !s_nur_snap_valid &&
+        !s_center_open && !s_center_dragging && !page_anim_busy() &&
+        !pages_busy_except_center()) {
+        nursery_snap_refresh();
+    }
+}
+
+/* ---- 交互 ----------------------------------------------------------------- */
+
+static void nursery_page_gesture_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_GESTURE || page_anim_busy()) {
+        return;
+    }
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev == NULL) {
+        return;
+    }
+    switch (lv_indev_get_gesture_dir(indev)) {
+    case LV_DIR_TOP:
+        if (s_nur_card == 0) {
+            nursery_card_set(1, true);
+        }
+        break;
+    case LV_DIR_BOTTOM:
+        if (s_nur_card == 1) {
+            nursery_card_set(0, true);
+        }
+        break;
+    case LV_DIR_LEFT:
+        /* 跟手拖动已接管时由 PRESSING 收尾；这里只兜底没产生 PRESSING 的慢滑 */
+        if (!s_nur_drag_engaged) {
+            nursery_close();
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+static void nur_library_cb(lv_event_t *e)
+{
+    if (!tap_ignore(e)) {
+        nursery_card_set(s_nur_card == 0 ? 1 : 0, true);
+    }
+}
+
+static void nur_play_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) {
+        return;
+    }
+    epw_nursery_state_t state = nursery_get_state();
+    if (state == EPW_NURSERY_PLAYING || state == EPW_NURSERY_PAUSED) {
+        nursery_toggle();
+    } else if (nursery_current_index() >= 0) {
+        nursery_play_index(nursery_current_index());
+    } else if (nursery_weekly_count() > 0) {
+        nursery_play_weekly(0);
+    }
+    if (nursery_get_state() == EPW_NURSERY_IDLE) {
+        const char *st = nursery_status_text();
+        toast_show(st[0] != '\0' ? st : "曲库加载中");
+    }
+    s_nur_ui_ms = 0;
+    nursery_update_ui();
+}
+
+static void nur_prev_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) {
+        return;
+    }
+    if (nursery_get_state() == EPW_NURSERY_IDLE) {
+        nur_play_cb(e);
+        return;
+    }
+    nursery_prev();
+    nursery_update_ui();
+}
+
+static void nur_next_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) {
+        return;
+    }
+    if (nursery_get_state() == EPW_NURSERY_IDLE) {
+        nur_play_cb(e);
+        return;
+    }
+    nursery_next();
+    nursery_update_ui();
+}
+
+static void nur_mode_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) {
+        return;
+    }
+    nursery_cycle_mode();
+    nursery_update_ui();
+}
+
+static void nur_slot_cb(lv_event_t *e)
+{
+    if (page_anim_busy()) {
+        return;
+    }
+    /* 长按结束打卡后会补发 CLICKED，这里吞掉 */
+    if (s_nur_slot_long) {
+        s_nur_slot_long = false;
+        return;
+    }
+    if (tap_ignore(e)) {
+        return;
+    }
+    int slot = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!nursery_checkin_enabled()) {
+        toast_show("等待校时");
+        return;
+    }
+    epw_nursery_session_t sess;
+    nursery_checkin_session(slot, &sess);
+    if (sess.done) {
+        toast_show("这场已打卡");
+        return;
+    }
+    if (sess.active) {
+        nursery_checkin_pause_toggle();
+    } else if (nursery_checkin_start(slot)) {
+        nursery_card_set(0, true);
+        toast_show("开始打卡");
+    } else {
+        const char *st = nursery_status_text();
+        toast_show(st[0] != '\0' ? st : "暂时不能打卡");
+    }
+    s_nur_ui_ms = 0;
+    nursery_update_ui();
+}
+
+static void nur_slot_long_cb(lv_event_t *e)
+{
+    int slot = (int)(intptr_t)lv_event_get_user_data(e);
+    epw_nursery_session_t sess;
+    nursery_checkin_session(slot, &sess);
+    if (!sess.active) {
+        return;
+    }
+    s_nur_slot_long = true;
+    nursery_checkin_end();
+    toast_show("已结束打卡");
+    s_nur_ui_ms = 0;
+    nursery_update_ui();
+}
+
+static void nur_week_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) {
+        return;
+    }
+    int slot = (int)(intptr_t)lv_event_get_user_data(e);
+    nursery_card_set(0, true);
+    nursery_play_weekly(slot);
+    nursery_update_ui();
+}
+
+static void nur_week_long_cb(lv_event_t *e)
+{
+    int slot = (int)(intptr_t)lv_event_get_user_data(e);
+    if (nursery_weekly_replace(slot)) {
+        toast_show("换了一首");
+        nursery_refresh_week();
+    } else {
+        const char *st = nursery_status_text();
+        toast_show(st[0] != '\0' ? st : "现在不能换歌");
+    }
+}
+
+static void nur_wish_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) {
+        return;
+    }
+    if (nursery_checkin_redeem_wish()) {
+        toast_show("愿望卡已兑换");
+    } else if (nursery_checkin_wish_redeemed()) {
+        toast_show("本周已兑换");
+    } else {
+        toast_show("还差几颗星");
+    }
+    nursery_refresh_week();
+}
+
+/* ---- 页面构建 -------------------------------------------------------------- */
+
+static lv_obj_t *nur_card_create(lv_obj_t *parent, int y)
+{
+    lv_obj_t *card = mk_box(parent, NUR_CARD_X, y, NUR_CARD_W, NUR_CARD_H,
+                            COL_SURF, LV_OPA_COVER, 34);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_border_color(card, COL_LINE, 0);
+    lv_obj_set_style_border_opa(card, LV_OPA_60, 0);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    return card;
+}
+
+static void build_nursery_player(lv_obj_t *card)
+{
+    s_nur_title = mk_label(card, "选一首儿歌", &epw_cjk_20, COL_TEXT,
+                           16, 18, NUR_CARD_W - 32, LV_TEXT_ALIGN_CENTER);
+    lv_label_set_long_mode(s_nur_title, LV_LABEL_LONG_DOT);
+    lv_obj_set_height(s_nur_title, 28);
+
+    s_nur_lyric = mk_label(card, "", &epw_cjk_16, COL_MUTED,
+                           16, 60, NUR_CARD_W - 32, LV_TEXT_ALIGN_CENTER);
+    lv_label_set_long_mode(s_nur_lyric, LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(s_nur_lyric, 42);
+
+    /* 环形进度：只做视觉反馈，不接收点击 */
+    s_nur_arc = lv_arc_create(card);
+    lv_obj_remove_flag(s_nur_arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(s_nur_arc, 125, 110);
+    lv_obj_set_size(s_nur_arc, 128, 128);
+    lv_obj_remove_style(s_nur_arc, NULL, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(s_nur_arc, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_nur_arc, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_nur_arc, 0, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_nur_arc, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(s_nur_arc, COL_LINE, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(s_nur_arc, LV_OPA_60, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_nur_arc, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_nur_arc, COL_TEAL, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(s_nur_arc, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(s_nur_arc, true, LV_PART_INDICATOR);
+    lv_arc_set_rotation(s_nur_arc, 270);
+    lv_arc_set_bg_angles(s_nur_arc, 0, 359);
+    lv_arc_set_angles(s_nur_arc, 0, 0);
+
+    /* 播放 / 暂停大按钮 */
+    s_nur_play_btn = mk_circle(card, NUR_CARD_W / 2, 174, 104,
+                               COL_TEAL, LV_OPA_COVER);
+    lv_obj_add_flag(s_nur_play_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_nur_play_btn, nur_play_cb, LV_EVENT_CLICKED, NULL);
+
+    static const lv_point_precise_t tri_play[] = {
+        {39, 30}, {39, 74}, {74, 52}, {39, 30},
+    };
+    s_nur_icon_play = lv_line_create(s_nur_play_btn);
+    lv_line_set_points(s_nur_icon_play, tri_play, 4);
+    lv_obj_set_style_line_width(s_nur_icon_play, 7, 0);
+    lv_obj_set_style_line_color(s_nur_icon_play, COL_INK, 0);
+    lv_obj_set_style_line_rounded(s_nur_icon_play, true, 0);
+
+    s_nur_icon_pause = mk_box(s_nur_play_btn, 36, 34, 32, 36,
+                              COL_BG, LV_OPA_TRANSP, 0);
+    mk_box(s_nur_icon_pause, 0, 0, 10, 36, COL_INK, LV_OPA_COVER, 2);
+    mk_box(s_nur_icon_pause, 22, 0, 10, 36, COL_INK, LV_OPA_COVER, 2);
+    lv_obj_add_flag(s_nur_icon_pause, LV_OBJ_FLAG_HIDDEN);
+
+    /* 上一首 / 下一首 */
+    lv_obj_t *prev = mk_circle(card, NUR_CARD_W / 2 - 130, 174, 72,
+                               COL_SURF_HI, LV_OPA_COVER);
+    s_nur_prev_btn = prev;
+    lv_obj_set_style_border_width(prev, 1, 0);
+    lv_obj_set_style_border_color(prev, COL_LINE, 0);
+    lv_obj_add_flag(prev, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(prev, nur_prev_cb, LV_EVENT_CLICKED, NULL);
+    static const lv_point_precise_t tri_prev[] = {{48, 20}, {48, 52}, {28, 36}, {48, 20}};
+    lv_obj_t *pl = lv_line_create(prev);
+    lv_line_set_points(pl, tri_prev, 4);
+    lv_obj_set_style_line_width(pl, 4, 0);
+    lv_obj_set_style_line_color(pl, COL_MUTED, 0);
+    lv_obj_set_style_line_rounded(pl, true, 0);
+    mk_box(prev, 19, 20, 5, 32, COL_MUTED, LV_OPA_COVER, 2);
+
+    lv_obj_t *next = mk_circle(card, NUR_CARD_W / 2 + 130, 174, 72,
+                               COL_SURF_HI, LV_OPA_COVER);
+    s_nur_next_btn = next;
+    lv_obj_set_style_border_width(next, 1, 0);
+    lv_obj_set_style_border_color(next, COL_LINE, 0);
+    lv_obj_add_flag(next, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(next, nur_next_cb, LV_EVENT_CLICKED, NULL);
+    static const lv_point_precise_t tri_next[] = {{24, 20}, {24, 52}, {44, 36}, {24, 20}};
+    lv_obj_t *nl = lv_line_create(next);
+    lv_line_set_points(nl, tri_next, 4);
+    lv_obj_set_style_line_width(nl, 4, 0);
+    lv_obj_set_style_line_color(nl, COL_MUTED, 0);
+    lv_obj_set_style_line_rounded(nl, true, 0);
+    mk_box(next, 49, 20, 5, 32, COL_MUTED, LV_OPA_COVER, 2);
+
+    s_nur_time = mk_label(card, "", &epw_cjk_16, COL_MUTED,
+                          0, 252, NUR_CARD_W, LV_TEXT_ALIGN_CENTER);
+}
+
+static void build_nursery_week(lv_obj_t *card)
+{
+    lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_scroll_dir(card, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
+    mk_label(card, "本周曲库", &epw_cjk_20, COL_TEXT,
+             18, 14, 170, LV_TEXT_ALIGN_LEFT);
+    s_nur_week_stars = mk_label(card, "", &epw_cjk_16, COL_MUTED,
+                                200, 20, 160, LV_TEXT_ALIGN_RIGHT);
+
+    for (int i = 0; i < EPW_NURSERY_WEEKLY_MAX; i++) {
+        lv_obj_t *row = mk_box(card, 16, 52 + i * 56, NUR_CARD_W - 32, 50,
+                               COL_SURF_HI, LV_OPA_COVER, 19);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_set_style_border_color(row, COL_LINE, 0);
+        lv_obj_set_style_border_opa(row, LV_OPA_40, 0);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(row, nur_week_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(row, nur_week_long_cb, LV_EVENT_LONG_PRESSED,
+                            (void *)(intptr_t)i);
+        s_nur_week_row[i] = row;
+
+        char no[4];
+        snprintf(no, sizeof(no), "%d", i + 1);
+        mk_label(row, no, &epw_cjk_16, COL_MUTED, 10, 15, 22, LV_TEXT_ALIGN_CENTER);
+        s_nur_week_title[i] = mk_label(row, "", &epw_cjk_16, COL_TEXT,
+                                       38, 15, 198, LV_TEXT_ALIGN_LEFT);
+        lv_label_set_long_mode(s_nur_week_title[i], LV_LABEL_LONG_DOT);
+        lv_obj_set_height(s_nur_week_title[i], 22);
+        s_nur_week_meta[i] = mk_label(row, "", &epw_cjk_16, COL_MUTED,
+                                      244, 15, 86, LV_TEXT_ALIGN_RIGHT);
+    }
+    /* 模式胶囊：点一下切换 列表 / 单曲 / 随机 */
+    lv_obj_t *mode = mk_box(card, 18, 342, 150, 44, COL_SURF_HI, LV_OPA_COVER, 15);
+    s_nur_mode_btn = mode;
+    lv_obj_set_style_border_width(mode, 1, 0);
+    lv_obj_set_style_border_color(mode, COL_TEAL, 0);
+    lv_obj_set_style_border_opa(mode, LV_OPA_40, 0);
+    lv_obj_add_flag(mode, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(mode, nur_mode_cb, LV_EVENT_CLICKED, NULL);
+    s_nur_mode_label = mk_label(mode, nur_mode_text(), &epw_cjk_16, COL_TEAL,
+                                0, 12, 150, LV_TEXT_ALIGN_CENTER);
+
+}
+
+static void build_nursery(void)
+{
+    s_nursery = lv_obj_create(s_screen);
+    lv_obj_remove_style_all(s_nursery);
+    lv_obj_remove_flag(s_nursery, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_nursery, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(s_nursery, 0, 0);
+    lv_obj_set_style_bg_color(s_nursery, lv_color_hex(0x05070C), 0);
+    lv_obj_set_style_bg_grad_color(s_nursery, lv_color_hex(0x101A26), 0);
+    lv_obj_set_style_bg_grad_dir(s_nursery, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(s_nursery, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_nursery, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_flag(s_nursery, LV_OBJ_FLAG_CLICKABLE);
+    /* 拖动中页面可能被快照图顶替/隐藏，锁定按下的对象，保证 PRESSING 不断流 */
+    lv_obj_add_flag(s_nursery, LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_add_event_cb(s_nursery, nursery_page_gesture_cb, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(s_nursery, nursery_page_drag_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_nursery, nursery_page_drag_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(s_nursery, nursery_page_drag_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(s_nursery, nursery_page_drag_cb, LV_EVENT_PRESS_LOST, NULL);
+
+    mk_label(s_nursery, "3S 英语儿歌", &epw_cjk_20, COL_TEXT,
+             0, 50, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+
+    s_nur_player_card = nur_card_create(s_nursery, NUR_CARD_PLAYER_Y);
+    build_nursery_player(s_nur_player_card);
+
+    s_nur_week_card = nur_card_create(s_nursery, NUR_CARD_WEEK_Y);
+    build_nursery_week(s_nur_week_card);
+
+    /* 本周星星：一个圆点代表一颗星，右侧用 Y/N 星补足语义 */
+    mk_label(s_nur_week_card, "本周", &epw_cjk_16, COL_MUTED,
+             18, 405, 60, LV_TEXT_ALIGN_RIGHT);
+    for (int i = 0; i < 5; i++) {
+        s_nur_stars[i] = mk_circle(s_nur_week_card, 112 + i * 32, 414, 14,
+                                   COL_SURF, LV_OPA_COVER);
+        lv_obj_set_style_border_width(s_nur_stars[i], 1, 0);
+        lv_obj_set_style_border_color(s_nur_stars[i], COL_LINE, 0);
+    }
+
+    /* 早 / 午 / 晚三场打卡：点按开始或暂停，长按结束 */
+    static const int slot_x[3] = {18, 132, 246};
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *chip = mk_box(s_nur_week_card, slot_x[i], 454, 104, 44,
+                                COL_SURF, LV_OPA_COVER, 16);
+        lv_obj_set_style_border_width(chip, 1, 0);
+        lv_obj_set_style_border_color(chip, COL_LINE, 0);
+        lv_obj_add_flag(chip, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(chip, nur_slot_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(chip, nur_slot_long_cb, LV_EVENT_LONG_PRESSED,
+                            (void *)(intptr_t)i);
+        s_nur_slot[i] = chip;
+        s_nur_slot_label[i] = mk_label(chip, "", &epw_cjk_16, COL_MUTED,
+                                       0, 12, 104, LV_TEXT_ALIGN_CENTER);
+    }
+
+    s_nur_wish_btn = mk_box(s_nur_week_card, 74, 518, 230, 48,
+                            COL_SURF, LV_OPA_COVER, 18);
+    lv_obj_set_style_border_width(s_nur_wish_btn, 1, 0);
+    lv_obj_set_style_border_color(s_nur_wish_btn, COL_LINE, 0);
+    lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_nur_wish_btn, nur_wish_cb, LV_EVENT_CLICKED, NULL);
+    s_nur_wish_label = mk_label(s_nur_wish_btn, "集满 5 星换愿望卡", &epw_cjk_16,
+                                COL_MUTED, 0, 14, 230, LV_TEXT_ALIGN_CENTER);
+    lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *library = mk_box(s_nursery, 139, 403, 188, 44,
+                               COL_SURF_HI, LV_OPA_COVER, 22);
+    lv_obj_add_event_cb(library, nur_library_cb, LV_EVENT_CLICKED, NULL);
+    s_nur_library_label = mk_label(library, "本周曲库", &epw_cjk_20, COL_TEXT,
+                                    0, 10, 188, LV_TEXT_ALIGN_CENTER);
+
+    /* 装饰容器不拦触摸，让滑动落到整页做翻卡/返回；只保留按钮的点击，
+     * 并让按钮上的手势继续冒泡到页面。 */
+    clear_clickable_tree(s_nursery);
+    lv_obj_t *interactive[] = {
+        library, s_nur_mode_btn, s_nur_prev_btn, s_nur_play_btn, s_nur_next_btn,
+        s_nur_slot[0], s_nur_slot[1], s_nur_slot[2],
+        s_nur_week_row[0], s_nur_week_row[1], s_nur_week_row[2],
+        s_nur_week_row[3], s_nur_week_row[4], s_nur_wish_btn,
+    };
+    for (size_t i = 0; i < sizeof(interactive) / sizeof(interactive[0]); i++) {
+        if (interactive[i] != NULL) {
+            lv_obj_add_flag(interactive[i], LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+        }
+    }
+    lv_obj_add_flag(s_nur_week_card, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_flag(s_nursery, LV_OBJ_FLAG_HIDDEN);
+
+    /* 滑入时只搬运这张快照，和下拉控制中心同一套做法 */
+    s_nur_snap_img = lv_image_create(s_screen);
+    lv_obj_remove_flag(s_nur_snap_img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_nur_snap_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(s_nur_snap_img, -SCREEN_W, 0);
+}
+
+/* 电源确认放在顶层，不能穿透到播放器、计时器或桌面。 */
+static lv_obj_t *s_boot_logo;
+static lv_obj_t *s_power_panel, *s_power_knob, *s_power_slide_text, *s_power_title;
+static bool s_power_pending, s_power_dragging;
+static lv_point_t s_power_press;
+#define POWER_KNOB_MIN 4
+#define POWER_KNOB_MAX 224
+
+void ui_boot_logo_show(void)
+{
+    lv_obj_set_style_bg_color(lv_screen_active(), COL_BG, 0);
+    s_boot_logo = mk_box(lv_layer_top(), 0, 0, SCREEN_W, SCREEN_H,
+                         COL_BG, LV_OPA_COVER, 0);
+    lv_obj_add_flag(s_boot_logo, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *logo = lv_image_create(s_boot_logo);
+    lv_image_set_src(logo, &pip_face_idle);
+    lv_obj_set_pos(logo, 129, 112);
+    mk_label(s_boot_logo, "Mimi", &epw_cjk_20, COL_TEXT,
+             0, 336, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    /* 先送出 Logo，再构建桌面缓存，避免首次绘制被初始化挡住。 */
+    lv_refr_now(NULL);
+}
+
+void ui_boot_logo_hide(void)
+{
+    if (s_boot_logo != NULL) {
+        lv_obj_delete(s_boot_logo);
+        s_boot_logo = NULL;
+    }
+    ui_activity();
+    lv_indev_t *input = bsp_display_get_input_dev();
+    if (input != NULL) lv_indev_wait_release(input);
+}
+
+static void power_knob_x_cb(void *obj, int32_t x)
+{
+    lv_obj_set_x(obj, x);
+    lv_obj_set_style_opa(s_power_slide_text,
+        LV_OPA_COVER * (POWER_KNOB_MAX - x) / (POWER_KNOB_MAX - POWER_KNOB_MIN), 0);
+}
+
+bool ui_power_menu_cancel(void)
+{
+    if (s_power_panel == NULL || lv_obj_has_flag(s_power_panel, LV_OBJ_FLAG_HIDDEN)) {
+        return false;
+    }
+    if (!s_power_pending) {
+        s_power_dragging = false;
+        lv_anim_delete(s_power_knob, power_knob_x_cb);
+        power_knob_x_cb(s_power_knob, POWER_KNOB_MIN);
+        lv_obj_add_flag(s_power_panel, LV_OBJ_FLAG_HIDDEN);
+        ui_activity();
+    }
+    return true;
+}
+
+static void power_cancel_cb(lv_event_t *e)
+{
+    if (!tap_ignore(e)) ui_power_menu_cancel();
+}
+
+static void power_slide_cb(lv_event_t *e)
+{
+    lv_indev_t *input = lv_event_get_indev(e);
+    if (input == NULL || s_power_pending) return;
+    lv_point_t p;
+    lv_indev_get_point(input, &p);
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        s_power_dragging = false;
+        if (ui_activity()) {
+            lv_indev_wait_release(input);
+            return;
+        }
+        lv_anim_delete(s_power_knob, power_knob_x_cb);
+        power_knob_x_cb(s_power_knob, POWER_KNOB_MIN);
+        s_power_press = p;
+        s_power_dragging = true;
+    } else if (code == LV_EVENT_PRESSING && s_power_dragging) {
+        ui_activity();
+        int x = POWER_KNOB_MIN + p.x - s_power_press.x;
+        if (LV_ABS(p.y - s_power_press.y) > 48) {
+            s_power_dragging = false;
+            x = POWER_KNOB_MIN;
+        }
+        if (x < POWER_KNOB_MIN) x = POWER_KNOB_MIN;
+        if (x > POWER_KNOB_MAX) x = POWER_KNOB_MAX;
+        power_knob_x_cb(s_power_knob, x);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        bool confirmed = s_power_dragging && code == LV_EVENT_RELEASED &&
+            LV_ABS(p.y - s_power_press.y) <= 48 &&
+            lv_obj_get_x(s_power_knob) >= POWER_KNOB_MAX - 8;
+        s_power_dragging = false;
+        if (confirmed) {
+            s_power_pending = true;
+            lv_obj_set_style_opa(s_power_slide_text, LV_OPA_COVER, 0);
+            lv_label_set_text(s_power_slide_text, "正在关机…");
+            lv_obj_add_flag(s_power_knob, LV_OBJ_FLAG_HIDDEN);
+            watch_timer_reset();
+            nursery_checkin_pause();
+            nursery_stop();
+            button_request_shutdown();
+        } else {
+            lv_anim_t a;
+            lv_anim_init(&a);
+            lv_anim_set_var(&a, s_power_knob);
+            lv_anim_set_values(&a, lv_obj_get_x(s_power_knob), POWER_KNOB_MIN);
+            lv_anim_set_duration(&a, 180);
+            lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+            lv_anim_set_exec_cb(&a, power_knob_x_cb);
+            lv_anim_start(&a);
+        }
+    }
+}
+
+void ui_power_menu_open(void)
+{
+    if (s_boot_logo != NULL || s_power_pending) return;
+    ui_activity();
+    voice_client_set_active(false);
+    nursery_pause();
+    if (s_power_panel == NULL) {
+        s_power_panel = mk_box(lv_layer_top(), 0, 0, SCREEN_W, SCREEN_H,
+                               COL_BG, LV_OPA_COVER, 0);
+        lv_obj_add_flag(s_power_panel, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_remove_flag(s_power_panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
+        s_power_title = mk_label(s_power_panel, "关机", &epw_cjk_20, COL_TEXT,
+                 0, 112, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+        lv_obj_t *track = mk_box(s_power_panel, 83, 194, 300, 80,
+                                 COL_SURF_HI, LV_OPA_COVER, 40);
+        s_power_slide_text = mk_label(track, "滑动来关机", &epw_cjk_20, COL_MUTED,
+                                       0, 28, 300, LV_TEXT_ALIGN_CENTER);
+        s_power_knob = mk_circle(track, 40, 40, 72, COL_TEXT, LV_OPA_COVER);
+        lv_obj_add_flag(s_power_knob, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+        lv_obj_remove_flag(s_power_knob, LV_OBJ_FLAG_GESTURE_BUBBLE);
+        lv_obj_t *arc = mk_arc_seg(s_power_knob, 36, 38, 30, 4, 40, 320, COL_INK, LV_OPA_COVER);
+        mk_box(s_power_knob, 34, 17, 4, 23, COL_INK, LV_OPA_COVER, 2);
+        (void)arc;
+        tools_button(s_power_panel, 173, 344, 120, "取消", power_cancel_cb, 0);
+        clear_clickable_tree(s_power_knob);
+        lv_obj_add_event_cb(s_power_knob, power_slide_cb, LV_EVENT_PRESSED, NULL);
+        lv_obj_add_event_cb(s_power_knob, power_slide_cb, LV_EVENT_PRESSING, NULL);
+        lv_obj_add_event_cb(s_power_knob, power_slide_cb, LV_EVENT_RELEASED, NULL);
+        lv_obj_add_event_cb(s_power_knob, power_slide_cb, LV_EVENT_PRESS_LOST, NULL);
+    }
+    s_power_dragging = false;
+    lv_anim_delete(s_power_knob, power_knob_x_cb);
+    power_knob_x_cb(s_power_knob, POWER_KNOB_MIN);
+    lv_label_set_text(s_power_title, "关机");
+    lv_label_set_text(s_power_slide_text, "滑动来关机");
+    lv_obj_remove_flag(s_power_knob, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_power_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_power_panel);
+    lv_indev_t *input = bsp_display_get_input_dev();
+    if (input != NULL) lv_indev_wait_release(input);
+}
+
+void ui_power_shutdown_failed(void)
+{
+    s_power_pending = false;
+    ui_power_menu_open();
+    lv_label_set_text(s_power_title, "关机失败，请检查供电");
+}
+
+/* -------------------------------------------------------------------------- */
 /* 熄屏 / 亮屏                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -3835,11 +5484,7 @@ static void screen_wake(void)
     if (s_wake_layer != NULL) {
         lv_obj_add_flag(s_wake_layer, LV_OBJ_FLAG_HIDDEN);
     }
-    if (s_torch_open) {
-        bsp_display_brightness_set(100);
-    } else {
-        brightness_apply();
-    }
+    brightness_apply();
     home_snap_refresh();
     s_last_activity = lv_tick_get();
     ESP_LOGI(TAG, "display wake");
@@ -3856,10 +5501,13 @@ static void screen_sleep(void)
         lv_obj_remove_flag(s_wake_layer, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(s_wake_layer);
     }
-    bsp_display_brightness_set(0);
+    brightness_apply();
+    /* 熄屏即收起儿歌页并暂停外放，醒来保留当前曲目 */
+    nursery_close_now();
+    nursery_pause();
     /* 熄屏即退出 Mimi Cat：不在黑屏下保留对话状态，也不再回答 */
     pet_close_now();
-    ESP_LOGI(TAG, "display sleep (idle %d ms)", UI_IDLE_TIMEOUT_MS);
+    ESP_LOGI(TAG, "display sleep (idle %lu ms)", (unsigned long)UI_IDLE_TIMEOUT_MS);
 }
 
 bool ui_activity(void)
@@ -3890,7 +5538,7 @@ static void idle_timer_cb(lv_timer_t *timer)
         }
         return;
     }
-    if (!s_screen_off && lv_tick_elaps(s_last_activity) >= UI_IDLE_TIMEOUT_MS) {
+    if (!s_screen_off && UI_IDLE_TIMEOUT_MS != 0 && lv_tick_elaps(s_last_activity) >= UI_IDLE_TIMEOUT_MS) {
         screen_sleep();
     } else if (!s_screen_off && !s_center_dragging &&
                !pages_busy_except_center() && !page_anim_busy()) {
@@ -3904,6 +5552,7 @@ static void idle_timer_cb(lv_timer_t *timer)
 
 void ui_init(void)
 {
+    watch_system_init();
     s_screen = lv_screen_active();
     lv_obj_set_style_bg_color(s_screen, COL_BG, 0);
     lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
@@ -3933,6 +5582,15 @@ void ui_init(void)
     /* 手势不向上冒泡：表盘自己处理下拉，避免事件跑到 screen */
     lv_obj_remove_flag(s_home, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
+    /* 表盘右滑跟手拉出 3S 英语儿歌；左滑在儿歌页内跟手返回表盘。
+     * 必须在 build_dial 之前注册：LVGL 按注册顺序分发事件，横滑要先判定，
+     * 否则斜着下滑时 home_pull_cb 会先抢走手势，右滑永远打不开儿歌页。 */
+    lv_obj_add_event_cb(s_home, home_nursery_drag_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_home, home_nursery_drag_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(s_home, home_nursery_drag_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(s_home, home_nursery_drag_cb, LV_EVENT_PRESS_LOST, NULL);
+    lv_obj_add_event_cb(s_home, home_nursery_gesture_cb, LV_EVENT_GESTURE, NULL);
+
     build_dial(s_home);
     s_home_snap_img = lv_image_create(s_screen);
     lv_obj_remove_flag(s_home_snap_img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -3946,6 +5604,8 @@ void ui_init(void)
     build_wifi();
     build_wifipwd();
     build_pet();
+    build_nursery();
+    build_tools();
 
     /* 全局提示条 */
     s_toast = mk_box(s_screen, 83, 210, 300, 44, COL_TEXT, LV_OPA_COVER, 22);
@@ -3980,6 +5640,7 @@ void ui_init(void)
     lv_timer_create(network_timer_cb, 2000, NULL);
     lv_timer_create(pet_anim_timer_cb, 80, NULL);
     lv_timer_create(pet_scene_timer_cb, 9000, NULL);
+    lv_timer_create(nursery_timer_cb, 500, NULL);
     lv_timer_create(idle_timer_cb, UI_IDLE_POLL_MS, NULL);
 }
 
@@ -4093,7 +5754,9 @@ void ui_demo_toggle_apps(void)
     if (page_anim_busy()) {
         return;
     }
-    if (s_wifipwd_open) {
+    if (s_tools_open) {
+        tools_close();
+    } else if (s_wifipwd_open) {
         wifi_pwd_close();
     } else if (s_wifi_open) {
         wifi_close();
@@ -4105,6 +5768,8 @@ void ui_demo_toggle_apps(void)
         status_close();
     } else if (s_pet_open) {
         pet_close();
+    } else if (s_nursery_open) {
+        nursery_close();
     } else if (s_center_open) {
         center_close();
     } else if (s_apps_open) {
@@ -4122,6 +5787,26 @@ void ui_demo_open_pet(void)
 void ui_demo_close_pet(void)
 {
     pet_close();
+}
+
+void ui_demo_open_nursery(void)
+{
+    nursery_open();
+}
+
+void ui_demo_close_nursery(void)
+{
+    nursery_close();
+}
+
+/* 截图任务在 UI 线程外调用，这里自行加锁，避免触碰 LVGL 对象时崩溃 */
+void ui_debug_sleep_check(bool on)
+{
+    if (bsp_display_lock(2000) != ESP_OK) {
+        return;
+    }
+    sleep_mode_apply(on);
+    bsp_display_unlock();
 }
 
 void ui_demo_toggle_pet(void)
@@ -4190,6 +5875,9 @@ void ui_pet_set_state_by_name(const char *emotion, const char *text)
 
     /* 豆包桥接只更新状态/台词，不主动弹出宠物页，避免打扰当前操作。 */
     s_pet_bridge_ms = lv_tick_get();
+    if ((text == NULL || text[0] == '\0') && s_pet_bubble_label != NULL) {
+        text = lv_label_get_text(s_pet_bubble_label);
+    }
     pet_apply(state, text);
 }
 
@@ -4257,4 +5945,57 @@ void ui_update_weather(float temperature, epw_weather_kind_t kind)
         break;
     }
     clear_clickable_tree(s_weather_icon);
+}
+
+#include "esp_timer.h"
+static lv_draw_buf_t *s_bench_art[APP_COUNT][8];
+static int s_bench_level[APP_COUNT];
+void ui_debug_icon_bench_prepare(void)
+{
+    bsp_display_lock(-1);
+    ui_activity();apps_open();
+    for(int i=0;i<APP_COUNT;i++) {
+        s_bench_art[i][0]=s_app_art[i];s_bench_level[i]=-1;
+        lv_obj_t *root=mk_box(s_apps,0,0,120,120,lv_color_hex(0x0A1018),LV_OPA_COVER,0);
+        lv_obj_t *img=lv_image_create(root);
+        lv_image_set_src(img,s_app_art[i]);lv_image_set_inner_align(img,LV_IMAGE_ALIGN_STRETCH);
+        for(int level=1;level<8;level++) {
+            int size=120-level*8;
+            lv_obj_set_size(root,size,size);lv_obj_set_size(img,size,size);
+            s_bench_art[i][level]=app_art_snapshot(root);
+        }
+        lv_obj_delete(root);
+    }
+    bsp_display_unlock();
+}
+unsigned ui_debug_icon_frame(bool legacy,int x,int y)
+{
+    bsp_display_lock(-1);ui_activity();
+    static bool previous_legacy=true;
+    if(!legacy && previous_legacy) {
+        for(int i=0;i<APP_COUNT;i++) {
+            lv_image_set_src(s_app_icons[i],s_app_scaled[i] ? s_app_scaled[i] : s_app_art[i]);
+            s_app_pixel_size[i]=-1;
+        }
+    }
+    previous_legacy=legacy;
+    int64_t start=esp_timer_get_time();
+    s_app_pan=(lv_point_t){x,y};
+    if(legacy) {
+        for(int i=0;i<APP_COUNT;i++) {
+            lv_point_t c=app_icon_center(i);
+            int dx=c.x-CENTER_X,dy=c.y-CENTER_Y,level=0;
+            while(level<7 && dx*dx+dy*dy>=(20+level*40)*(20+level*40))level++;
+            int size=120-level*8;
+            if(s_bench_level[i]!=level) {
+                lv_image_set_src(s_app_icons[i],s_bench_art[i][level]);
+                lv_obj_set_size(s_app_icons[i],size,size);s_bench_level[i]=level;
+            }
+            lv_obj_set_pos(s_app_icons[i],c.x-size/2,c.y-size/2);
+            lv_obj_set_pos(s_app_labels[i],c.x-APP_LABEL_W/2,c.y+size/2+3);
+        }
+    } else apps_layout_icons();
+    lv_refr_now(NULL);
+    unsigned elapsed=esp_timer_get_time()-start;
+    bsp_display_unlock();return elapsed;
 }

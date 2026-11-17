@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 #include "bsp/esp-bsp.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "cJSON.h"
@@ -43,25 +44,37 @@ static epw_weather_kind_t forecast_kind(const cJSON *data, time_t now)
     const cJSON *stamp = cJSON_GetObjectItemCaseSensitive(predict, "publish_time");
     const cJSON *detail = cJSON_GetObjectItemCaseSensitive(predict, "detail");
     struct tm date;
-    char today[16], yesterday[16];
+    char today[16], yesterday[16], tomorrow[16];
     localtime_r(&now, &date);
     strftime(today, sizeof(today), "%Y-%m-%d", &date);
-    const char *period = date.tm_hour >= 6 && date.tm_hour < 18 ? "day" : "night";
+    /* 06:00-18:00 先取白天，其余先取夜间；气象台会把已过/未发布的时段置为 9999。 */
+    const bool prefer_day = date.tm_hour >= 6 && date.tm_hour < 18;
     time_t previous = now - 86400;
     localtime_r(&previous, &date);
     strftime(yesterday, sizeof(yesterday), "%Y-%m-%d", &date);
+    time_t next = now + 86400;
+    localtime_r(&next, &date);
+    strftime(tomorrow, sizeof(tomorrow), "%Y-%m-%d", &date);
     if (!cJSON_IsString(code) || strcmp(code->valuestring, "wdcXE") ||
         !cJSON_IsString(stamp) || strlen(stamp->valuestring) != 16 ||
         (strncmp(stamp->valuestring, today, 10) && strncmp(stamp->valuestring, yesterday, 10)) ||
         !cJSON_IsArray(detail)) return EPW_WEATHER_UNKNOWN;
-    const cJSON *day;
-    cJSON_ArrayForEach(day, detail) {
-        const cJSON *stamp = cJSON_GetObjectItemCaseSensitive(day, "date");
-        if (!cJSON_IsString(stamp) || strcmp(stamp->valuestring, today)) continue;
-        const cJSON *part = cJSON_GetObjectItemCaseSensitive(day, period);
-        const cJSON *weather = cJSON_GetObjectItemCaseSensitive(part, "weather");
-        const cJSON *info = cJSON_GetObjectItemCaseSensitive(weather, "info");
-        return weather_kind(cJSON_IsString(info) ? info->valuestring : NULL);
+    const char *periods[2] = {prefer_day ? "day" : "night", prefer_day ? "night" : "day"};
+    const char *dates[2] = {today, tomorrow};
+    for (int d = 0; d < 2; d++) {
+        const cJSON *day;
+        cJSON_ArrayForEach(day, detail) {
+            const cJSON *day_stamp = cJSON_GetObjectItemCaseSensitive(day, "date");
+            if (!cJSON_IsString(day_stamp) || strcmp(day_stamp->valuestring, dates[d])) continue;
+            for (int p = 0; p < 2; p++) {
+                const cJSON *part = cJSON_GetObjectItemCaseSensitive(day, periods[p]);
+                const cJSON *weather = cJSON_GetObjectItemCaseSensitive(part, "weather");
+                const cJSON *info = cJSON_GetObjectItemCaseSensitive(weather, "info");
+                epw_weather_kind_t kind = weather_kind(cJSON_IsString(info) ? info->valuestring : NULL);
+                if (kind != EPW_WEATHER_UNKNOWN) return kind;
+            }
+            break;
+        }
     }
     return EPW_WEATHER_UNKNOWN;
 }
@@ -153,7 +166,9 @@ static void weather_task(void *arg)
                 ESP_LOGI(TAG, "Xiaoshan %.1f C, observed %02d:%02d, icon=%d", temperature, date.tm_hour, date.tm_min, kind);
             } else {
                 next_fetch = time(NULL) + 60;
-                ESP_LOGW(TAG, "weather unavailable; retry in 60s");
+                ESP_LOGW(TAG, "weather unavailable; retry in 60s (internal %u B, psram %u B)",
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
             }
         }
         if (visible && (time(NULL) - published > WEATHER_MAX_AGE || time(NULL) < published - 300)) {
