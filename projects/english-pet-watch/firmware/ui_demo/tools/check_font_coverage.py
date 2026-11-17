@@ -7,7 +7,7 @@
   2. 豆包桥接返回的 text 是服务端动态生成的，静态子集永远追不上，
      生僻字 / emoji 必然变方框。
 
-所以现在字体固定包含 GB2312 全集（6763 字），ui.c 里的字再额外补齐；
+16px 字体包含 GB2312 全集（6763 字）；20px 仅保留静态界面汉字；
 运行时 ui.c 的 pet_safe_text() 还会过滤字体里确实没有的码点。
 
 用法：python3 tools/check_font_coverage.py
@@ -103,31 +103,29 @@ def font_codepoints(path: Path) -> set:
     return cps
 
 
+def required_characters(size: int) -> set:
+    # 20px 仅用于静态界面；动态回复只使用 16px 字体。
+    needed = set().union(*(literals_cjk(p) for p in (ROOT / "main").glob("*.c")))
+    if size == 16:
+        if MOCK_PY.exists():
+            needed |= literals_cjk(MOCK_PY)
+        needed |= {c for line in DYNAMIC_SAMPLES for c in line if "\u4e00" <= c <= "\u9fff"}
+        needed |= gb2312_cjk()
+    return needed
+
+
 def main() -> int:
-    needed = set()
-    needed |= literals_cjk(UI_C)
-    if MOCK_PY.exists():
-        needed |= literals_cjk(MOCK_PY)
-    needed |= {c for s in DYNAMIC_SAMPLES for c in s if "\u4e00" <= c <= "\u9fff"}
-
-    gb = gb2312_cjk()
-    print(f"界面/动态样例汉字: {len(needed)}")
-    print(f"GB2312 常用汉字:   {len(gb)}")
-
     ok = True
     for font in FONTS:
+        size = int(font.stem.rsplit("_", 1)[1])
         have = font_codepoints(font)
-        missing_ui = sorted(c for c in needed if ord(c) not in have)
-        missing_gb = sorted(c for c in gb if ord(c) not in have)
-        if missing_ui or missing_gb:
+        missing = sorted(c for c in required_characters(size) if ord(c) not in have)
+        if missing:
             ok = False
-            if missing_ui:
-                print(f"[FAIL] {font.name}: 界面/动态缺 {len(missing_ui)} 字 -> {''.join(missing_ui)}")
-            if missing_gb:
-                print(f"[FAIL] {font.name}: GB2312 缺 {len(missing_gb)} 字 -> {''.join(missing_gb[:60])}"
-                      f"{'…' if len(missing_gb) > 60 else ''}")
+            print(f"[FAIL] {font.name}: 缺 {len(missing)} 字 -> {''.join(missing[:60])}")
         else:
-            print(f"[OK]   {font.name}: {len(have)} 字形，界面/动态 + GB2312 全覆盖")
+            scope = "界面 + GB2312 动态回复" if size == 16 else "静态界面子集"
+            print(f"[OK]   {font.name}: {len(have)} 字形，{scope}全覆盖")
     if not ok:
         print("请重跑 ./tools/gen_ui_assets.sh 后再编译。")
         return 1

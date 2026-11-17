@@ -6,6 +6,50 @@
 > **本项目不使用 xiaozhi-esp32 自带固件。** 固件源码在本目录，自行实现 Wi-Fi、OTA 与后续语音链路；
 > xiaozhi-esp32 只作为**板级引脚与协议参考**，不复制其代码。服务端复用 xiaozhi-esp32-server 的 OTA 与 WebSocket 能力。
 
+## 本轮修复与验证（2026-11-17）
+
+当前源码已调整：
+
+- 控制中心为 **3+3 六磁贴**，移除没有数据来源的天气；图标装饰不再抢点击。
+- 下拉折返可取消；PWR 按当前顶层页面逐层返回。
+- 未校时显示「等待校时」；USB 供电和 PMU 实际充电状态分别处理。
+- 音量页显示「静音」，没有无效滑杆；静音模式不创建 Opus 解码器和播放缓冲。
+- 进入宠物页不会自动录音，**左滑才请求聊天**；联网并完成服务器 hello 后才打开麦克风。
+  右滑退出、PWR 返回、BOOT 退出、切页或 30s 熄屏均取消会话，后台关闭麦克风并释放编码器和网络资源。
+- 删除固定台词模拟的聊天计时器，表情和回复由实际服务器事件驱动；未配置时明确提示。
+- 中文 JSON 使用官方 `espressif/cjson`，支持 UTF-8 和 Unicode 转义；WebSocket 分片重组上限 8192 字节，超限整条丢弃。
+- Wi-Fi 连接成功获得 IP 后才保存账号；密码键盘覆盖全部可打印 ASCII，支持 WPA2/WPA3 常见密码及 64 位十六进制 PSK。
+- 16px 保留完整常用中文字库，20px 仅保留静态文案子集。
+
+开发验证（在 `ui_demo/` 内，先激活 ESP-IDF）：
+
+```bash
+idf.py build
+python3 tools/test_firmware.py         # 需要主机 C 编译器；首次构建后使用托管 cJSON 源码
+python3 tools/check_font_coverage.py
+bash -n tools/gen_ui_assets.sh
+```
+
+主机回归覆盖中文/转义/无效 JSON、握手门槛、会话取消、两种 WebSocket 分片与超限、
+下拉取消、PWR 顶层返回、装饰对象命中、供电状态、离线时间和密码键盘字符覆盖。
+
+2026-11-17 已烧录到 1.75C 实机，写入哈希校验通过；串口确认识别 8MB PSRAM、
+生成 466×466 控制中心快照、进入 `UI ready` 并连接 Wi-Fi。
+本次启动观察未出现崩溃或未操作便启动麦克风的日志。
+
+其余真机交互与语音验收 **待验证**：
+
+1. ⚠️ 首次烧录按下文流程断开电池，仅用 USB 供电；核对板型、32MB Flash 和串口。
+2. 点六个磁贴的图标中心及空白处，再从图标上拖动收起；下拉后拖回起点应取消。
+3. 桌面 → 状态 → PWR 应回桌面；网络密码页应逐层返回。音量页应只显示静音。
+4. 宠物页左滑后观察 `microphone active`，服务端应收到真实语音帧；退出/熄屏后应出现
+   `voice session stopped`，服务端不再收到新的录音帧。断网和服务器不可达时不应启动麦克风。
+5. 中文正常显示；没有网络校时时显示等待状态，不出现演示日期或天气。
+6. 接电池前核对极性与电压，由家长操作；对照 PMU 电压与实际电池电压校准电量判断。
+   分别验证 USB 无电池、充电中、已充满三种状态；电流、帧率、内存峰值和续航改善均待验证。
+
+以下截图与真机记录是修复前的历史版本，布局和语音行为以本节为准。
+
 ## 0. 当前可用：真机 UI Demo（2026-11-16）
 
 `ui_demo/` 是独立可编译的 ESP-IDF 工程，已在 **Waveshare ESP32-S3-Touch-AMOLED-1.75C** 上跑通：
@@ -18,8 +62,8 @@
 | 宠物 | 独立宠物页 **Mimi Cat · 3D 正脸猫**：8 张 Fluent Emoji 3D（MIT）+ 9 种情绪、对话气泡、纯手势互动；本地情景引擎按电量/充电/网络/时间换状态 |
 | 物理键 | `BOOT`（GPIO0）短按 → 宠物页；`PWR`（AXP2101）短按 → 应用桌面；长按 PWR 仍由 PMU 关机 |
 | 豆包桥接 | 设备轮询 `EPW_PET_BRIDGE_URL` 的轻量 JSON（`emotion` + `text`），云 Key 只在服务端；未配置时只用本地情景引擎 |
-| 音频 | **不初始化 I2S/ES8311，音量固定 0**；界面只显示「静音」，不出现聆听/说话假状态 |
-| 网络 | 编译期写入 2.4GHz 热点，上电自动连接；联网后 SNTP 同步北京时间，失败时用内置时钟兜底 |
+| 音频 | 按需启用 16kHz 单声道麦克风 → Opus(60ms) → WebSocket；扬声器静音，下行只显示文字 |
+| 网络 | 编译期写入 2.4GHz 热点，上电自动连接；联网后 SNTP 同步北京时间，未校时时显示等待状态 |
 | 构建 | ESP-IDF **6.0.2**，LVGL 9.5.0，Waveshare BSP 3.0.0 |
 
 ```bash
@@ -35,6 +79,11 @@ idf.py -p /dev/cu.usbmodem* flash monitor
 
 热点配置放本地 `sdkconfig.local`（`CONFIG_EPW_WIFI_SSID` / `CONFIG_EPW_WIFI_PASSWORD`），**不要提交**。
 也可以 `idf.py menuconfig` → `English Pet Watch UI Demo` 里填写。
+
+> `main/CMakeLists.txt` 会在配置阶段把 Waveshare BSP 的 LVGL 分块高度 `50 → 10`（幂等）。
+> 原因：LVGL 画布在 PSRAM，SPI 刷新要申请同样大小的内部 DMA 反弹缓冲；Wi-Fi 扫描时内部堆碎片化，
+> 50 行（≈46KB）申请不到连续内存，整屏刷新会报 `Failed to allocate priv TX buffer`。
+> `managed_components` 重新拉取后补丁仍会自动生效。
 
 2026-11-16 真机验证（`/dev/cu.usbmodem1101`，UI Demo V0.11）：
 
@@ -64,7 +113,7 @@ python3 tools/decode_shots.py /tmp/epw-monitor*.log -o ../../resources/screensho
 
 ### UI 素材重新生成
 
-中文字体只打包界面用到的汉字（脚本只从字符串字面量取字，注释里的中文不会进子集；当前 159 字形，含宠物页台词）；表情来自 Microsoft Fluent Emoji 3D（MIT）。
+中文字体采用 16px 完整常用字库与 20px 静态界面子集（只从代码字符串取字，注释不进入子集）；表情来自 Microsoft Fluent Emoji 3D（MIT）。
 改动界面文案或换表情后执行：
 
 ```bash
@@ -95,6 +144,35 @@ python3 tools/doubao_bridge_mock.py --port 8788 --doubao     # 真豆包回复 �
 ```
 
 桥接只更新宠物状态，不主动弹页；服务端 30s 无新数据时自动回落到本地情景引擎。正式语音链路仍走 xiaozhi-server 的 WebSocket（ASR → 豆包 LLM → TTS）。
+
+### 豆包语音链路（xiaozhi-server WebSocket）
+
+设备端实现见 `ui_demo/main/voice_client.c`，按 xiaozhi-esp32 `websocket_zh.md` 的 **v1** 协议：
+
+- 上行：ES7210 麦克风 → PCM 16kHz/单声道/16bit → Opus 60ms 帧 → WebSocket 二进制帧；
+- 下行：接收文本事件显示表情与台词；TTS 二进制帧直接丢弃，当前不解码、不播放；
+- 文本事件：`hello` 建会话、`stt` → 宠物「思考」、`llm` 的 `emotion`/`text` → Mimi Cat 表情与气泡、`tts` 控制上下行；
+- 鉴权 token 只从本地 Kconfig 读取，不保存云 Key。
+
+配置（写进 `sdkconfig.local`，不入库；留空 = 关闭语音链路）：
+
+```text
+CONFIG_EPW_VOICE_WS_URL="ws://<服务器IP>:5801/xiaozhi/v1/"
+CONFIG_EPW_VOICE_TOKEN=""
+```
+
+编译/烧录命令同上；串口验证顺序：
+
+```text
+宠物页左滑请求聊天
+服务器完成 hello 握手
+epw-voice: microphone active (16 kHz mono)
+退出/熄屏后：epw-voice: voice session stopped; microphone closed
+```
+
+> 语音链路依赖 Wi-Fi 与服务端可达。2026-11-17 实测：`vls` 上 xiaozhi 容器在跑（`127.0.0.1:8000/8003`），
+> 但 nginx `5801` 未监听、安全组未放行（外网 `nc 124.222.233.196 5801` 超时）；
+> 打通公网入口前，设备会停在「等 Wi-Fi / 等 WebSocket」阶段，不会崩。
 
 ## 1. V0.1 能做什么
 

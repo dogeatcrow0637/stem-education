@@ -44,37 +44,16 @@ download_emoji "Weary cat" "weary_cat" "sleepy"
 download_emoji "Crying cat" "crying_cat" "sad"
 download_emoji "Kissing cat" "kissing_cat" "love"
 
-echo "[3/5] 生成中文字体（GB2312 6763 字 + 界面文案，覆盖豆包动态台词）"
-SYMBOLS="$(python3 - "${ROOT}/main/ui.c" <<'PY'
-import re
-import sys
-
-# 1) 界面文案里的字，保证静态 UI 一定覆盖
-text = open(sys.argv[1], encoding="utf-8").read()
-# 只从代码里取字，注释里的中文不应进子集（否则改注释就会把字体撑大）
-text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
-text = re.sub(r'//[^\n]*', '', text)
-chars = {c for c in text if "\u4e00" <= c <= "\u9fff"}
-
-# 2) GB2312 全集（一级 3755 + 二级 3008）：豆包/服务端返回的常见中文都在里面，
-#    避免动态台词出现方框。生僻字/emoji 由 ui.c 的 pet_safe_text() 运行时过滤。
-for hi in range(0xA1, 0xF8):
-    for lo in range(0xA1, 0xFF):
-        try:
-            ch = bytes((hi, lo)).decode("gb2312")
-        except UnicodeDecodeError:
-            continue
-        if "\u4e00" <= ch <= "\u9fff":
-            chars.add(ch)
-
-# 3) 额外标点：温度 °、乘号 ×、中点 ·，以及界面台词常用全角标点
-chars |= set("°×·！～…：，。？（）、“”；《》【】—")
-print("".join(sorted(chars)), end="")
-PY
-)"
-echo "  字体符号数: $(python3 -c 'import sys;print(len(sys.argv[1]))' "${SYMBOLS}")"
-
+echo "[3/5] 生成中文字体（16px 完整字库 / 20px 静态子集）"
 for size in 16 20; do
+  SYMBOLS="$(python3 - "${ROOT}/tools" "${size}" <<'FONT_PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from check_font_coverage import required_characters
+chars = required_characters(int(sys.argv[2])) | set("°×·！～…：，。？（）、“”；《》【】—")
+print("".join(sorted(chars)), end="")
+FONT_PY
+)"
   npx --yes lv_font_conv@1.5.3 \
     --font "${FONT}" \
     --size "${size}" \

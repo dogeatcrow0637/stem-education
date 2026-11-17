@@ -6,14 +6,8 @@
 extern "C" {
 #endif
 
-/** 初始化 I2S + ES8311 扬声器通路。重复调用安全；失败返回 false。 */
+/** 按需初始化 16 kHz 音频总线，扬声器保持静音且输出通道关闭。 */
 bool audio_init(void);
-
-/** 设置输出音量 0..100（0 = 静音）。 */
-void audio_set_volume(int percent);
-
-/** 当前输出音量 0..100。 */
-int audio_get_volume(void);
 
 #ifdef __cplusplus
 }

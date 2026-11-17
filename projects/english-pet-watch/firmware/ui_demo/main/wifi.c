@@ -1,6 +1,7 @@
 #include "wifi.h"
 
 #include <stdio.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
@@ -29,6 +30,8 @@ static char s_ip[16] = "--";
 static bool s_inited;
 static bool s_have_cred;
 static bool s_user_connect;  /* 本次连接由用户在配网页发起 */
+static bool s_ignore_leave;
+static SemaphoreHandle_t s_control_lock;
 static bool s_auto_retry;    /* 失败后是否继续自动重连 */
 static char s_ssid[33];
 static char s_pass[65];
@@ -69,9 +72,16 @@ static void creds_save(const char *ssid, const char *password)
         ESP_LOGW(TAG, "cannot open NVS for saving");
         return;
     }
-    nvs_set_str(h, WIFI_NVS_SSID, ssid);
-    nvs_set_str(h, WIFI_NVS_PASS, password != NULL ? password : "");
-    nvs_commit(h);
+    esp_err_t err = nvs_set_str(h, WIFI_NVS_SSID, ssid);
+    if (err == ESP_OK) {
+        err = nvs_set_str(h, WIFI_NVS_PASS, password != NULL ? password : "");
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "saving network failed: %s", esp_err_to_name(err));
+    }
     nvs_close(h);
 }
 
@@ -110,8 +120,8 @@ static void sntp_start_once(void)
 static void apply_sta_config(void)
 {
     wifi_config_t cfg = {0};
-    snprintf((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), "%s", s_ssid);
-    snprintf((char *)cfg.sta.password, sizeof(cfg.sta.password), "%s", s_pass);
+    memcpy(cfg.sta.ssid, s_ssid, strlen(s_ssid));
+    memcpy(cfg.sta.password, s_pass, strlen(s_pass));
     cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
     cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     cfg.sta.pmf_cfg.capable = true;
@@ -138,6 +148,7 @@ static bool disconnect_is_fatal(uint8_t reason)
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
+    xSemaphoreTake(s_control_lock, portMAX_DELAY);
 
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         if (s_have_cred) {
@@ -148,6 +159,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *evt = (wifi_event_sta_disconnected_t *)data;
+        if (s_ignore_leave && evt->reason == WIFI_REASON_ASSOC_LEAVE) {
+            s_ignore_leave = false;
+            goto done;
+        }
         ESP_LOGW(TAG, "disconnected, reason=%d", evt->reason);
         if (evt->reason == WIFI_REASON_NO_AP_FOUND && !s_hinted_no_ap) {
             s_hinted_no_ap = true;
@@ -156,9 +171,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         }
         snprintf(s_ip, sizeof(s_ip), "--");
 
-        if (!s_have_cred) {
+        if (!s_have_cred || (!s_user_connect && !s_auto_retry)) {
             s_state = EPW_WIFI_OFF;
-            return;
+            goto done;
         }
 
         if (s_user_connect) {
@@ -181,14 +196,25 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *evt = (ip_event_got_ip_t *)data;
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK ||
+            strcmp((const char *)ap.ssid, s_ssid) != 0) {
+            goto done; /* 切换网络后忽略旧连接排队的 IP 事件。 */
+        }
         ESP_LOGI(TAG, "connected, ip=" IPSTR, IP2STR(&evt->ip_info.ip));
         snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&evt->ip_info.ip));
         s_retry_num = 0;
+        if (s_user_connect) {
+            creds_save(s_ssid, s_pass);
+        }
+        s_ignore_leave = false;
         s_user_connect = false;
         s_auto_retry = true; /* 掉线后继续自动重连 */
         s_state = EPW_WIFI_CONNECTED;
         sntp_start_once();
     }
+done:
+    xSemaphoreGive(s_control_lock);
 }
 
 /* 扫描并打印 2.4GHz 可见 AP，便于判断热点是否开启/是否为 5GHz。 */
@@ -241,16 +267,23 @@ static void reconnect_task(void *arg)
     bool scanned = false;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(15000));
-        if (s_state == EPW_WIFI_FAILED && s_have_cred && s_auto_retry) {
+        xSemaphoreTake(s_control_lock, portMAX_DELAY);
+        bool retry = s_state == EPW_WIFI_FAILED && s_have_cred && s_auto_retry;
+        xSemaphoreGive(s_control_lock);
+        if (retry) {
             /* 首次失败先扫描一次，确认 SSID 是否在 2.4GHz 可见 */
             if (!scanned) {
                 scan_and_log();
                 scanned = true;
             }
-            ESP_LOGI(TAG, "retrying hotspot connection");
-            s_retry_num = 0;
-            s_state = EPW_WIFI_CONNECTING;
-            esp_wifi_connect();
+            xSemaphoreTake(s_control_lock, portMAX_DELAY);
+            if (s_state == EPW_WIFI_FAILED && s_have_cred && s_auto_retry) {
+                ESP_LOGI(TAG, "retrying hotspot connection");
+                s_retry_num = 0;
+                s_state = EPW_WIFI_CONNECTING;
+                esp_wifi_connect();
+            }
+            xSemaphoreGive(s_control_lock);
         }
     }
 }
@@ -400,6 +433,11 @@ void wifi_init_sta(void)
     if (s_inited) {
         return;
     }
+    s_control_lock = xSemaphoreCreateMutex();
+    if (s_control_lock == NULL) {
+        ESP_LOGE(TAG, "Wi-Fi control mutex allocation failed");
+        return;
+    }
     s_inited = true;
 
     if (s_scan_lock == NULL) {
@@ -422,6 +460,7 @@ void wifi_init_sta(void)
 
     wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                         &wifi_event_handler, NULL, NULL));
@@ -486,15 +525,27 @@ bool wifi_has_credentials(void)
 
 esp_err_t wifi_connect_to(const char *ssid, const char *password)
 {
+    const char *pass = password != NULL ? password : "";
+    size_t ssid_len = ssid != NULL ? strlen(ssid) : 0;
+    size_t pass_len = strlen(pass);
+    if (ssid_len == 0 || ssid_len > 32 || pass_len > 64 || (pass_len > 0 && pass_len < 8)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (size_t i = 0; i < pass_len; i++) {
+        if ((unsigned char)pass[i] < 0x20 || (unsigned char)pass[i] > 0x7E ||
+            (pass_len == 64 && !isxdigit((unsigned char)pass[i]))) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
     if (!s_inited) {
         wifi_init_sta();
     }
-    if (ssid == NULL || ssid[0] == '\0') {
-        return ESP_ERR_INVALID_ARG;
+    if (!s_inited) {
+        return ESP_ERR_INVALID_STATE;
     }
-
-    snprintf(s_ssid, sizeof(s_ssid), "%s", ssid);
-    snprintf(s_pass, sizeof(s_pass), "%s", password != NULL ? password : "");
+    xSemaphoreTake(s_control_lock, portMAX_DELAY);
+    memcpy(s_ssid, ssid, ssid_len + 1);
+    memcpy(s_pass, pass, pass_len + 1);
     s_have_cred = true;
     s_user_connect = true;
     s_auto_retry = false;
@@ -502,24 +553,26 @@ esp_err_t wifi_connect_to(const char *ssid, const char *password)
     s_hinted_no_ap = false;
     s_state = EPW_WIFI_CONNECTING;
 
-    creds_save(s_ssid, s_pass);
-
-    esp_wifi_disconnect();
+    /* 旧连接的主动断开事件不属于新账号的连接失败。 */
+    s_ignore_leave = true;
+    if (esp_wifi_disconnect() != ESP_OK) {
+        s_ignore_leave = false;
+    }
     wifi_config_t cfg = {0};
-    snprintf((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), "%s", s_ssid);
-    snprintf((char *)cfg.sta.password, sizeof(cfg.sta.password), "%s", s_pass);
+    memcpy(cfg.sta.ssid, s_ssid, ssid_len);
+    memcpy(cfg.sta.password, s_pass, pass_len);
     cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
     cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     cfg.sta.pmf_cfg.capable = true;
-    cfg.sta.pmf_cfg.required = false;
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "set_config failed: %s", esp_err_to_name(err));
-        return err;
+    if (err == ESP_OK) {
+        err = esp_wifi_connect();
     }
-
-    err = esp_wifi_connect();
-    ESP_LOGI(TAG, "connect requested: %s err=%s", s_ssid, esp_err_to_name(err));
+    if (err != ESP_OK) {
+        s_user_connect = false;
+        s_state = EPW_WIFI_FAILED;
+    }
+    xSemaphoreGive(s_control_lock);
     return err;
 }
 
@@ -528,11 +581,13 @@ void wifi_disconnect(void)
     if (!s_inited) {
         return;
     }
+    xSemaphoreTake(s_control_lock, portMAX_DELAY);
     s_auto_retry = false;
     s_user_connect = false;
     esp_wifi_disconnect();
     s_state = EPW_WIFI_OFF;
     snprintf(s_ip, sizeof(s_ip), "--");
+    xSemaphoreGive(s_control_lock);
 }
 
 void wifi_forget(void)
@@ -540,6 +595,7 @@ void wifi_forget(void)
     if (!s_inited) {
         return;
     }
+    xSemaphoreTake(s_control_lock, portMAX_DELAY);
     s_auto_retry = false;
     s_user_connect = false;
     s_have_cred = false;
@@ -549,4 +605,5 @@ void wifi_forget(void)
     esp_wifi_disconnect();
     s_state = EPW_WIFI_OFF;
     snprintf(s_ip, sizeof(s_ip), "--");
+    xSemaphoreGive(s_control_lock);
 }

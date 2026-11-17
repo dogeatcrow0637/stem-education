@@ -25,9 +25,9 @@ void ui_init(void);
 
 /**
  * 刷新电池显示。percent < 0 表示未知；
- * usb_powered 为 true 时进入充电模式（外圈点亮为电量环 + 彗星）。
+ * charging 为 PMU 的真实充电状态；usb_powered 仅表示外部供电。
  */
-void ui_update_battery(int percent, bool usb_powered);
+void ui_update_battery(int percent, bool charging, bool usb_powered);
 
 /** 兼容接口：按层叠关系切换（状态页 > 控制中心 > 表盘）。调用前需持有 LVGL 锁。 */
 void ui_demo_toggle_menu(void);
