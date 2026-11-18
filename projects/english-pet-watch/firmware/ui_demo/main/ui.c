@@ -131,6 +131,7 @@ static bool s_nursery_open;
 #define CENTER_DRAG_TH  8
 static bool s_center_dragging;
 static bool s_center_drag_engaged;
+static int s_center_press_x;
 static int s_center_press_y;
 static int s_center_press_reveal;
 static int s_center_reveal;
@@ -1308,18 +1309,29 @@ static void home_pull_cb(lv_event_t *e)
     lv_indev_get_point(indev, &p);
 
     if (code == LV_EVENT_PRESSED) {
+        /* 下拉只在表盘顶部 1/3 起手：中部和边缘横向滑动留给其它手势，
+         * 避免从右往左滑时被误判成下拉控制中心。 */
+        s_center_dragging = false;
+        s_center_drag_engaged = false;
+        if (p.y > SCREEN_H / 3) {
+            return;
+        }
         center_anim_stop();
         s_center_dragging = true;
         s_center_drag_engaged = false;
+        s_center_press_x = p.x;
         s_center_press_y = p.y;
         s_center_press_reveal = s_center_reveal;
     } else if (code == LV_EVENT_PRESSING) {
         if (!s_center_dragging || s_nur_drag_engaged) {
             return;
         }
+        int dx = p.x - s_center_press_x;
+        if (dx < 0) dx = -dx;
         int dy = p.y - s_center_press_y;
         if (!s_center_drag_engaged) {
-            if (dy <= CENTER_DRAG_TH) {
+            /* 竖向位移必须明显大于横向，横滑不抢手势 */
+            if (dy <= CENTER_DRAG_TH || dy < dx) {
                 return;
             }
             s_center_drag_engaged = true;
@@ -3089,7 +3101,8 @@ static void build_dial(lv_obj_t *page)
     /* 表盘装饰物不接收点击，所有按压都落到 page 上，才能跟手下拉控制中心 */
     clear_clickable_tree(page);
 
-    /* 华为手表式跟手下拉：不依赖手势识别，手指拖多少露出多少 */
+    /* 华为手表式跟手下拉：不依赖手势识别，手指拖多少露出多少。
+     * 只接受顶部 1/3 起手，且要求竖向位移大于横向，避免横滑误触发。 */
     lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_RELEASED, NULL);

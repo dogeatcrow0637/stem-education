@@ -1067,11 +1067,11 @@ enum {LV_EVENT_PRESSED=1, LV_EVENT_PRESSING, LV_EVENT_RELEASED, LV_EVENT_PRESS_L
 #define LV_OBJ_FLAG_CLICKABLE 2
 #define LV_UNUSED(x) (void)(x)
 static bool s_center_open,s_center_dragging,s_center_drag_engaged,s_home_snap_dirty,s_nur_drag_engaged;
-static int s_center_press_y,s_center_press_reveal,s_center_reveal;
+static int s_center_press_x,s_center_press_y,s_center_press_reveal,s_center_reveal;
 static bool s_tools_open;
 static void tools_close(void){s_tools_open=false;}
 static bool s_wifipwd_open,s_wifi_open,s_apps_open,s_status_open,s_torch_open,s_slider_open,s_pet_open,s_nursery_open;
-static int fake_indev, point_y;
+static int fake_indev, point_x, point_y;
 static int s_power_override=-1,s_bat_percent;
 static bool s_charging,s_usb_powered;
 static int s_last_h=-1,s_last_m=-1,s_last_day=-1;
@@ -1087,7 +1087,7 @@ static bool pages_busy_except_center(void){return false;}
 static bool page_anim_busy(void){return false;}
 static int lv_event_get_code(lv_event_t *e){return e->code;}
 static lv_indev_t *lv_event_get_indev(lv_event_t *e){return &fake_indev;}
-static void lv_indev_get_point(lv_indev_t *i,lv_point_t *p){p->x=0;p->y=point_y;}
+static void lv_indev_get_point(lv_indev_t *i,lv_point_t *p){p->x=point_x;p->y=point_y;}
 static void center_anim_stop(void){}
 static void center_snap_ensure(void){}
 static void center_drawer_begin(void){}
@@ -1127,6 +1127,15 @@ int main(void){
     e.code=LV_EVENT_PRESSED;home_pull_cb(&e);
     e.code=LV_EVENT_PRESSING;point_y=200;home_pull_cb(&e);
     e.code=LV_EVENT_RELEASED;home_pull_cb(&e);assert(s_center_open);
+    /* 中部起手：纵向拖动不应拉开控制中心 */
+    s_center_open=false;s_center_reveal=0;point_x=233;point_y=300;
+    e.code=LV_EVENT_PRESSED;home_pull_cb(&e);
+    point_y=420;e.code=LV_EVENT_PRESSING;home_pull_cb(&e);assert(s_center_reveal==0);
+    e.code=LV_EVENT_RELEASED;home_pull_cb(&e);assert(!s_center_open);
+    /* 顶部横滑（右往左）：竖向位移小于横向时不抢手势 */
+    point_x=420;point_y=40;e.code=LV_EVENT_PRESSED;home_pull_cb(&e);
+    point_x=300;point_y=50;e.code=LV_EVENT_PRESSING;home_pull_cb(&e);assert(s_center_reveal==0);
+    e.code=LV_EVENT_RELEASED;home_pull_cb(&e);assert(!s_center_open);
     s_tools_open=true;s_status_open=true;ui_demo_toggle_apps();assert(!s_tools_open && s_status_open);
     s_status_open=false;
     s_center_open=false;s_apps_open=true;s_status_open=true;ui_demo_toggle_apps();
