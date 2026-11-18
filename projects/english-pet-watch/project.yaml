@@ -7,7 +7,7 @@ name_en: "English Pet Watch"
 status: "UI 原型（真机验证）"
 direction: ["语音交互", "大模型", "儿童英语", "可穿戴"]
 created: "2026-11-13"
-updated: "2026-11-17"
+updated: "2026-11-18"
 owner: ""
 
 platform:
@@ -21,7 +21,10 @@ external:
   video: ""
   weather: "https://www.nmc.cn/publish/forecast/AZJ/xiaoshan.html"
   power_reference: "https://github.com/lewisxhe/XPowersLib" # MIT，仅寄存器参考，未引入库
+  audio_schematic: "https://files.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75C/ESP32-S3-Touch-AMOLED-1.75C-schematic.pdf" # 厂商资料，仅接线参考
   cjson: "https://components.espressif.com/components/espressif/cjson"
+  audio_codec: "https://components.espressif.com/components/espressif/esp_audio_codec"
+  codec_device: "https://github.com/espressif/esp-adf/tree/master/components/esp_codec_dev"
 
 board:
   sku: "esp32-s3-touch-amoled-1.75c"
@@ -38,7 +41,7 @@ board:
 
 license:
   hardware: "开发板为商品；本项目自绘外壳与文档建议 CERN-OHL-W-2.0（待定）"
-  software: "xiaozhi-esp32：MIT；xiaozhi-esp32-server：MIT；cJSON：MIT（均以仓库 LICENSE 为准）"
+  software: "xiaozhi-esp32：MIT；xiaozhi-esp32-server：MIT；cJSON：MIT；esp_codec_dev：Apache-2.0；esp_audio_codec：Espressif Modified MIT（限 Espressif 产品，均以组件 LICENSE 为准）"
   note: "保留上游版权声明；不引入来源不明的模型权重"
 
 cost:

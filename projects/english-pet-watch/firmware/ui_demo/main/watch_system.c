@@ -50,8 +50,7 @@ esp_err_t watch_set_idle_timeout_ms(uint32_t timeout)
 bool watch_timer_select(uint32_t seconds)
 {
     if (s_timer_state == WATCH_TIMER_RUNNING || s_timer_state == WATCH_TIMER_PAUSED) return false;
-    if (seconds != 60 && seconds != 180 && seconds != 300 &&
-        seconds != 600 && seconds != 1800 && seconds != 3600) return false;
+    if (seconds == 0 || seconds > 86399) return false;
     watch_timer_reset();
     s_preset_s = seconds;
     return true;

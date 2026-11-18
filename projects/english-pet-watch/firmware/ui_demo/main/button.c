@@ -1,6 +1,7 @@
 #include "button.h"
 
 #include <stdatomic.h>
+#include <string.h>
 #include "driver/gpio.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -24,40 +25,28 @@ static atomic_bool s_shutdown_requested;
 static bool s_pwr_down, s_pwr_fired;
 static uint32_t s_pwr_started;
 
-static void toggle_pet(const char *source)
+/* 切页在 LVGL 线程执行，避免在 3KB 按键任务栈上创建/刷新整页。 */
+static void toggle_page_cb(void *arg)
 {
-    if (bsp_display_lock(100) != ESP_OK) {
-        ESP_LOGW(TAG, "%s: display busy, ignored", source);
-        return;
-    }
-    if (ui_power_menu_cancel()) {
-        bsp_display_unlock();
-        return;
-    }
+    const char *source = arg;
+    if (ui_power_menu_cancel()) return;
     bool woke = ui_activity();
     if (!woke) {
-        ui_demo_toggle_pet();
+        if (strcmp(source, "BOOT") == 0) ui_demo_toggle_pet();
+        else ui_demo_toggle_apps();
     }
-    bsp_display_unlock();
-    ESP_LOGI(TAG, "%s short press -> %s", source, woke ? "wake screen" : "pet page");
+    ESP_LOGI(TAG, "%s short press -> %s", source, woke ? "wake screen" : "page toggle");
 }
 
-static void toggle_apps(const char *source)
+static void toggle_page(const char *source)
 {
     if (bsp_display_lock(100) != ESP_OK) {
         ESP_LOGW(TAG, "%s: display busy, ignored", source);
         return;
     }
-    if (ui_power_menu_cancel()) {
-        bsp_display_unlock();
-        return;
-    }
-    bool woke = ui_activity();
-    if (!woke) {
-        ui_demo_toggle_apps();
-    }
+    lv_result_t result = lv_async_call(toggle_page_cb, (void *)source);
     bsp_display_unlock();
-    ESP_LOGI(TAG, "%s short press -> %s", source, woke ? "wake screen" : "app desktop");
+    if (result != LV_RESULT_OK) ESP_LOGW(TAG, "%s: UI queue full", source);
 }
 
 void button_request_shutdown(void)
@@ -95,7 +84,7 @@ static void pwr_key_poll(void)
         s_pwr_started = now;
     }
     if (events & (POWER_KEY_RELEASE | POWER_KEY_SHORT)) {
-        if ((events & POWER_KEY_SHORT) && !s_pwr_fired) toggle_apps("PWR");
+        if ((events & POWER_KEY_SHORT) && !s_pwr_fired) toggle_page("PWR");
         s_pwr_down = false;
     }
     if (s_pwr_down && !s_pwr_fired && (uint32_t)(now - s_pwr_started) >= 3000u) {
@@ -120,7 +109,7 @@ static void button_task(void *arg)
 
         if (gpio_get_level(BTN_GPIO) == 0) {
             if (low_ticks < BTN_DEBOUNCE_TICKS) {
-                if (++low_ticks == BTN_DEBOUNCE_TICKS) toggle_pet("BOOT");
+                if (++low_ticks == BTN_DEBOUNCE_TICKS) toggle_page("BOOT");
             }
         } else {
             low_ticks = 0;

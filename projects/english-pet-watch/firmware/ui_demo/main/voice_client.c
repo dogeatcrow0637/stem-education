@@ -1,4 +1,4 @@
-/* 静音语音链路：宠物页左滑启动，退出/熄屏停止；只上传 Opus，回复显示为文字。 */
+/* 宠物页左滑启动，退出停止；上传 Opus，回复文字与语音同步播放。 */
 #include "voice_client.h"
 
 #include <stdatomic.h>
@@ -13,6 +13,8 @@
 #include "esp_mac.h"
 #include "esp_websocket_client.h"
 #include "esp_opus_enc.h"
+#include "esp_opus_dec.h"
+#include "freertos/queue.h"
 #include "esp_codec_dev.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -46,6 +48,18 @@ static atomic_bool s_have_reply;
 static atomic_uint s_progress_tick;
 static unsigned s_tts_packets, s_tts_bytes;
 static char s_session_id[96];
+
+/* WebSocket 回调只入队，解码和 I2S 写入由已有语音任务完成。 */
+typedef struct {
+    size_t bytes;
+    uint8_t data[];
+} voice_packet_t;
+static QueueHandle_t s_tts_queue;
+static atomic_bool s_tts_end;
+static void *s_dec;
+static uint8_t *s_tts_pcm;
+static bool s_tts_output;
+static void close_audio(void);
 
 static bool session_current(void)
 {
@@ -111,13 +125,89 @@ static void send_listen_start(void)
     if (text != NULL && send_json(text)) {
         atomic_store(&s_listening, true);
         pet_set("listening", atomic_load(&s_have_reply) ? NULL : "我在听，你说吧。");
-        ESP_LOGI(TAG, "listen start; output volume=0");
+        ESP_LOGI(TAG, "listen start; reply volume=%d", audio_get_playback_volume());
     } else {
         pet_set("sad", "语音请求失败，请重试。");
         voice_client_set_active(false);
     }
     cJSON_free(text);
     cJSON_Delete(json);
+}
+
+static bool tts_enqueue(const void *data, size_t bytes)
+{
+    if (!bytes || bytes > VOICE_MAX_OPUS || s_tts_queue == NULL) return false;
+    voice_packet_t *packet = heap_caps_malloc(sizeof(*packet) + bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (packet == NULL) return false;
+    packet->bytes = bytes;
+    memcpy(packet->data, data, bytes);
+    if (xQueueSend(s_tts_queue, &packet, 0) != pdTRUE) {
+        free(packet);
+        return false;
+    }
+    return true;
+}
+
+static void tts_close(void)
+{
+    if (s_tts_output) audio_playback_close();
+    s_tts_output = false;
+    if (s_dec) esp_opus_dec_close(s_dec);
+    s_dec = NULL;
+    free(s_tts_pcm);
+    s_tts_pcm = NULL;
+    voice_packet_t *packet;
+    while (s_tts_queue && xQueueReceive(s_tts_queue, &packet, 0) == pdTRUE) free(packet);
+    atomic_store(&s_tts_end, false);
+}
+
+static bool tts_pump(void)
+{
+    voice_packet_t *packet = NULL;
+    if (xQueueReceive(s_tts_queue, &packet, 0) == pdTRUE) {
+        bool ok = true;
+        if (s_dec == NULL) {
+            close_audio();
+            esp_opus_dec_cfg_t cfg = ESP_OPUS_DEC_CONFIG_DEFAULT();
+            cfg.sample_rate = VOICE_SAMPLE_RATE;
+            cfg.channel = 1;
+            cfg.frame_duration = ESP_OPUS_DEC_FRAME_DURATION_120_MS;
+            s_tts_pcm = heap_caps_malloc(VOICE_MAX_PCM * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            ok = s_tts_pcm && esp_opus_dec_open(&cfg, sizeof(cfg), &s_dec) == ESP_AUDIO_ERR_OK;
+            if (ok) {
+                s_tts_output = audio_playback_open();
+                ok = s_tts_output;
+            }
+        }
+        if (ok) {
+            esp_audio_dec_in_raw_t raw = {.buffer = packet->data, .len = packet->bytes};
+            esp_audio_dec_out_frame_t frame = {.buffer = s_tts_pcm, .len = VOICE_MAX_PCM * 2};
+            esp_audio_dec_info_t info = {0};
+            ok = esp_opus_dec_decode(s_dec, &raw, &frame, &info) == ESP_AUDIO_ERR_OK &&
+                 raw.consumed == packet->bytes && frame.decoded_size > 0 &&
+                 frame.decoded_size <= VOICE_MAX_PCM * 2 &&
+                 audio_playback_write(s_tts_pcm, frame.decoded_size) == (int)frame.decoded_size;
+        }
+        free(packet);
+        if (!ok) {
+            pet_set("sad", "语音播放失败，请重试。");
+            voice_client_set_active(false);
+        }
+        return true;
+    }
+    if (atomic_load(&s_tts_end)) {
+        if (s_tts_output) vTaskDelay(pdMS_TO_TICKS(60)); /* 等最后一块 DMA 播完。 */
+        tts_close();
+        atomic_store(&s_reply_active, false);
+        ESP_LOGI(TAG, "TTS playback complete");
+        send_listen_start();
+        return true;
+    }
+    if (s_tts_output) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return true;
+    }
+    return false;
 }
 
 static const char *json_string(const cJSON *json, const char *key)
@@ -169,12 +259,11 @@ static void handle_text(const char *data, size_t len)
         if (strcmp(state, "start") == 0) {
             atomic_store(&s_listening, false);
             atomic_store(&s_reply_active, true);
+            atomic_store(&s_tts_end, false);
             s_tts_packets = s_tts_bytes = 0;
         } else if (strcmp(state, "stop") == 0) {
-            atomic_store(&s_reply_active, false);
-            ESP_LOGI(TAG, "TTS received: %u packets, %u bytes; output volume=0",
-                     s_tts_packets, s_tts_bytes);
-            send_listen_start();
+            ESP_LOGI(TAG, "TTS received: %u packets, %u bytes", s_tts_packets, s_tts_bytes);
+            atomic_store(&s_tts_end, true);
         } else if (strcmp(state, "sentence_start") == 0 && text[0] != '\0') {
             atomic_store(&s_have_reply, true);
             pet_set("speaking", text);
@@ -223,9 +312,12 @@ static void ws_event_handler(void *arg, esp_event_base_t base, int32_t event_id,
                 s_tts_packets++;
                 s_tts_bytes += s_message->used;
                 atomic_store(&s_progress_tick, xTaskGetTickCount());
+                if (!tts_enqueue(s_message->data, s_message->used)) {
+                    pet_set("sad", "语音播放失败，请重试。");
+                    voice_client_set_active(false);
+                }
             }
         }
-        /* 静音模式直接丢弃 TTS 二进制数据，不分配解码器和播放缓冲。 */
     }
 }
 
@@ -238,9 +330,13 @@ static bool open_audio(void)
         s_mic = bsp_audio_codec_microphone_init();
     }
     esp_codec_dev_sample_info_t fs = {
-        .bits_per_sample = 16, .channel = 1, .sample_rate = VOICE_SAMPLE_RATE,
+        .bits_per_sample = 16, .channel = 2, .sample_rate = VOICE_SAMPLE_RATE,
     };
     if (s_mic == NULL || esp_codec_dev_open(s_mic, &fs) != ESP_CODEC_DEV_OK) {
+        return false;
+    }
+    if (esp_codec_dev_set_in_gain(s_mic, 30.0f) != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "microphone gain setup failed");
         return false;
     }
     esp_opus_enc_config_t cfg = {
@@ -252,7 +348,7 @@ static bool open_audio(void)
     };
     bool ok = esp_opus_enc_open(&cfg, sizeof(cfg), &s_enc) == ESP_AUDIO_ERR_OK;
     if (ok) {
-        ESP_LOGI(TAG, "microphone active (16 kHz mono)");
+        ESP_LOGI(TAG, "microphone active (16 kHz stereo, gain=30dB)");
     }
     return ok;
 }
@@ -314,10 +410,31 @@ static void close_session(void)
         esp_websocket_client_destroy(s_ws);
         s_ws = NULL;
     }
+    tts_close();
     atomic_store(&s_connected, false);
     free(s_message);
     s_message = NULL;
     ESP_LOGI(TAG, "voice session stopped; microphone closed");
+}
+
+/* ES7210 两路板载麦克风混为 Opus 单声道，原地压缩不会覆盖后续输入。 */
+static void mix_microphones(uint8_t *pcm, size_t mono_bytes)
+{
+    int16_t *samples = (int16_t *)pcm;
+    for (size_t i = 0; i < mono_bytes / sizeof(*samples); i++) {
+        samples[i] = ((int32_t)samples[2 * i] + samples[2 * i + 1]) / 2;
+    }
+}
+
+static int pcm_peak(const uint8_t *pcm, size_t bytes)
+{
+    const int16_t *samples = (const int16_t *)pcm;
+    int peak = 0;
+    for (size_t i = 0; i < bytes / sizeof(*samples); i++) {
+        int amplitude = samples[i] < 0 ? -(int)samples[i] : samples[i];
+        if (amplitude > peak) peak = amplitude;
+    }
+    return peak;
 }
 
 static bool voice_wait_expired(uint32_t now, uint32_t hello_since)
@@ -342,6 +459,8 @@ static void voice_task(void *arg)
         uint32_t hello_since = xTaskGetTickCount();
         unsigned read_errors = 0;
         bool stack_logged = false;
+        unsigned audio_frames = 0;
+        int audio_peak = 0, input_peak = 0;
         bool ok = s_message != NULL && session_current() && ws_start();
         if (!ok) {
             pet_set("sad", "语音连接失败，请重试。");
@@ -357,6 +476,8 @@ static void voice_task(void *arg)
                 break;
             }
             if (atomic_load(&s_hello)) hello_since = now;
+            if (!atomic_load(&s_connected)) tts_close();
+            else if (tts_pump()) continue;
             if (!atomic_load(&s_connected) || !atomic_load(&s_hello) || !atomic_load(&s_listening)) {
                 if (!atomic_load(&s_connected) && s_enc != NULL) {
                     close_audio();
@@ -366,14 +487,14 @@ static void voice_task(void *arg)
                 }
                 /* 回复期间排空输入 DMA，避免下一轮把上一轮缓存误送给 ASR。 */
                 if (s_enc != NULL && atomic_load(&s_connected) && atomic_load(&s_hello)) {
-                    if (esp_codec_dev_read(s_mic, pcm, in_size) != ESP_CODEC_DEV_OK)
+                    if (esp_codec_dev_read(s_mic, pcm, in_size * 2) != ESP_CODEC_DEV_OK)
                         vTaskDelay(pdMS_TO_TICKS(20));
                 } else vTaskDelay(pdMS_TO_TICKS(20));
                 continue;
             }
             if (s_enc == NULL) {
-                pcm = heap_caps_malloc(VOICE_MAX_PCM + VOICE_MAX_OPUS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                opus = pcm != NULL ? pcm + VOICE_MAX_PCM : NULL;
+                pcm = heap_caps_malloc(VOICE_MAX_PCM * 2 + VOICE_MAX_OPUS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                opus = pcm != NULL ? pcm + VOICE_MAX_PCM * 2 : NULL;
                 if (pcm == NULL || !open_audio() ||
                     esp_opus_enc_get_frame_size(s_enc, &in_size, &out_size) != ESP_AUDIO_ERR_OK ||
                     in_size <= 0 || in_size > VOICE_MAX_PCM || out_size <= 0 || out_size > VOICE_MAX_OPUS) {
@@ -384,7 +505,7 @@ static void voice_task(void *arg)
                     break;
                 }
             }
-            int ret = esp_codec_dev_read(s_mic, pcm, in_size);
+            int ret = esp_codec_dev_read(s_mic, pcm, in_size * 2);
             if (ret != ESP_CODEC_DEV_OK) {
                 if (++read_errors >= 8) {
                     pet_set("sad", "麦克风读取失败，请重试。");
@@ -395,20 +516,41 @@ static void voice_task(void *arg)
                 continue;
             }
             read_errors = 0;
+            int raw_peak = pcm_peak(pcm, (size_t)in_size * 2);
+            if (raw_peak > input_peak) input_peak = raw_peak;
+            mix_microphones(pcm, (size_t)in_size);
+            int peak = pcm_peak(pcm, (size_t)in_size);
+            if (peak > audio_peak) audio_peak = peak;
             if (!session_current() || !atomic_load(&s_listening)) {
                 continue;
             }
             esp_audio_enc_in_frame_t in = {.buffer = pcm, .len = (uint32_t)in_size};
             esp_audio_enc_out_frame_t out = {.buffer = opus, .len = (uint32_t)out_size};
-            if (esp_opus_enc_process(s_enc, &in, &out) == ESP_AUDIO_ERR_OK &&
-                out.encoded_bytes > 0 && session_current() && atomic_load(&s_listening)) {
+            esp_audio_err_t encoded = esp_opus_enc_process(s_enc, &in, &out);
+            if (encoded != ESP_AUDIO_ERR_OK || out.encoded_bytes == 0) {
+                ESP_LOGE(TAG, "Opus encode failed: %d", encoded);
+                pet_set("sad", "录音编码失败，请重试。");
+                voice_client_set_active(false);
+                break;
+            }
+            if (session_current() && atomic_load(&s_listening)) {
                 if (!stack_logged) {
                     ESP_LOGI(TAG, "Opus encoding active; stack free min=%u bytes",
                              (unsigned)uxTaskGetStackHighWaterMark(NULL));
                     stack_logged = true;
                 }
-                esp_websocket_client_send_bin(s_ws, (const char *)opus, (int)out.encoded_bytes,
-                                              pdMS_TO_TICKS(500));
+                int sent = esp_websocket_client_send_bin(s_ws, (const char *)opus, (int)out.encoded_bytes,
+                                                         pdMS_TO_TICKS(500));
+                if (sent != (int)out.encoded_bytes) {
+                    ESP_LOGE(TAG, "audio upload failed: sent=%d expected=%u", sent, out.encoded_bytes);
+                    pet_set("sad", "录音发送失败，请重试。");
+                    voice_client_set_active(false);
+                    break;
+                }
+                if (++audio_frames % 50 == 0) {
+                    ESP_LOGI(TAG, "audio upload: %u frames, input peak=%d mono peak=%d", audio_frames, input_peak, audio_peak);
+                    audio_peak = input_peak = 0;
+                }
             }
         }
         if (session_current() && wifi_get_state() != EPW_WIFI_CONNECTED) {
@@ -422,6 +564,11 @@ static void voice_task(void *arg)
 void voice_client_init(void)
 {
     if (atomic_load(&s_ready) || CONFIG_EPW_VOICE_WS_URL[0] == '\0') {
+        return;
+    }
+    if (s_tts_queue == NULL) s_tts_queue = xQueueCreate(64, sizeof(voice_packet_t *));
+    if (s_tts_queue == NULL) {
+        ESP_LOGE(TAG, "reply queue create failed");
         return;
     }
     atomic_store(&s_ready, xTaskCreateWithCaps(voice_task, "epw_voice", VOICE_TASK_STACK, NULL, 4, NULL,

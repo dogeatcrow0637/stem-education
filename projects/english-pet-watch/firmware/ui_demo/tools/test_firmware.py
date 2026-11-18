@@ -31,6 +31,271 @@ def run_c(source, json=False):
 
 
 class FirmwareTests(unittest.TestCase):
+    def test_audio_dma_failure_does_not_enable_broken_channel(self):
+        # Run the actual configure patches on copies, including a second idempotence pass.
+        with tempfile.TemporaryDirectory(prefix='epw-audio-patch-') as tmp:
+            root = Path(tmp)
+            (root / 'main').mkdir()
+            paths = ['waveshare__esp32_s3_touch_amoled_1_75c/esp32_s3_touch_amoled_1_75c.c',
+                     'espressif__esp_codec_dev/esp_codec_dev.c',
+                     'espressif__esp_codec_dev/platform/audio_codec_data_i2s.c']
+            for path in paths:
+                dest = root / 'managed_components' / path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                text = (ROOT / 'managed_components' / path).read_text()
+                text = text.replace('    chan_cfg.dma_frame_num = 120;\n', '')
+                for call in ('data_if->set_fmt(data_if, dev->dev_caps, fs)',
+                             'data_if->enable(data_if, dev->dev_caps, true)'):
+                    fixed = '        int ret = ' + call + ';\n        if (ret != ESP_CODEC_DEV_OK) {\n            dev->input_opened = dev->output_opened = false;\n            return ret;\n        }'
+                    text = text.replace(fixed, '        ' + call + ';')
+                text = text.replace('if (ret == ESP_CODEC_DEV_OK) ret = _i2s_drv_enable(paired, true, true);',
+                                    '_i2s_drv_enable(paired, true, true);')
+                dest.write_text(text)
+            patch = root / 'main' / 'patch.cmake'
+            patch.write_text((MAIN / 'CMakeLists.txt').read_text().split('idf_component_register(')[0])
+            subprocess.run(['cmake', '-P', str(patch)], check=True, capture_output=True)
+            first = [(root / 'managed_components' / path).read_text() for path in paths]
+            subprocess.run(['cmake', '-P', str(patch)], check=True, capture_output=True)
+            self.assertEqual(first, [(root / 'managed_components' / path).read_text() for path in paths])
+            self.assertEqual(first[0].count('chan_cfg.dma_frame_num = 120;'), 1)
+            def extract(text, signature):
+                start = text.index(signature + '\n{')
+                return text[start:text.index('\n}', start) + 2] + '\n'
+            opening = extract(first[1], 'int esp_codec_dev_open(esp_codec_dev_handle_t handle, esp_codec_dev_sample_info_t *fs)')
+            setting = extract(first[2], 'static int set_fs(i2s_data_t *i2s_data, bool playback, bool skip)')
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#define ESP_CODEC_DEV_OK 0
+#define ESP_CODEC_DEV_INVALID_ARG -1
+#define ESP_CODEC_DEV_NOT_SUPPORT -2
+#define ESP_CODEC_DEV_DRV_ERR -3
+#define ESP_CODEC_DEV_TYPE_IN 1
+#define ESP_CODEC_DEV_TYPE_OUT 2
+#define ESP_LOGI(...) ((void)0)
+#define ESP_LOGE(...) ((void)0)
+#define VOL_TRANSITION_TIME 0
+typedef int esp_codec_dev_type_t;
+typedef struct {int rate;} esp_codec_dev_sample_info_t;
+typedef struct data_if {
+ int (*set_fmt)(const struct data_if *,int,esp_codec_dev_sample_info_t *);
+ int (*enable)(const struct data_if *,int,bool);
+} audio_codec_data_if_t;
+typedef struct codec_if {
+ int (*set_fs)(const struct codec_if *,esp_codec_dev_sample_info_t *);
+ int (*enable)(const struct codec_if *,bool);
+ int (*set_vol)(const struct codec_if *,int);
+} audio_codec_if_t;
+typedef struct volume {void (*open)(struct volume *,esp_codec_dev_sample_info_t *,int);} volume_t;
+typedef struct {int dev_caps;bool input_opened,output_opened,sw_vol_alloced;
+ const audio_codec_if_t *codec_if;const audio_codec_data_if_t *data_if;volume_t *sw_vol;} codec_dev_t;
+typedef codec_dev_t *esp_codec_dev_handle_t;
+static int fmt_error,enable_error,enables,driver_error,driver_enables;
+static bool _verify_drv_ready(codec_dev_t *d,bool out){return true;}
+static volume_t *audio_codec_new_sw_vol(void){return NULL;}
+static void _update_codec_setting(codec_dev_t *d){}
+static int fmt(const audio_codec_data_if_t *d,int caps,esp_codec_dev_sample_info_t *f){return fmt_error;}
+static int enable(const audio_codec_data_if_t *d,int caps,bool on){enables++;return enable_error;}
+typedef void *i2s_chan_handle_t;typedef int i2s_chan_info_t;
+typedef struct {void *in_handle,*out_handle;esp_codec_dev_sample_info_t in_fs,out_fs;int clk_src;bool out_enable;} i2s_data_t;
+static i2s_data_t paired={.out_handle=(void *)1};
+static uint8_t get_bits(i2s_data_t *d,bool p){return 16;}
+static void i2s_channel_get_info(void *h,i2s_chan_info_t *i){}
+static int set_drv_fs(void *h,bool p,int b,int c,esp_codec_dev_sample_info_t *f){return driver_error;}
+static i2s_data_t *get_paired(i2s_data_t *d,bool p){return &paired;}
+static int _i2s_drv_enable(i2s_data_t *d,bool p,bool on){if(on)driver_enables++;return 0;}
+'''
+        source += opening + setting
+        source += r'''
+int main(void){
+ audio_codec_data_if_t data={fmt,enable};
+ codec_dev_t dev={.dev_caps=ESP_CODEC_DEV_TYPE_IN,.data_if=&data};esp_codec_dev_sample_info_t fs={0};
+ fmt_error=257;assert(esp_codec_dev_open(&dev,&fs)==257 && !enables && !dev.input_opened);
+ fmt_error=0;enable_error=-9;assert(esp_codec_dev_open(&dev,&fs)==-9 && enables==1 && !dev.input_opened);
+ enable_error=0;assert(esp_codec_dev_open(&dev,&fs)==0 && enables==2 && dev.input_opened);
+ assert(esp_codec_dev_open(&dev,&fs)==0 && enables==2);
+ i2s_data_t i2s={.in_handle=(void *)1};driver_error=257;
+ assert(set_fs(&i2s,false,false)==257 && driver_enables==0);
+ driver_error=0;assert(set_fs(&i2s,false,false)==0 && driver_enables==1);
+ return 0;
+}
+'''
+        run_c(source)
+
+    def test_control_center_stays_until_tool_covers_screen(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+typedef int lv_event_t;typedef struct {void *var;} lv_anim_t;
+#define LV_UNUSED(x) ((void)(x))
+typedef struct {bool hidden;int y;}lv_obj_t;
+#define LV_OBJ_FLAG_HIDDEN 1
+#define SCREEN_H 466
+#define SLIDER_BRIGHT 0
+#define SLIDER_VOLUME 1
+static lv_obj_t center,snap,*s_center=&center,*s_center_snap_img=&snap;
+static bool s_center_open,s_center_dragging,s_center_drag_engaged,ignored;
+static int s_center_reveal,target;
+static bool tap_ignore(lv_event_t *e){return ignored;}
+static void home_snap_end(void){}
+static void tool_snap_prepare(void *page){}
+static void center_anim_stop(void){}
+static void lv_obj_add_flag(lv_obj_t *o,int flag){o->hidden=true;}
+static void lv_obj_set_y(lv_obj_t *o,int y){o->y=y;}
+static void status_open(void){assert(s_center_open && !center.hidden);target=1;}
+static void slider_open(int kind){assert(s_center_open && !center.hidden);target=kind==SLIDER_BRIGHT?2:3;}
+static void torch_open(void){assert(s_center_open && !center.hidden);target=4;}
+'''
+        for signature in ('static void center_consume(void)', 'static void tool_open_done(lv_anim_t *anim)'):
+            source += function('ui.c', signature)
+        for name in ('center_status_cb', 'center_battery_cb', 'center_bright_cb',
+                     'center_volume_cb', 'center_torch_cb'):
+            source += function('ui.c', 'static void ' + name + '(lv_event_t *e)')
+        source += r'''
+int main(void){
+ void (*callbacks[])(lv_event_t *)={center_status_cb,center_battery_cb,center_bright_cb,center_volume_cb,center_torch_cb};
+ int expected[]={1,1,2,3,4};
+ for(int i=0;i<5;i++){
+  s_center_open=s_center_dragging=s_center_drag_engaged=true;
+  center.hidden=snap.hidden=false;center.y=0;s_center_reveal=466;target=0;
+  ignored=true;callbacks[i](NULL);assert(s_center_open && !target);
+  ignored=false;callbacks[i](NULL);assert(target==expected[i]);
+  if(i<4){assert(s_center_open && !center.hidden);lv_anim_t a={0};tool_open_done(&a);}
+  assert(!s_center_open && !s_center_dragging && !s_center_drag_engaged);
+  assert(center.hidden && snap.hidden && center.y==-466 && s_center_reveal==0);
+ }
+ return 0;
+}
+'''
+        run_c(source)
+
+    def test_tool_return_tracks_touch_and_settles_from_current_position(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#define SCREEN_W 466
+#define CENTER_DRAG_TH 8
+#define LV_ABS(x) ((x)<0?-(x):(x))
+#define LV_CLAMP(lo,x,hi) ((x)<(lo)?(lo):(x)>(hi)?(hi):(x))
+enum {LV_EVENT_PRESSED=1,LV_EVENT_PRESSING,LV_EVENT_RELEASED,LV_EVENT_PRESS_LOST};
+typedef int lv_event_code_t;typedef int lv_indev_t;
+typedef struct {int x;}lv_obj_t;
+typedef struct {int x,y;}lv_point_t;
+typedef struct {int code;lv_obj_t *page;}lv_event_t;
+typedef struct animation {lv_obj_t *var;int from,to;void (*done)(struct animation*);}lv_anim_t;
+static lv_obj_t slider,status,*s_slider=&slider,*s_status=&status,*s_tool_drag_page;
+static bool s_slider_open=true,s_status_open=true,s_slider_dragging,s_tool_dragging,s_tool_drag_engaged,busy;
+static lv_point_t s_tool_press,point;
+static int animations,saves,from,to,s_tool_x;static lv_anim_t pending;static lv_indev_t input;
+static void tool_snap_prepare(lv_obj_t *p){}
+static void tool_drawer_begin(lv_obj_t *p){s_tool_x=0;}
+static void tool_drawer_x_cb(void *p,int x){s_tool_x=x;((lv_obj_t*)p)->x=x;}
+static void tool_drawer_end(lv_obj_t *p,bool closed){p->x=s_tool_x;}
+static lv_event_code_t lv_event_get_code(lv_event_t *e){return e->code;}
+static lv_obj_t *lv_event_get_current_target(lv_event_t *e){return e->page;}
+static lv_indev_t *lv_event_get_indev(lv_event_t *e){return &input;}
+static bool page_anim_busy(void){return busy;}
+static void page_anim_lock(int t){busy=true;}
+static void lv_indev_get_point(lv_indev_t *i,lv_point_t *p){*p=point;}
+static int lv_obj_get_x(lv_obj_t *o){return o->x;}
+static void lv_obj_set_x(lv_obj_t *o,int x){o->x=x;}
+static void slider_close_now(void){s_slider_open=false;saves++;slider.x=0;}
+static void status_close_now(void){s_status_open=false;status.x=0;}
+static void anim_x_cb(void *obj,int value){}
+static int lv_anim_path_ease_out;
+static void lv_anim_delete(void *o,void (*cb)(void *,int)){}
+static void lv_anim_init(lv_anim_t *a){*a=(lv_anim_t){0};}
+static void lv_anim_set_var(lv_anim_t *a,lv_obj_t *o){a->var=o;}
+static void *lv_anim_get_var(lv_anim_t *a){return a->var;}
+static void lv_anim_set_values(lv_anim_t *a,int f,int t){a->from=f;a->to=t;}
+static void lv_anim_set_duration(lv_anim_t *a,int t){}
+static void lv_anim_set_path_cb(lv_anim_t *a,int p){}
+static void lv_anim_set_exec_cb(lv_anim_t *a,void (*cb)(void *,int)){}
+static void lv_anim_set_completed_cb(lv_anim_t *a,void (*cb)(lv_anim_t *)){a->done=cb;}
+static void lv_anim_start(lv_anim_t *a){pending=*a;from=a->from;to=a->to;animations++;}
+'''
+        for signature in ('static void tool_back_done(lv_anim_t *anim)',
+                          'static void tool_page_drag_cb(lv_event_t *e)'):
+            source += function('ui.c', signature)
+        source += r'''
+static void event(lv_event_t *e,int code,int x,int y){e->code=code;point=(lv_point_t){x,y};tool_page_drag_cb(e);}
+static void finish(void){tool_drawer_x_cb(pending.var,pending.to);pending.done(&pending);busy=false;}
+int main(void){
+ lv_event_t e={.page=&slider};
+ event(&e,LV_EVENT_PRESSED,200,200);event(&e,LV_EVENT_PRESSING,250,200);assert(slider.x==50 && animations==0);
+ event(&e,LV_EVENT_RELEASED,250,200);assert(from==50 && to==0 && s_slider_open);finish();assert(s_slider_open && saves==0 && slider.x==0);
+ event(&e,LV_EVENT_PRESSED,200,200);event(&e,LV_EVENT_PRESSING,50,200);assert(slider.x==-150);
+ event(&e,LV_EVENT_RELEASED,50,200);assert(from==-150 && to==-466);finish();assert(!s_slider_open && saves==1);
+ s_slider_open=true;event(&e,LV_EVENT_PRESSED,200,200);event(&e,LV_EVENT_PRESSING,400,200);
+ event(&e,LV_EVENT_PRESS_LOST,400,200);assert(from==200 && to==0);finish();assert(s_slider_open);
+ int count=animations;event(&e,LV_EVENT_PRESSED,200,200);event(&e,LV_EVENT_PRESSING,202,280);event(&e,LV_EVENT_PRESSING,400,280);event(&e,LV_EVENT_RELEASED,400,280);assert(slider.x==0 && animations==count);
+ s_slider_dragging=true;event(&e,LV_EVENT_PRESSED,200,200);event(&e,LV_EVENT_PRESSING,400,200);event(&e,LV_EVENT_RELEASED,400,200);assert(slider.x==0 && animations==count);s_slider_dragging=false;
+ e.page=&status;event(&e,LV_EVENT_PRESSED,100,200);event(&e,LV_EVENT_PRESSING,260,200);assert(status.x==160);
+ event(&e,LV_EVENT_RELEASED,260,200);assert(from==160 && to==466);finish();assert(!s_status_open);
+ return 0;
+}
+'''
+        run_c(source)
+
+    def test_tool_drawer_moves_bitmap_and_restores_live_page(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#define LV_OBJ_FLAG_HIDDEN 1
+#define LV_OBJ_FLAG_CLICKABLE 2
+#define LV_OBJ_FLAG_SCROLLABLE 4
+#define LV_COLOR_FORMAT_RGB565 16
+#define LV_RESULT_OK 0
+#define ESP_LOGW(...) ((void)0)
+typedef struct {int x,y;bool hidden;}lv_obj_t;
+typedef int lv_draw_buf_t;
+static lv_obj_t root,page,image,*s_screen=&root,*s_tool_snap_img;
+static lv_draw_buf_t buffer,*s_tool_snap;
+static bool s_tool_snap_valid,s_tool_snap_showing,s_apps_open,s_nursery_open,allocation_fails,render_fails;
+static int s_tool_snap_ext,s_tool_x,allocations,renders,bg_begin,bg_end;
+static lv_obj_t *lv_image_create(lv_obj_t *p){return &image;}
+static void lv_obj_remove_flag(lv_obj_t *p,int flags){if(flags&1)p->hidden=false;}
+static void lv_obj_add_flag(lv_obj_t *p,int flags){if(flags&1)p->hidden=true;}
+static lv_draw_buf_t *lv_snapshot_create_draw_buf(lv_obj_t *p,int fmt){allocations++;return allocation_fails?NULL:&buffer;}
+static int lv_snapshot_take_to_draw_buf(lv_obj_t *p,int fmt,lv_draw_buf_t *b){renders++;return render_fails?-1:0;}
+static int lv_obj_get_ext_draw_size(lv_obj_t *p){return 2;}
+static void lv_image_cache_drop(lv_draw_buf_t *b){}
+static void lv_image_set_src(lv_obj_t *p,lv_draw_buf_t *b){}
+static void home_snap_refresh(void){}
+static void home_snap_begin(void){bg_begin++;}
+static void home_snap_end(void){bg_end++;}
+static void lv_obj_set_pos(lv_obj_t *p,int x,int y){p->x=x;p->y=y;}
+static void lv_obj_set_x(lv_obj_t *p,int x){p->x=x;}
+static void lv_obj_move_foreground(lv_obj_t *p){}
+static void lv_anim_delete(void *p,void (*cb)(void*,int32_t)){}
+'''
+        for signature in ('static void tool_snap_prepare(lv_obj_t *page)',
+                          'static void tool_drawer_x_cb(void *page, int32_t value)',
+                          'static void tool_drawer_begin(lv_obj_t *page)',
+                          'static void tool_drawer_end(lv_obj_t *page, bool closed)'):
+            source += function('ui.c', signature)
+        source += r'''
+int main(void){
+ tool_snap_prepare(&page);assert(s_tool_snap_valid && allocations==1 && renders==1);
+ tool_drawer_begin(&page);assert(page.hidden && !image.hidden && s_tool_snap_showing && bg_begin==1);
+ tool_drawer_x_cb(&page,-150);assert(s_tool_x==-150 && image.x==-152 && image.y==-2 && page.x==0);
+ tool_drawer_x_cb(&page,-30);assert(image.x==-32 && page.x==0);
+ tool_drawer_x_cb(&page,0);tool_drawer_end(&page,false);
+ assert(!page.hidden && image.hidden && !s_tool_snap_showing && page.x==0 && bg_end==1);
+ tool_snap_prepare(&page);assert(allocations==1 && renders==2);
+ tool_drawer_begin(&page);tool_drawer_x_cb(&page,466);tool_drawer_end(&page,true);
+ assert(page.hidden && image.hidden && !s_tool_snap_showing && bg_end==2);
+ page.hidden=false;page.x=0;render_fails=true;tool_snap_prepare(&page);assert(!s_tool_snap_valid);
+ tool_drawer_begin(&page);tool_drawer_x_cb(&page,50);assert(!page.hidden && page.x==50 && !s_tool_snap_showing);
+ tool_drawer_x_cb(&page,0);tool_drawer_end(&page,false);assert(!page.hidden && image.hidden);
+ s_tool_snap=NULL;allocation_fails=true;tool_snap_prepare(&page);assert(!s_tool_snap_valid);
+ return 0;
+}
+'''
+        run_c(source)
+
     def test_normal_boot_has_no_icon_benchmark(self):
         source = (MAIN / "main.c").read_text()
         self.assertNotIn("icon_bench", source)
@@ -97,6 +362,101 @@ int main(void){
 '''
         run_c(source)
 
+    def test_button_page_changes_are_deferred_to_lvgl(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
+#define ESP_OK 0
+#define LV_RESULT_OK 0
+#define ESP_LOGI(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
+typedef int lv_result_t;
+static int busy,queue_error,locks,pet,apps;
+static bool cancelled,woke;
+static void (*callback)(void *);
+static void *argument;
+static int bsp_display_lock(int timeout){if(!busy)locks++;return busy;}
+static void bsp_display_unlock(void){locks--;}
+static int lv_async_call(void (*cb)(void *),void *arg){if(queue_error)return -1;callback=cb;argument=arg;return 0;}
+static bool ui_power_menu_cancel(void){return cancelled;}
+static bool ui_activity(void){return woke;}
+static void ui_demo_toggle_pet(void){assert(locks==0);pet++;}
+static void ui_demo_toggle_apps(void){assert(locks==0);apps++;}
+'''
+        source += function('button.c', 'static void toggle_page_cb(void *arg)')
+        source += function('button.c', 'static void toggle_page(const char *source)')
+        source += r'''
+int main(void){
+    toggle_page("BOOT");assert(pet==0 && apps==0 && locks==0 && callback);
+    callback(argument);assert(pet==1 && apps==0);
+    toggle_page("PWR");callback(argument);assert(apps==1);
+    woke=true;callback(argument);assert(apps==1);
+    woke=false;cancelled=true;callback(argument);assert(apps==1);
+    callback=NULL;busy=-1;toggle_page("BOOT");assert(!callback && locks==0);
+    busy=0;queue_error=-1;toggle_page("BOOT");assert(!callback && locks==0);
+}
+'''
+        run_c(source)
+
+    def test_microphone_open_applies_gain_and_handles_failure(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#define ESP_LOGI(...) ((void)0)
+#define ESP_LOGE(...) ((void)0)
+#define ESP_CODEC_DEV_OK 0
+#define ESP_AUDIO_ERR_OK 0
+#define VOICE_SAMPLE_RATE 16000
+#define ESP_OPUS_BITRATE_AUTO 0
+#define ESP_OPUS_ENC_FRAME_DURATION_60_MS 60
+#define ESP_OPUS_ENC_APPLICATION_VOIP 1
+typedef struct {int bits_per_sample,channel,sample_rate;}esp_codec_dev_sample_info_t;
+typedef struct {int sample_rate,channel,bits_per_sample,bitrate,frame_duration,application_mode,complexity;}esp_opus_enc_config_t;
+static void *s_mic,*s_enc;
+static int gain_error,encodes;
+static float gain;
+static bool audio_init(void){return true;}
+static void *bsp_audio_codec_microphone_init(void){return (void*)1;}
+static int esp_codec_dev_open(void *m,esp_codec_dev_sample_info_t *fs){assert(fs->sample_rate==16000 && fs->channel==2);return 0;}
+static int esp_codec_dev_set_in_gain(void *m,float db){gain=db;return gain_error;}
+static int esp_opus_enc_open(esp_opus_enc_config_t *cfg,size_t n,void **enc){assert(gain==30 && cfg->frame_duration==60);encodes++;*enc=(void*)2;return 0;}
+'''
+        source += function('voice_client.c', 'static bool open_audio(void)')
+        source += r'''
+int main(void){
+    assert(open_audio() && encodes==1 && gain==30);
+    gain_error=-1;s_enc=NULL;assert(!open_audio() && encodes==1 && !s_enc);
+}
+'''
+        run_c(source)
+
+    def test_microphone_stereo_mix_preserves_mono_frame_and_headroom(self):
+        source = '#include <stdint.h>\n#include <stddef.h>\n#include <assert.h>\n'
+        source += function('voice_client.c', 'static void mix_microphones(uint8_t *pcm, size_t mono_bytes)')
+        source += r'''
+int main(void){
+    int16_t pcm[]={100,300,32767,32767,-32768,-32768,0,800,-600,0};
+    mix_microphones((uint8_t*)pcm,10);
+    assert(pcm[0]==200 && pcm[1]==32767 && pcm[2]==-32768 && pcm[3]==400 && pcm[4]==-300);
+}
+'''
+        run_c(source)
+
+    def test_microphone_peak_handles_silence_and_full_scale(self):
+        source = '#include <stdint.h>\n#include <stddef.h>\n#include <assert.h>\n'
+        source += function('voice_client.c', 'static int pcm_peak(const uint8_t *pcm, size_t bytes)')
+        source += r'''
+int main(void){
+    int16_t pcm[]={0,-12,100,-32768,32767};
+    assert(pcm_peak((uint8_t*)pcm,0)==0);
+    assert(pcm_peak((uint8_t*)pcm,2)==0);
+    assert(pcm_peak((uint8_t*)pcm,6)==100);
+    assert(pcm_peak((uint8_t*)pcm,sizeof(pcm))==32768);
+}
+'''
+        run_c(source)
+
     def test_power_key_three_seconds_once_and_no_short_after_hold(self):
         source = r'''#include <assert.h>
 #include <stdbool.h>
@@ -112,7 +472,7 @@ static int64_t esp_timer_get_time(void){return (int64_t)now*1000;}
 static int bsp_display_lock(int t){return busy;}
 static void bsp_display_unlock(void){}
 static void ui_power_menu_open(void){opened++;}
-static void toggle_apps(const char *s){shorts++;}
+static void toggle_page(const char *s){shorts++;}
 '''
         header = (MAIN / 'power.h').read_text()
         source += header[header.index('enum {'):header.index('};') + 2]
@@ -299,29 +659,26 @@ typedef struct {int code;} lv_event_t;
 typedef struct {void (*cb)(void *,int32_t);} lv_anim_t;
 #define CENTER_X 233
 #define CENTER_Y 233
-#define APP_COUNT 6
+#define APP_COUNT 9
 #define APP_ICON_D 120
 #define APP_ROOT_W APP_ICON_D
 #define APP_ROOT_H 120
 #define APP_ICON_MIN_D 64
-#define APP_GRID_STEP 136
-#define APP_LABEL_W 112
-#define APP_PAN_LIMIT APP_GRID_STEP
-#define APP_PAN_OVERSHOOT 28
+#define APP_GRID_STEP 116
+#define APP_PAN_OVERSHOOT 16
 #define APP_GRID_DRAG_TH 16
 #define LV_EVENT_PRESSED 1
 #define LV_EVENT_PRESSING 2
 #define LV_EVENT_RELEASED 3
 #define LV_EVENT_PRESS_LOST 4
 #define LV_UNUSED(x) ((void)(x))
+#define LV_CLAMP(lo,x,hi) ((x)<(lo)?(lo):(x)>(hi)?(hi):(x))
 static lv_obj_t apps, *s_apps=&apps;
 static lv_point_t s_app_pan,s_app_pan_start,s_app_settle_from,s_app_settle_to,s_app_press,point;
 static lv_obj_t icon_objects[APP_COUNT],*s_app_icons[APP_COUNT];
 static bool s_app_drag_active,s_app_drag_moved,busy;
 typedef int lv_draw_buf_t;
 static lv_draw_buf_t *s_app_art[APP_COUNT];
-static lv_obj_t *s_app_labels[APP_COUNT];
-static const char *s_app_names[APP_COUNT]={"pet","music","status","wifi","settings","timer"};
 static int opened=-1,layouts,sources;
 static void app_art_resize(int i,int size){}
 static void lv_label_set_text(lv_obj_t *o,const char *t){}
@@ -365,27 +722,25 @@ int main(void){
         s_app_pan=(lv_point_t){0,0};opened=-1;
         event(LV_EVENT_PRESSED,233,233);
         event(LV_EVENT_PRESSING,233+directions[i][0],233+directions[i][1]);
-        assert(s_app_pan.x==directions[i][0] && s_app_pan.y==directions[i][1]);
+        assert(s_app_pan.x==app_pan_bound(directions[i][0],true) && s_app_pan.y==app_pan_bound(directions[i][1],true));
         event(LV_EVENT_RELEASED,233+directions[i][0],233+directions[i][1]);
         assert(opened==-1 && !s_app_drag_active);
-        assert(s_app_pan.x==directions[i][0] && s_app_pan.y==directions[i][1]);
+        assert(s_app_pan.x==0 && s_app_pan.y==0);
     }
     assert(layouts>0);
     for(int sign=-1;sign<=1;sign+=2){
         s_app_pan=(lv_point_t){0,0};
         event(LV_EVENT_PRESSED,233,233);
         event(LV_EVENT_PRESSING,233+sign*300,233+sign*300);
-        assert(s_app_pan.x==sign*(APP_PAN_LIMIT+APP_PAN_OVERSHOOT) && s_app_pan.y==sign*(APP_PAN_LIMIT+APP_PAN_OVERSHOOT));
+        assert(s_app_pan.x==sign*APP_PAN_OVERSHOOT && s_app_pan.y==sign*APP_PAN_OVERSHOOT);
         event(LV_EVENT_RELEASED,233+sign*300,233+sign*300);
-        assert(s_app_pan.x==sign*APP_PAN_LIMIT && s_app_pan.y==sign*APP_PAN_LIMIT);
+        assert(s_app_pan.x==0 && s_app_pan.y==0);
     }
-    s_app_pan=(lv_point_t){30,-20};
+    s_app_pan=(lv_point_t){0,0};
     for(int i=0;i<APP_COUNT;i++){
         opened=-1;lv_point_t p=app_icon_center(i);
         event(LV_EVENT_PRESSED,p.x,p.y);event(LV_EVENT_RELEASED,p.x,p.y);assert(opened==i);
-        opened=-1;
-        int label_y=p.y+app_icon_size(p)/2+14;
-        event(LV_EVENT_PRESSED,p.x,label_y);event(LV_EVENT_RELEASED,p.x,label_y);assert(opened==i);
+
     }
     opened=-1;event(LV_EVENT_PRESSED,20,20);event(LV_EVENT_RELEASED,20,20);assert(opened==-1);
     lv_point_t p=app_icon_center(0);
@@ -395,6 +750,16 @@ int main(void){
     event(LV_EVENT_PRESSED,p.x+100,p.y);event(LV_EVENT_RELEASED,p.x,p.y);assert(opened==-1);
     s_app_pan=(lv_point_t){0,0};assert(app_icon_size(app_icon_center(0))==APP_ICON_D);
     assert(app_icon_size(app_icon_center(1))<APP_ICON_D);
+    assert(app_icon_size(app_icon_center(3))<app_icon_size(app_icon_center(1)));
+    for(int i=0;i<APP_COUNT;i++){
+        lv_point_t p=app_icon_center(i);
+        float dx=p.x-CENTER_X,dy=p.y-CENTER_Y;
+        assert(sqrtf(dx*dx+dy*dy)+app_icon_size(p)/2.0f<233);
+        for(int j=0;j<i;j++){
+            lv_point_t q=app_icon_center(j);dx=p.x-q.x;dy=p.y-q.y;
+            assert(sqrtf(dx*dx+dy*dy)>=(app_icon_size(p)+app_icon_size(q))/2.0f);
+        }
+    }
     assert(app_icon_size((lv_point_t){1000,1000})==APP_ICON_MIN_D);
     s_app_art[0]=(lv_draw_buf_t *)&apps;
     apps_layout_icons();int before=sources;apps_layout_icons();assert(sources==before);
@@ -532,10 +897,12 @@ int main(void){
 '''
         run_c(source)
 
-    def test_only_applications_are_in_launcher(self):
+    def test_launcher_nine_function_entries(self):
         source = r'''#include <assert.h>
 #include <stdbool.h>
-enum {APP_PET,APP_NURSERY,APP_STATUS,APP_WIFI,APP_SETTINGS,APP_TIMER};
+enum {APP_PET,APP_NURSERY,APP_STATUS,APP_WIFI,APP_SETTINGS,APP_TIMER,APP_BRIGHT,APP_VOLUME,APP_TORCH};
+#define SLIDER_BRIGHT 0
+#define SLIDER_VOLUME 1
 #define UI_PET_HAPPY 1
 static int opened=-1;static bool busy;
 static bool page_anim_busy(void){return busy;}
@@ -544,14 +911,66 @@ static void nursery_open(void){opened=APP_NURSERY;}
 static void status_open(void){opened=APP_STATUS;}
 static void wifi_open(void){opened=APP_WIFI;}
 static void tools_open(int kind){opened=kind?APP_TIMER:APP_SETTINGS;}
+static void slider_open(int kind){opened=kind?APP_VOLUME:APP_BRIGHT;}
+static void torch_open(void){opened=APP_TORCH;}
 #define NULL ((void *)0)
 '''
         source += function('ui.c', 'static void app_open_index(int idx)')
         source += r'''
 int main(void){
-    for(int i=0;i<6;i++){app_open_index(i);assert(opened==i);}
-    opened=-1;app_open_index(6);assert(opened==-1);
+    for(int i=0;i<9;i++){app_open_index(i);assert(opened==i);}
+    opened=-1;app_open_index(9);assert(opened==-1);
     busy=true;app_open_index(0);assert(opened==-1);return 0;
+}
+'''
+        run_c(source)
+
+    def test_timer_preset_custom_and_controls(self):
+        source = r'''#include <assert.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+typedef int lv_event_t;
+enum {WATCH_TIMER_IDLE,WATCH_TIMER_RUNNING,WATCH_TIMER_PAUSED,WATCH_TIMER_FINISHED};
+#define LV_OBJ_FLAG_HIDDEN 1
+static int state,ignored,refreshes,starts,pauses,resets,toasts;
+static int s_timer_select,s_timer_custom;
+static int rollers[3],*s_timer_rollers[]={rollers,rollers+1,rollers+2};
+static uint32_t selected,s_timer_total=60;
+static const uint32_t s_timer_choices[]={60,180,300,600,1800,3600};
+static bool tap_ignore(lv_event_t *e){return ignored;}
+static void *lv_event_get_user_data(lv_event_t *e){return (void *)(uintptr_t)*e;}
+static int watch_timer_state(void){return state;}
+static bool watch_timer_select(uint32_t s){if(state==1 || state==2 || !s || s>86399)return false;selected=s;return true;}
+static void watch_timer_start(void){starts++;state=WATCH_TIMER_RUNNING;}
+static void watch_timer_pause(void){pauses++;state=WATCH_TIMER_PAUSED;}
+static void watch_timer_reset(void){resets++;state=WATCH_TIMER_IDLE;}
+static void tools_refresh(void){refreshes++;}
+static void toast_show(const char *s){toasts++;}
+static int lv_roller_get_selected(int *r){return *r;}
+static void lv_obj_add_flag(int o,int f){}
+static void lv_obj_remove_flag(int o,int f){}
+'''
+        for signature in ('static void timer_choice_cb(lv_event_t *e)',
+                          'static void timer_custom_cb(lv_event_t *e)',
+                          'static void timer_custom_start_cb(lv_event_t *e)',
+                          'static void timer_action_cb(lv_event_t *e)',
+                          'static void timer_reset_cb(lv_event_t *e)'):
+            source += function('ui.c', signature)
+        source += r'''
+int main(void){
+    int event=2;ignored=1;timer_choice_cb(&event);assert(!starts);
+    ignored=0;timer_choice_cb(&event);assert(starts==1 && selected==300 && s_timer_total==300);
+    event=0;timer_choice_cb(&event);assert(starts==1 && selected==300);
+    timer_action_cb(&event);assert(pauses==1 && state==WATCH_TIMER_PAUSED);
+    timer_action_cb(&event);assert(starts==2 && state==WATCH_TIMER_RUNNING);
+    timer_reset_cb(&event);assert(resets==1 && state==WATCH_TIMER_IDLE);
+    timer_custom_start_cb(&event);assert(toasts==1 && starts==2);
+    rollers[0]=23;rollers[1]=59;rollers[2]=59;
+    timer_custom_start_cb(&event);assert(starts==3 && selected==86399 && s_timer_total==86399);
+    state=WATCH_TIMER_FINISHED;timer_action_cb(&event);assert(starts==4);
+    state=WATCH_TIMER_FINISHED;timer_reset_cb(&event);assert(state==WATCH_TIMER_IDLE);
+    event=6;timer_choice_cb(&event);assert(starts==4);return 0;
 }
 '''
         run_c(source)
@@ -579,7 +998,14 @@ void watch_timer_reset(void);
         source += r'''
 int main(void){
     uint32_t presets[]={60,180,300,600,1800,3600};
-    assert(!watch_timer_select(0) && !watch_timer_select(59));
+    assert(!watch_timer_select(0) && !watch_timer_select(86400) && !watch_timer_select(UINT32_MAX));
+    uint32_t custom[]={1,59,61,3599,3601,86399};
+    for(int i=0;i<6;i++){
+        assert(watch_timer_select(custom[i]));watch_timer_start();
+        assert(watch_timer_remaining()==custom[i]);
+        now_us=s_deadline_us;assert(watch_system_tick());
+        watch_timer_start();assert(watch_timer_remaining()==custom[i]);watch_timer_reset();
+    }
     for(int i=0;i<6;i++){
         watch_timer_reset();assert(watch_timer_select(presets[i]));
         assert(watch_timer_remaining()==presets[i]);watch_timer_start();
@@ -646,6 +1072,57 @@ int main(void){
 }
 '''
         run_c(source)
+
+    def test_pet_typewriter_keeps_one_line_of_latest_utf8_text(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+#define LV_COORD_MAX 32767
+#define LV_TEXT_FLAG_EXPAND 1
+static char s_pet_text[320],shown[320];
+static size_t s_pet_text_end,s_pet_text_start;
+static int s_pet_bubble_label,epw_cjk_16,width=36;
+typedef struct {int x,y;}lv_point_t;
+static void lv_label_set_text(int label,const char *text){snprintf(shown,sizeof(shown),"%s",text);}
+static int lv_obj_get_content_width(int label){return width;}
+static void lv_text_get_size(lv_point_t *size,const char *text,int *font,int a,int b,int max,int flags){
+    size->x=0;size->y=16;
+    for(size_t i=0;text[i];){
+        unsigned char c=text[i];size->x+=c<128?6:12;
+        i+=c<128?1:(c&0xE0)==0xC0?2:(c&0xF0)==0xE0?3:4;
+    }
+}
+typedef struct {bool is_placeholder;}lv_font_glyph_dsc_t;
+static bool lv_font_get_glyph_dsc(int *font,lv_font_glyph_dsc_t *d,uint32_t cp,int next){d->is_placeholder=false;return cp<0x10000;}
+'''
+        for signature in ('static const char *pet_safe_text(const char *in)',
+                          'static void pet_text_set(const char *text)',
+                          'static void pet_text_step(void)'):
+            source += function('ui.c', signature)
+        source += r'''
+int main(void){
+    pet_text_set("你好世界");pet_text_step();assert(!strcmp(shown,"你"));
+    pet_text_step();assert(!strcmp(shown,"你好"));
+    size_t end=s_pet_text_end;pet_text_set("你好世界");assert(s_pet_text_end==end);
+    pet_text_step();assert(!strcmp(shown,"你好世"));
+    pet_text_step();assert(!strcmp(shown,"好世界") && !strcmp(s_pet_text,"你好世界"));
+    pet_text_step();assert(!strcmp(shown,"好世界"));
+    pet_text_set("你好世界！");assert(s_pet_text_end==12);pet_text_step();assert(!strcmp(shown,"世界！"));
+    pet_text_set("Hi猫咪ABC");assert(shown[0]==0);
+    for(int i=0;i<7;i++)pet_text_step();assert(!strcmp(shown,"咪ABC"));
+    pet_text_set("换一句");pet_text_step();assert(!strcmp(shown,"换"));
+    assert(!strcmp(pet_safe_text("甲\n乙\r\nA\tB😀"),"甲 乙  A B"));
+    char bad[]={ (char)0xE4,0 };assert(pet_safe_text(bad)[0]==0);
+    assert(!strcmp(pet_safe_text("中文"),"中文"));
+}
+'''
+        run_c(source)
+        ui = (MAIN / 'ui.c').read_text()
+        self.assertIn('lv_label_set_long_mode(s_pet_bubble_label, LV_LABEL_LONG_CLIP);', ui)
+        self.assertIn('text = s_pet_text;', ui)
 
     def test_font_literals_with_urls_and_comments(self):
         from check_font_coverage import literals_cjk, font_codepoints
@@ -970,7 +1447,7 @@ int main(void){
 #include <string.h>
 #include "cJSON.h"
 #include "ws_message.h"
-static atomic_bool s_requested, s_ready, s_connected, s_hello, s_listening, s_reply_active, s_have_reply;
+static atomic_bool s_requested, s_ready, s_connected, s_hello, s_listening, s_reply_active, s_have_reply, s_tts_end;
 static atomic_uint s_progress_tick;
 static unsigned s_tts_packets,s_tts_bytes;
 #define ESP_LOGI(...) ((void)0)
@@ -1036,7 +1513,8 @@ int main(void) {
     const char *sentence="{\"type\":\"tts\",\"state\":\"sentence_start\",\"text\":\"继续聊天\"}";
     handle_text(sentence,strlen(sentence));assert(s_have_reply && !strcmp(reply,"继续聊天"));
     const char *stop="{\"type\":\"tts\",\"state\":\"stop\"}";
-    handle_text(stop,strlen(stop));assert(s_listening && !s_reply_active && !strcmp(reply,"继续聊天"));
+    /* TTS 结束后等播放队列排空，由 tts_pump 恢复监听，handle_text 只置结束标记。 */
+    handle_text(stop,strlen(stop));assert(atomic_load(&s_tts_end) && s_reply_active && !s_listening && !strcmp(reply,"继续聊天"));
     const char *foreign="{\"type\":\"stt\",\"session_id\":\"old\",\"text\":\"不要覆盖\"}";
     handle_text(foreign,strlen(foreign));assert(!strcmp(reply,"继续聊天"));
     const char *empty_hello="{\"type\":\"hello\",\"session_id\":\"\"}";
@@ -1153,6 +1631,64 @@ int main(void){
     assert(s_home_snap_dirty);s_home_snap_dirty=false;time_tick_cb(NULL);assert(!s_home_snap_dirty);
     fake_tm.tm_mon=1;fake_tm.tm_yday=47;fake_tm.tm_wday=2;time_tick_cb(NULL);
     assert(!strcmp(date_obj.text,"2月17日 周二"));
+    return 0;
+}
+'''
+        run_c(source)
+
+    def test_bottom_edge_pull_opens_notice_sheet(self):
+        source = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+typedef struct {int x,y;} lv_point_t;
+typedef struct {int code;} lv_event_t;
+typedef int lv_event_code_t;
+typedef int lv_indev_t;
+typedef int lv_obj_t;
+enum {LV_EVENT_PRESSED=1, LV_EVENT_PRESSING, LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST};
+#define SCREEN_H 466
+#define CENTER_DRAG_TH 8
+#define NOTICE_H 300
+#define NOTICE_EDGE_H (SCREEN_H / 12)
+#define LV_OBJ_FLAG_HIDDEN 1
+#define LV_UNUSED(x) (void)(x)
+static bool s_notice_open,s_notice_dragging,s_notice_drag_engaged;
+static bool s_center_open,s_center_dragging,s_nur_drag_engaged,s_home_snap_dirty;
+static int s_notice_press_x,s_notice_press_y,s_notice_press_reveal,s_notice_reveal;
+static int fake_indev,point_x,point_y;
+static lv_obj_t notice_obj;
+static lv_obj_t *s_notice=&notice_obj;
+static bool pages_busy_except_center(void){return false;}
+static bool page_anim_busy(void){return false;}
+static int lv_event_get_code(lv_event_t *e){return e->code;}
+static lv_indev_t *lv_event_get_indev(lv_event_t *e){return &fake_indev;}
+static void lv_indev_get_point(lv_indev_t *i,lv_point_t *p){p->x=point_x;p->y=point_y;}
+static void lv_obj_remove_flag(lv_obj_t *o,int f){LV_UNUSED(o);LV_UNUSED(f);}
+static void notice_anim_stop(void){}
+static void notice_reveal_set(int h){if(h<0)h=0;if(h>NOTICE_H)h=NOTICE_H;s_notice_reveal=h;}
+static void notice_open(void){s_notice_open=true;s_notice_reveal=NOTICE_H;}
+static void notice_animate_reveal(int to,int b,int c,int d){s_notice_reveal=to;}
+static int lv_anim_path_ease_in,notice_hide_done;
+'''
+        source += function('ui.c', 'static void home_notice_pull_cb(lv_event_t *e)')
+        source += r'''
+int main(void){
+    lv_event_t e={LV_EVENT_PRESSED};
+    /* 中部起手不响应 */
+    point_y=233;home_notice_pull_cb(&e);
+    point_y=100;e.code=LV_EVENT_PRESSING;home_notice_pull_cb(&e);
+    e.code=LV_EVENT_RELEASED;home_notice_pull_cb(&e);assert(!s_notice_open && s_notice_reveal==0);
+    /* 底部横滑不抢手势 */
+    point_x=420;point_y=455;e.code=LV_EVENT_PRESSED;home_notice_pull_cb(&e);
+    point_x=300;point_y=445;e.code=LV_EVENT_PRESSING;home_notice_pull_cb(&e);
+    e.code=LV_EVENT_RELEASED;home_notice_pull_cb(&e);assert(!s_notice_open && s_notice_reveal==0);
+    /* 底部上拉超过 1/4 才吸附展开 */
+    point_x=233;point_y=455;e.code=LV_EVENT_PRESSED;home_notice_pull_cb(&e);
+    point_y=355;e.code=LV_EVENT_PRESSING;home_notice_pull_cb(&e);assert(s_notice_reveal==100);
+    point_y=335;home_notice_pull_cb(&e);assert(s_notice_reveal==120);
+    e.code=LV_EVENT_RELEASED;home_notice_pull_cb(&e);assert(s_notice_open && s_notice_reveal==NOTICE_H);
     return 0;
 }
 '''
@@ -1308,6 +1844,8 @@ int main(void){
 #define EPW_WIFI_CONNECTED 1
 #define ESP_AUDIO_ERR_OK 0
 #define ESP_LOGI(...) ((void)0)
+#define ESP_LOGE(...) ((void)0)
+typedef int esp_audio_err_t;
 #define ESP_CODEC_DEV_OK 0
 #define pdMS_TO_TICKS(x) (x)
 typedef struct {uint8_t *buffer;uint32_t len;}esp_audio_enc_in_frame_t;
@@ -1331,25 +1869,31 @@ static void vTaskDelay(int ticks){if(!s_requested)longjmp(finished,1);s_requeste
 static void pet_set(const char *emotion,const char *text){}
 static bool voice_client_set_active(bool value){s_requested=value;return value;}
 static bool ws_start(void){s_connected=true;s_hello=mode!=2;s_listening=true;return true;}
+static bool tts_pump(void){return false;}
+static void tts_close(void){}
 static bool open_audio(void){opens++;s_enc=(void*)1;return true;}
 static int esp_opus_enc_get_frame_size(void *enc,int *in,int *out){*in=1920;*out=128;return 0;}
-static int esp_codec_dev_read(void *mic,void *pcm,int len){reads++;memset(pcm,1,len);if(mode==1)s_requested=false;if(mode==4 && reads==2)s_listening=true;return mode==3?1:0;}
-static int esp_opus_enc_process(void *enc,esp_audio_enc_in_frame_t *in,esp_audio_enc_out_frame_t *out){encodes++;assert(in->len==1920);out->encoded_bytes=8;return 0;}
-static int esp_websocket_client_send_bin(void *ws,const char *data,int len,int timeout){assert(len==8);sends++;if(mode==4 && sends==1)s_listening=false;else s_requested=false;return len;}
+static int esp_codec_dev_read(void *mic,void *pcm,int len){reads++;assert(len==3840);memset(pcm,1,len);if(mode==1)s_requested=false;if(mode==4 && reads==2)s_listening=true;return mode==3?1:0;}
+static int esp_opus_enc_process(void *enc,esp_audio_enc_in_frame_t *in,esp_audio_enc_out_frame_t *out){encodes++;assert(in->len==1920);out->encoded_bytes=8;return mode==6?-1:0;}
+static int esp_websocket_client_send_bin(void *ws,const char *data,int len,int timeout){assert(len==8);sends++;if(mode==4 && sends==1)s_listening=false;else s_requested=false;return mode==5?-1:len;}
 static void close_audio(void){s_enc=NULL;}
 static void close_session(void){closes++;free(s_message);s_message=NULL;close_audio();}
 '''
+        source += function('voice_client.c', 'static void mix_microphones(uint8_t *pcm, size_t mono_bytes)')
+        source += function('voice_client.c', 'static int pcm_peak(const uint8_t *pcm, size_t bytes)')
         source += function('voice_client.c', 'static bool session_current(void)')
         source += function('voice_client.c', 'static bool voice_wait_expired(uint32_t now, uint32_t hello_since)')
         source += function('voice_client.c', 'static void voice_task(void *arg)')
         source += r'''
 int main(void){
-    for(mode=0;mode<5;mode++){
+    for(mode=0;mode<7;mode++){
         reads=encodes=sends=opens=closes=0;s_requested=true;s_epoch=1;s_enc=NULL;
         if(setjmp(finished)==0)voice_task(NULL);
         assert(closes==1);
         if(mode==0){assert(reads==1 && encodes==1 && sends==1);}
         else if(mode==4){assert(reads==3 && encodes==2 && sends==2);}
+        else if(mode==5){assert(reads==1 && encodes==1 && sends==1);}
+        else if(mode==6){assert(reads==1 && encodes==1 && sends==0);}
         else if(mode==2){assert(opens==0 && reads==0 && sends==0);}
         else{assert(reads==1 && encodes==0 && sends==0);}
     }
@@ -1492,7 +2036,72 @@ int main(void){
 '''
         run_c(source)
 
-    def test_muted_tts_binary_fragments_never_open_output(self):
+    def test_tts_playback_drains_before_listening_and_handles_failure(self):
+        source = r'''#include <assert.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <string.h>
+#define VOICE_MAX_PCM 1920
+#define VOICE_MAX_OPUS 2048
+#define VOICE_SAMPLE_RATE 16000
+#define MALLOC_CAP_SPIRAM 1
+#define MALLOC_CAP_8BIT 2
+#define ESP_AUDIO_ERR_OK 0
+#define ESP_OPUS_DEC_FRAME_DURATION_120_MS 8
+#define ESP_OPUS_DEC_CONFIG_DEFAULT() {0}
+#define pdTRUE 1
+#define pdMS_TO_TICKS(x) (x)
+#define ESP_LOGI(...) ((void)0)
+typedef struct {size_t bytes;uint8_t data[];} voice_packet_t;
+typedef struct {int sample_rate,channel,frame_duration;}esp_opus_dec_cfg_t;
+typedef struct {uint8_t *buffer;size_t len,consumed;}esp_audio_dec_in_raw_t;
+typedef struct {uint8_t *buffer;size_t len,decoded_size;}esp_audio_dec_out_frame_t;
+typedef int esp_audio_dec_info_t;
+static void *s_tts_queue=(void*)1,*s_dec;
+static uint8_t *s_tts_pcm;
+static bool s_tts_output,active=true;
+static atomic_bool s_tts_end,s_reply_active;
+static voice_packet_t *queue[4];static int queued,writes,listens,closed,dec_closed,mic_closed,failure;
+static void *heap_caps_malloc(size_t n,int caps){return malloc(n);}
+static int xQueueSend(void *q,voice_packet_t **p,int wait){if(queued==4)return 0;queue[queued++]=*p;return 1;}
+static int xQueueReceive(void *q,voice_packet_t **p,int wait){if(!queued)return 0;*p=queue[0];memmove(queue,queue+1,--queued*sizeof(*queue));return 1;}
+static void close_audio(void){mic_closed++;}
+static void audio_playback_close(void){closed++;}
+static int audio_playback_open(void){return failure!=2;}
+static int esp_opus_dec_open(void *cfg,size_t n,void **d){if(failure==1)return -1;*d=(void*)1;return 0;}
+static int esp_opus_dec_close(void *d){dec_closed++;return 0;}
+static int esp_opus_dec_decode(void *d,esp_audio_dec_in_raw_t *raw,esp_audio_dec_out_frame_t *frame,esp_audio_dec_info_t *info){raw->consumed=raw->len;frame->decoded_size=1920;return failure==3?-1:0;}
+static int audio_playback_write(void *pcm,size_t n){assert(n==1920);writes++;return failure==4?-1:n;}
+static void pet_set(const char *a,const char *b){}
+static bool voice_client_set_active(bool a){active=a;return a;}
+static void vTaskDelay(int n){}
+static void send_listen_start(void){assert(!s_tts_output && !queued);listens++;}
+'''
+        for signature in ('static bool tts_enqueue(const void *data, size_t bytes)',
+                          'static void tts_close(void)', 'static bool tts_pump(void)'):
+            source += function('voice_client.c', signature)
+        source += r'''
+int main(void){
+ char packet[5]={0};assert(!tts_pump());
+ assert(!tts_enqueue(packet,0) && !tts_enqueue(packet,2049));
+ assert(tts_enqueue(packet,5) && tts_enqueue(packet,5));s_tts_end=true;s_reply_active=true;
+ assert(tts_pump() && writes==1 && listens==0);
+ assert(tts_pump() && writes==2 && listens==0);
+ assert(tts_pump() && listens==1 && !s_reply_active && closed==1 && dec_closed==1 && mic_closed==1);
+ for(int i=0;i<4;i++)assert(tts_enqueue(packet,5));assert(!tts_enqueue(packet,5));
+ tts_close();assert(!queued && writes==2);
+ for(failure=1;failure<=4;failure++){
+  active=true;assert(tts_enqueue(packet,5));tts_pump();assert(!active);tts_close();
+  assert(!queued && !s_dec && !s_tts_pcm && !s_tts_output);
+ }
+ return 0;
+}
+'''
+        run_c(source)
+
+    def test_tts_binary_fragments_are_queued_once(self):
         source = r'''#include <assert.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -1506,7 +2115,9 @@ typedef struct {int data_len,payload_len,payload_offset,op_code;bool fin;const c
 #define WEBSOCKET_EVENT_DATA 4
 static atomic_bool s_connected,s_hello,s_listening,s_reply_active,s_have_reply;
 static atomic_uint s_progress_tick;
-static unsigned s_tts_packets,s_tts_bytes,texts;
+static unsigned s_tts_packets,s_tts_bytes,texts,queued;
+static bool tts_enqueue(const void *p,size_t n){assert(n==5);queued++;return true;}
+static bool voice_client_set_active(bool active){return active;}
 static char s_session_id[96];
 static epw_ws_message_t message,*s_message=&message;
 static bool current=true;
@@ -1521,10 +2132,10 @@ static void handle_text(const char *data,size_t len){texts++;}
 int main(void){
     ws_event_handler(NULL,NULL,WEBSOCKET_EVENT_CONNECTED,NULL);s_hello=true;
     esp_websocket_event_data_t part={.data_len=2,.payload_len=5,.op_code=2,.fin=true,.data_ptr="ab"};
-    ws_event_handler(NULL,NULL,WEBSOCKET_EVENT_DATA,&part);assert(s_tts_packets==0);
+    ws_event_handler(NULL,NULL,WEBSOCKET_EVENT_DATA,&part);assert(s_tts_packets==0 && queued==0);
     part.payload_offset=2;part.data_len=3;part.data_ptr="cde";
     ws_event_handler(NULL,NULL,WEBSOCKET_EVENT_DATA,&part);
-    assert(s_tts_packets==1 && s_tts_bytes==5 && texts==0 && s_progress_tick==123);
+    assert(s_tts_packets==1 && s_tts_bytes==5 && queued==1 && texts==0 && s_progress_tick==123);
     part=(esp_websocket_event_data_t){.data_len=2,.payload_len=2,.op_code=1,.fin=true,.data_ptr="{}"};
     ws_event_handler(NULL,NULL,WEBSOCKET_EVENT_DATA,&part);assert(texts==1 && s_tts_packets==1);
     s_message=NULL;ws_event_handler(NULL,NULL,WEBSOCKET_EVENT_DISCONNECTED,NULL);
