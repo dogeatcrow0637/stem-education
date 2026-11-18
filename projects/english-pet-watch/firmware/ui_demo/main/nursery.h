@@ -95,6 +95,7 @@ epw_nursery_mode_t nursery_get_mode(void);
 
 void nursery_set_volume(int volume);             /* 0-100 */
 int nursery_get_volume(void);
+void nursery_save_volume(void);                 /* 调节结束时保存，避免逐帧写 NVS */
 
 epw_nursery_state_t nursery_get_state(void);
 int nursery_current_index(void);                 /* 曲库下标，-1 表示无 */

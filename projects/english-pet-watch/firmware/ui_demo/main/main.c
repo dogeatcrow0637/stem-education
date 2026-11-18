@@ -1,6 +1,4 @@
 #include <stdio.h>
-#include "freertos/idf_additions.h"
-#include "esp_heap_caps.h"
 #include <stdlib.h>
 #include <time.h>
 #include "sdkconfig.h"
@@ -25,24 +23,6 @@ extern void tzset(void);
 
 static const char *TAG = "epw-ui";
 
-extern void ui_debug_icon_bench_prepare(void);
-extern unsigned ui_debug_icon_frame(bool legacy,int x,int y);
-static void icon_bench_task(void *arg)
-{
-    vTaskDelay(pdMS_TO_TICKS(6000));ui_debug_icon_bench_prepare();
-    vTaskDelay(pdMS_TO_TICKS(400));
-    for(int phase=0;phase<2;phase++) {
-        ui_debug_icon_frame(phase==0,-96,-96);
-        for(int i=0;i<48;i++) {
-            int x=-96+(i%24)*8,y=i<24?x:-x;
-            printf("ICON_PERF:%d:%d:%u\n",phase,i,ui_debug_icon_frame(phase==0,x,y));
-            vTaskDelay(pdMS_TO_TICKS(25));
-        }
-    }
-    ui_debug_icon_frame(false,0,0);
-    shot_dump("apps_continuous");printf("ICONBENCHDONE\n");
-    vTaskDelete(NULL);
-}
 void app_main(void)
 {
     esp_err_t ret = nvs_flash_init();
@@ -101,6 +81,4 @@ void app_main(void)
 #endif
 
     ESP_LOGI(TAG, "UI ready");
-    xTaskCreateWithCaps(icon_bench_task,"icon_bench",8192,NULL,3,NULL,
-                        MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
 }

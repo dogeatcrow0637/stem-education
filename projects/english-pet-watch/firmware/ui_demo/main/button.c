@@ -98,12 +98,12 @@ static void pwr_key_poll(void)
         if ((events & POWER_KEY_SHORT) && !s_pwr_fired) toggle_apps("PWR");
         s_pwr_down = false;
     }
-    if (s_pwr_down && !s_pwr_fired && (uint32_t)(now - s_pwr_started) >= 5000u) {
+    if (s_pwr_down && !s_pwr_fired && (uint32_t)(now - s_pwr_started) >= 3000u) {
         if (bsp_display_lock(100) == ESP_OK) {
             ui_power_menu_open();
             bsp_display_unlock();
             s_pwr_fired = true;
-            ESP_LOGI(TAG, "PWR 5s hold -> shutdown confirmation");
+            ESP_LOGI(TAG, "PWR 3s hold -> shutdown confirmation");
         }
     }
 }

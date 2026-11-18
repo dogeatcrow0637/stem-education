@@ -50,7 +50,7 @@ bool wifi_scan_busy(void);
 
 /**
  * 拷贝最近一次扫描结果（按信号强度从强到弱）。
- * 扫描进行中返回 -1；扫描完成但没有热点返回 0。
+ * 扫描进行中返回 -1；扫描失败返回 -2；扫描完成但没有热点返回 0。
  */
 int wifi_scan_copy(epw_wifi_ap_t *out, int max);
 
