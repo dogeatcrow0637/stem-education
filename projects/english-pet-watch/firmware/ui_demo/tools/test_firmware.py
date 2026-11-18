@@ -301,6 +301,16 @@ int main(void){
         self.assertNotIn("icon_bench", source)
         self.assertNotIn("ui_debug_icon_", (MAIN / "ui.c").read_text())
 
+    def test_three_color_ring_has_no_gray_underlay_or_highlight(self):
+        ui = (MAIN / "ui.c").read_text()
+        body = ui.split("static void mk_ring_seg(", 1)[1].split("\n}", 1)[0]
+        # 黑底上半透明的加宽同色弧/白色高光都会露出灰色轮廓，只允许一条实色弧。
+        self.assertEqual(body.count("mk_arc_seg("), 1, body)
+        self.assertIn("RING_WIDTH,", body)
+        self.assertNotIn("RING_WIDTH + 10", body)
+        self.assertNotIn("0xFFFFFF", body)
+        self.assertNotIn("LV_OPA_20", body)
+
 
     def test_power_registers_and_boot_hold(self):
         source = r'''#include <assert.h>
