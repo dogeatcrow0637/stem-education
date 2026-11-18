@@ -503,16 +503,13 @@ static lv_obj_t *mk_arc_prog(lv_obj_t *parent, int cx, int cy, int d, int w,
     return arc;
 }
 
-/* 三色外环单段：同色柔光打底 + 主弧 + 外侧白色高光，
- * 让环有一点毛玻璃的通透反光，不再是纯色 CAD 线条。 */
+/* 三色外环单段：只画实色主弧。
+ * 不要再用更宽的半透明同色弧打底、也不要在外侧叠白色半透明高光：它们在
+ * 黑底上都会变成一圈更粗的灰色/暗色轮廓，露在主弧外面，看起来像环没对齐。 */
 static void mk_ring_seg(lv_obj_t *parent, int from, int to, lv_color_t color)
 {
-    mk_arc_seg(parent, CENTER_X, CENTER_Y, RING_SIZE, RING_WIDTH + 10,
-               from, to, color, LV_OPA_20);
     mk_arc_seg(parent, CENTER_X, CENTER_Y, RING_SIZE, RING_WIDTH,
                from, to, color, LV_OPA_COVER);
-    mk_arc_seg(parent, CENTER_X, CENTER_Y, RING_SIZE + 2, 2,
-               from + 2, to - 2, lv_color_hex(0xFFFFFF), LV_OPA_30);
 }
 
 /* 双色太阳：琥珀色光芒 + 亮黄核心。
@@ -3373,8 +3370,8 @@ static void build_dial(lv_obj_t *page)
     lv_obj_set_pos(deco, 0, 0);
     s_dial_deco = deco;
 
-    /* 外圈：亮黄 + 橙的暖色儿童科技环，常驻。三段之间留 4° 呼吸口，不做刻度。
-     * 每段自带柔光与白色外侧高光，形成一点毛玻璃反光。 */
+    /* 外圈：亮黄 + 橙 + 天空蓝的儿童科技环，常驻。三段之间留 4° 呼吸口，
+     * 不做刻度；只画实色弧，避免黑底上出现额外的灰色轮廓。 */
     mk_ring_seg(deco, 2, 118, COL_RING_YELLOW);
     mk_ring_seg(deco, 122, 238, COL_RING_ORANGE);
     mk_ring_seg(deco, 242, 358, COL_RING_SKY);
