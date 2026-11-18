@@ -30,11 +30,16 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include "sdkconfig.h"
 #include "wifi.h"
 
 static const char *TAG = "epw-nursery";
 
-#define NURSERY_BASE        "http://<曲库服务器>:8083/family/modules/nursery/"
+/* 曲库地址由 firmware/epw.env 写入 sdkconfig.local，不写死在源码里。 */
+#ifndef CONFIG_EPW_NURSERY_BASE
+#define CONFIG_EPW_NURSERY_BASE ""
+#endif
+#define NURSERY_BASE        CONFIG_EPW_NURSERY_BASE
 #define NURSERY_CATALOG_URL NURSERY_BASE "data/songs.js"
 #define NURSERY_LYRICS_URL  NURSERY_BASE "lyrics/"
 #define NURSERY_AUDIO_URL   NURSERY_BASE "audio/"
@@ -582,6 +587,11 @@ static bool catalog_fetch(void)
 static void catalog_task(void *arg)
 {
     (void)arg;
+    if (NURSERY_BASE[0] == '\0') {
+        ESP_LOGW(TAG, "nursery base not configured, skip catalog");
+        vTaskDelete(NULL);
+        return;
+    }
     s_catalog_loading = true;
     while (!catalog_fetch()) {
         vTaskDelay(pdMS_TO_TICKS(8000));

@@ -29,6 +29,10 @@ static const char *TAG = "epw";
 
 static esp_err_t check_and_maybe_update(void)
 {
+    if (CONFIG_EPW_OTA_URL[0] == '\0') {
+        ESP_LOGW(TAG, "未配置 OTA 地址，跳过检查（见 firmware/epw.env）");
+        return ESP_OK;
+    }
     epw_ota_result_t result = {0};
     esp_err_t err = epw_ota_check(&result);
     if (err != ESP_OK) {

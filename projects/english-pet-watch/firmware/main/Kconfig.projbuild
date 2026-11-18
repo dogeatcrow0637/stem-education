@@ -26,11 +26,12 @@ config EPW_DEVICE_NAME
 
 config EPW_OTA_URL
     string "OTA check URL"
-    default "http://192.168.1.100:8003/xiaozhi/ota/"
+    default ""
     help
-      xiaozhi-server 的 OTA 端点。
+      xiaozhi-server 的 OTA 端点，由 firmware/epw.env 写入 sdkconfig.local。
       局域网：http://<服务器局域网IP>:8003/xiaozhi/ota/
       公网：https://<域名>/xiaozhi/ota/
+      留空则不启用 OTA。
 
 config EPW_OTA_CHECK_INTERVAL_S
     int "OTA check interval (seconds)"

@@ -1,22 +1,35 @@
 #!/usr/bin/env bash
-# 把编译产物发布到 vls 上的 xiaozhi-server 固件目录。
+# 把编译产物发布到服务器上的 xiaozhi-server 固件目录。
 # 服务端只认 data/bin/{model}_{version}.bin 这种文件名。
 #
 # 用法：
 #   ./publish_firmware.sh build/english_pet_watch.bin 0.2.0
 #   ./publish_firmware.sh build/english_pet_watch.bin 0.2.0 epw-watch-175
 #
-# 可用环境变量覆盖：
+# 主机与远端目录读取 firmware/epw.env：
 #   EPW_SERVER_HOST     默认 vls
-#   EPW_SERVER_BIN_DIR  默认 /home/ubuntu/english-pet-watch/data/bin
+#   EPW_SERVER_BIN_DIR  必填
 
 set -euo pipefail
+
+ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/epw.env"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
 
 BIN="${1:-}"
 VERSION="${2:-}"
 MODEL="${3:-epw-watch-175}"
 SERVER="${EPW_SERVER_HOST:-vls}"
-REMOTE_DIR="${EPW_SERVER_BIN_DIR:-/home/ubuntu/english-pet-watch/data/bin}"
+REMOTE_DIR="${EPW_SERVER_BIN_DIR:-}"
+
+if [[ -z "$REMOTE_DIR" ]]; then
+  echo "缺少 EPW_SERVER_BIN_DIR：请在 firmware/epw.env 配置。" >&2
+  exit 1
+fi
 
 if [[ -z "$BIN" || -z "$VERSION" ]]; then
   echo "用法: $0 <firmware.bin> <version> [model]" >&2

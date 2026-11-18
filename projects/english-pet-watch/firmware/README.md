@@ -186,15 +186,20 @@ bash -n tools/gen_ui_assets.sh
 cd projects/english-pet-watch/firmware/ui_demo
 . <ESP-IDF>/export.sh                # 本机 /Users/eatcrow/esp/esp-idf-v6.0.2
 
-# 首次配置热点：把 SSID/密码写进 sdkconfig.local（不入库），再叠加构建
+# 首次：复制模板并填写本机配置（epw.env 已被 gitignore）
+cp ../epw.env.example ../epw.env && "${EDITOR:-vi}" ../epw.env
+# 生成两个工程的 sdkconfig.local
+./tools/sync_env.sh
+
 SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.local" idf.py build
 # 后续直接增量编译
 idf.py build                         # 产物 build/epw_ui_demo.bin
 idf.py -p /dev/cu.usbmodem* flash monitor
 ```
 
-热点配置放本地 `sdkconfig.local`（`CONFIG_EPW_WIFI_SSID` / `CONFIG_EPW_WIFI_PASSWORD`），**不要提交**。
-也可以 `idf.py menuconfig` → `English Pet Watch UI Demo` 里填写。
+Wi-Fi、语音服务端、曲库、OTA 与发布主机等本机配置统一放 `firmware/epw.env`（**不入库**），
+`tools/sync_env.sh` 会生成 `sdkconfig.local`。字段说明见 `firmware/epw.env.example`。
+也可以 `idf.py menuconfig` → `English Pet Watch UI Demo` 里临时填写。
 
 > `main/CMakeLists.txt` 在配置阶段把托管 Waveshare BSP 改为 **50 行、内部 RAM、单缓冲**（约 46KB，启动时分配）。
 > 原先 PSRAM 双缓冲需要临时 DMA 反弹内存，扫描时易碎片化；缩为 10 行又显著增加提交/调度开销。
@@ -291,11 +296,11 @@ python3 tools/doubao_bridge_mock.py --port 8788 --doubao     # 真豆包回复 �
 - 文本事件：`hello` 建会话、`stt` → 宠物「思考」、`llm` 的 `emotion`/`text` → Mimi Cat 表情与气泡、`tts` 控制上下行；
 - 鉴权 token 只从本地 Kconfig 读取，不保存云 Key。
 
-配置（写进 `sdkconfig.local`，不入库；留空 = 关闭语音链路）：
+配置（写进 `firmware/epw.env`，由 `tools/sync_env.sh` 生成 `sdkconfig.local`；留空 = 关闭语音链路）：
 
 ```text
-CONFIG_EPW_VOICE_WS_URL="ws://<服务器IP>:8818/xiaozhi/v1/"
-CONFIG_EPW_VOICE_TOKEN=""
+EPW_VOICE_WS_URL='ws://<服务器IP>:8818/xiaozhi/v1/'
+EPW_VOICE_TOKEN=''
 ```
 
 编译/烧录命令同上；串口验证顺序：
@@ -326,11 +331,13 @@ epw-voice: microphone active (16 kHz mono)
 ```text
 firmware/
 ├── README.md
+├── epw.env.example           # 本机配置模板（Wi-Fi / 语音 / 曲库 / OTA / 发布主机）
+├── epw.env                   # 本机真实配置（不入库，由模板复制填写）
 ├── ui_demo/                  # ✅ 当前真机可跑：表盘 + 应用桌面 + 宠物页 + 控制中心 + 状态页 + Wi-Fi
 │   ├── CMakeLists.txt
 │   ├── partitions.csv        # 8MB factory app + 7MB SPIFFS
 │   ├── sdkconfig.defaults    # 32MB Flash / 8MB PSRAM / LVGL 9.5
-│   ├── sdkconfig.local       # 热点 SSID/密码（不入库）
+│   ├── sdkconfig.local       # 由 tools/sync_env.sh 从 epw.env 生成（不入库）
 │   ├── main/
 │   │   ├── main.c            # NVS → 显示 → AXP2101 → UI → Wi-Fi → 豆包桥
 │   │   ├── ui.c/h            # 表盘 / 应用桌面 / 宠物页 / 控制中心 / 状态页
@@ -345,6 +352,7 @@ firmware/
 │       ├── decode_shots.py   # 串口截图还原为 BMP
 │       ├── doubao_bridge_mock.py # 宠物状态桥本地 mock / 真豆包调试
 │       ├── png_to_lvgl.py    # PNG → LVGL RGB565A8
+│       ├── sync_env.sh       # epw.env → sdkconfig.local
 │       └── gen_ui_assets.sh  # 重新生成字体与表情资源
 ├── CMakeLists.txt            # 规划中的 V0.1 OTA 固件（尚未实现）
 ├── sdkconfig.defaults        # 32MB Flash / 双 OTA 槽（规划）
@@ -412,11 +420,11 @@ OTA : http://<服务器IP>:5801/xiaozhi/ota/
 # 1. 提升版本号：改 CMakeLists.txt 里的 PROJECT_VER，例如 0.2.0
 idf.py build
 
-# 2. 发布到 vls 的 data/bin（脚本默认 ssh vls）
+# 2. 发布到服务器 data/bin（主机/目录读 firmware/epw.env 的 EPW_SERVER_HOST / EPW_SERVER_BIN_DIR）
 ./tools/publish_firmware.sh build/english_pet_watch.bin 0.2.0
 
-# 3. 板子还没到？先用电脑模拟设备
-./tools/ota_probe.sh http://<服务器IP>:5801/xiaozhi/ota/ 00:11:22:33:44:55 0.1.0 epw-watch-175
+# 3. 板子还没到？先用电脑模拟设备（URL 读 epw.env 的 EPW_OTA_URL，也可显式传参）
+./tools/ota_probe.sh
 ```
 
 预期响应里 `firmware.version = "0.2.0"`、`firmware.url` 指向 `/xiaozhi/ota/download/epw-watch-175_0.2.0.bin`。
