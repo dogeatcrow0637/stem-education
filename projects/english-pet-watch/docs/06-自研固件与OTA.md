@@ -80,10 +80,10 @@ device-version: 0.1.0
   "server_time": { "timestamp": 1763000000000, "timezone_offset": 480 },
   "firmware": {
     "version": "0.2.0",
-    "url": "http://124.222.233.196:5801/xiaozhi/ota/download/epw-watch-175_0.2.0.bin"
+    "url": "http://<服务器IP>:5801/xiaozhi/ota/download/epw-watch-175_0.2.0.bin"
   },
   "websocket": {
-    "url": "ws://124.222.233.196:5801/xiaozhi/v1/",
+    "url": "ws://<服务器IP>:5801/xiaozhi/v1/",
     "token": ""
   }
 }
@@ -133,7 +133,7 @@ Docker 部署时如果 `vision_explain` 留默认占位符，服务端会用**�
 server:
   port: 8000
   http_port: 8003
-  vision_explain: http://124.222.233.196:5801/mcp/vision/explain
+  vision_explain: http://<服务器IP>:5801/mcp/vision/explain
 ```
 
 公开部署时把协议换成 `https://`。
@@ -184,7 +184,7 @@ V0.1 **不包含**：屏幕、音频 codec、唤醒词、WebSocket、Opus。这�
 
 ```bash
 cd projects/english-pet-watch/firmware
-./tools/ota_probe.sh http://124.222.233.196:5801/xiaozhi/ota/ 00:11:22:33:44:55 0.1.0 epw-watch-175
+./tools/ota_probe.sh http://<服务器IP>:5801/xiaozhi/ota/ 00:11:22:33:44:55 0.1.0 epw-watch-175
 ```
 
 - 返回 200 且 `websocket.url` 正确 → 服务端契约通；

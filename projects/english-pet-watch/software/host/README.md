@@ -69,7 +69,7 @@ docker logs --tail 50 xiaozhi-esp32-server # 无 traceback
 | 项 | 值 |
 |---|---|
 | 连接 | `ssh vls`（别名与机器信息见 ValleyServer `OPS.md`） |
-| 公网 IP | `124.222.233.196`（腾讯云） |
+| 公网 IP | `<服务器IP>`（腾讯云） |
 | 规格 | 4 vCPU / 7.5 GiB / 178 GB（2026-11 已用约 14 GB） |
 | 已有服务 | `xinglvren-api` `127.0.0.1:8787` + nginx `5800` + `clash` 7890–7893 |
 | 本服务 | xiaozhi-server `127.0.0.1:8000`（WS）/ `127.0.0.1:8003`（OTA），nginx 对外 `5801` |
@@ -135,10 +135,10 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ```yaml
 server:
-  websocket: ws://124.222.233.196:5801/xiaozhi/v1/
+  websocket: ws://<服务器IP>:5801/xiaozhi/v1/
 ```
 
-固件 OTA 地址填：`http://124.222.233.196:5801/xiaozhi/ota/`。
+固件 OTA 地址填：`http://<服务器IP>:5801/xiaozhi/ota/`。
 
 ### 6.4 上云前必须知道的三个坑
 
@@ -151,7 +151,7 @@ server:
 | 步骤 | 命令 / 判断 |
 |---|---|
 | 本机 OTA | `curl -s http://127.0.0.1:8003/xiaozhi/ota/` 有返回 |
-| 公网 OTA | 外部 `curl -s http://124.222.233.196:5801/xiaozhi/ota/` 有返回 |
+| 公网 OTA | 外部 `curl -s http://<服务器IP>:5801/xiaozhi/ota/` 有返回 |
 | 设备 | OTA 成功 → WebSocket 连上 → 说 Hello 有 ASR 文本 |
 | 资源 | `docker stats --no-stream` 内存稳定、无重启 |
 | 回滚 | `docker compose down` → 停用 nginx 站点 → 安全组关 5801 |

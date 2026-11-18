@@ -27,7 +27,7 @@
 - 2026-11-13：新增 `firmware/tools/publish_firmware.sh`（发布 bin 到 `data/bin/`）与 `ota_probe.sh`（电脑模拟设备请求 OTA）。
 - 2026-11-16：实板验机：确认开发板为 **ESP32-S3-Touch-AMOLED-1.75C**，ESP32-S3 rev v0.2，**32MB Flash / 8MB PSRAM**，MAC `7c:0c:5f:48:02:98`；出厂 xiaozhi 2.6.0 整片备份到 `/tmp/epw-xiaozhi-2.6.0-backup.bin`。
 - 2026-11-16：新增 `firmware/ui_demo/` 独立 ESP-IDF 工程（LVGL 9.5 + Waveshare BSP 3.0.0）：表盘 / 单词卡 / 状态页三页 UI，支持点击、长按、左右滑动、亮度调节；**不初始化音频，音量固定 0**。
-- 2026-11-16：UI Demo 自动连接手机热点 `AiPhone`（密码只在本地 `sdkconfig.local`，不提交），状态页实时显示 `ONLINE / CONNECTING / FAILED / OFF`。
+- 2026-11-16：UI Demo 自动连接手机热点 `<你的热点>`（密码只在本地 `sdkconfig.local`，不提交），状态页实时显示 `ONLINE / CONNECTING / FAILED / OFF`。
 - 2026-11-16：UI Demo 真机渲染验证通过：466×466 圆屏三页正常显示，程序化翻页/翻面截图正常；触摸点按/左右滑/长按逻辑已实现，待现场手触确认；V0.2 前不接音频，音量保持 0。
 - 2026-11-16：新增真机截图链路：`CONFIG_EPW_BOOT_SHOTS=y` 时开机自动巡页，LVGL snapshot 按行 base64 经串口回传，`firmware/ui_demo/tools/decode_shots.py` 还原为 BMP，截图存 `resources/screenshots/`。
 - 2026-11-16：新增 `docs/07-UI设计与交互.md`（色彩/字体/圆屏安全区/手势/状态）与 `resources/screenshots/` 四张真机截图；修正圆屏上不支持的分隔符字形。

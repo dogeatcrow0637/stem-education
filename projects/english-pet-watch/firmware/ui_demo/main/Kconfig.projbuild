@@ -44,7 +44,7 @@ config EPW_VOICE_WS_URL
     help
         xiaozhi-server v1 endpoint used for the full voice loop
         (VAD / ASR / Doubao LLM / TTS), for example:
-        ws://192.168.1.10:8000/xiaozhi/v1/
+        ws://<服务器IP>:8000/xiaozhi/v1/
         Leave empty to disable the voice channel. Put real values in
         sdkconfig.local (not committed).
 
@@ -54,6 +54,14 @@ config EPW_VOICE_TOKEN
     help
         Optional Bearer token for xiaozhi-server. Keep the real value in
         sdkconfig.local (not committed).
+
+config EPW_NURSERY_BASE
+    string "Nursery catalog base URL"
+    default ""
+    help
+        3S nursery catalog root, for example
+        http://<服务器IP>:8083/family/modules/nursery/
+        Leave empty to disable HTTP nursery catalog downloads.
 
 config EPW_BOOT_SHOTS
     bool "Boot-time screenshot capture"

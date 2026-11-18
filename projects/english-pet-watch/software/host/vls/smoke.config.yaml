@@ -3,12 +3,12 @@
 # 拿到豆包 Key 后，换成 ../configs/doubao-llm-only.config.yaml 的 LLM 段。
 
 server:
-  websocket: ws://124.222.233.196:5801/xiaozhi/v1/
+  websocket: ws://<服务器IP>:5801/xiaozhi/v1/
   port: 8000
   http_port: 8003
   # OTA 下载地址由这个字段替换路径得到；Docker 里必须写公网/局域网地址，
   # 否则服务端会下发容器内网 IP，设备下载 404。
-  vision_explain: http://124.222.233.196:5801/mcp/vision/explain
+  vision_explain: http://<服务器IP>:5801/mcp/vision/explain
   timezone_offset: +8
   auth:
     enabled: false
