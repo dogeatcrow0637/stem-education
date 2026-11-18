@@ -719,6 +719,43 @@ int main(void) {
 '''
         run_c(source)
 
+    def test_mimi_stays_awake_and_other_pages_keep_idle_timeout(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#define LV_UNUSED(x) ((void)(x))
+#define LV_INDEV_STATE_PRESSED 1
+#define UI_IDLE_TIMEOUT_MS timeout
+static uint32_t timeout=15000,now,s_last_activity;
+static bool s_pet_open=true,s_screen_off,s_center_dragging;
+static int sleeps,wakes,pressed;
+typedef int lv_timer_t;
+typedef int lv_indev_t;
+static lv_indev_t input;
+static uint32_t lv_tick_get(void){return now;}
+static uint32_t lv_tick_elaps(uint32_t t){return now-t;}
+static lv_indev_t *bsp_display_get_input_dev(void){return &input;}
+static int lv_indev_get_state(lv_indev_t *p){return pressed;}
+static void screen_wake(void){wakes++;s_screen_off=false;}
+static void screen_sleep(void){sleeps++;s_screen_off=true;}
+static bool pages_busy_except_center(void){return false;}
+static bool page_anim_busy(void){return false;}
+static void home_snap_refresh(void){}
+'''
+        source += function('ui.c', 'static void idle_timer_cb(lv_timer_t *timer)')
+        source += r'''
+int main(void){
+    for(now=0;now<=300000;now+=100)idle_timer_cb(NULL);
+    assert(sleeps==0 && !s_screen_off && timeout==15000);
+    s_pet_open=false;now=s_last_activity+14999;idle_timer_cb(NULL);assert(sleeps==0);
+    now++;idle_timer_cb(NULL);assert(sleeps==1 && s_screen_off);
+    pressed=1;idle_timer_cb(NULL);assert(wakes==1 && !s_screen_off);
+    pressed=0;timeout=0;now+=100000;idle_timer_cb(NULL);assert(sleeps==1);
+}
+'''
+        run_c(source)
+
     def test_wake_consumes_press_and_restores_brightness(self):
         source = r'''#include <assert.h>
 #include <stddef.h>
@@ -904,15 +941,17 @@ int main(void) {
 #define UI_PET_THINKING 1
 #define EPW_WIFI_CONNECTED 1
 static bool active,ready=true;
-static int starts,updates,state;
+static int starts,updates,state,network=EPW_WIFI_CONNECTED;
 static bool voice_client_is_active(void){return active;}
 static bool voice_client_set_active(bool value){starts++;if(ready)active=value;return ready;}
 static void pet_apply(int value,const char *text){updates++;state=value;}
-static int wifi_get_state(void){return EPW_WIFI_CONNECTED;}
+static int wifi_get_state(void){return network;}
 '''
         source += function('ui.c', 'static void pet_begin_chat(void)')
         source += r'''
 int main(void){
+    network=0;pet_begin_chat();assert(!active && starts==0 && updates==1 && state==UI_PET_IDLE);
+    network=EPW_WIFI_CONNECTED;updates=0;
     pet_begin_chat();assert(active && starts==1 && updates==1);
     for(int i=0;i<20;i++)pet_begin_chat();
     assert(starts==1 && updates==1);

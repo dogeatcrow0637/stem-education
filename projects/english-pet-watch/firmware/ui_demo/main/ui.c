@@ -4428,12 +4428,15 @@ static void pet_begin_chat(void)
     if (voice_client_is_active()) {
         return;
     }
+    if (wifi_get_state() != EPW_WIFI_CONNECTED) {
+        pet_apply(UI_PET_IDLE, "网络未连接，请先连接 Wi-Fi。");
+        return;
+    }
     if (!voice_client_set_active(true)) {
         pet_apply(UI_PET_IDLE, "语音暂不可用，请检查配置或重启。");
         return;
     }
-    pet_apply(UI_PET_THINKING, wifi_get_state() == EPW_WIFI_CONNECTED
-                                 ? "连接语音…" : "等待网络…");
+    pet_apply(UI_PET_THINKING, "连接语音…");
 }
 
 /* 空白区与猫咪本体都支持左滑聊天，右滑退出。 */
@@ -5548,10 +5551,14 @@ static void wake_layer_cb(lv_event_t *e)
     ui_activity();
 }
 
-/* 100ms 轮询触摸状态：点按/拖动都算操作；30s 无操作关背光 */
+/* Mimi 保持常亮；其他页面按用户设置的空闲时长熄屏。 */
 static void idle_timer_cb(lv_timer_t *timer)
 {
     LV_UNUSED(timer);
+    if (s_pet_open) {
+        s_last_activity = lv_tick_get();
+        return;
+    }
     lv_indev_t *indev = bsp_display_get_input_dev();
     if (indev != NULL && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) {
         s_last_activity = lv_tick_get();
