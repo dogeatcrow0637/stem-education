@@ -48,6 +48,7 @@ static volatile bool s_scan_running;
 static volatile bool s_scan_ready;
 static epw_wifi_ap_t s_scan_aps[EPW_WIFI_MAX_APS];
 static int s_scan_count;
+static bool s_scan_failed;
 
 /* -------------------------------------------------------------------------- */
 /* NVS 账号                                                                     */
@@ -237,7 +238,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     xSemaphoreTake(s_control_lock, portMAX_DELAY);
 
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        if (s_have_cred) {
+        if (s_have_cred && !s_scan_running) {
             s_state = EPW_WIFI_CONNECTING;
             esp_wifi_connect();
         } else {
@@ -257,7 +258,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         }
         snprintf(s_ip, sizeof(s_ip), "--");
 
-        if (!s_have_cred || (!s_user_connect && !s_auto_retry)) {
+        if (s_scan_running || !s_have_cred || (!s_user_connect && !s_auto_retry)) {
             s_state = EPW_WIFI_OFF;
             goto done;
         }
@@ -304,67 +305,17 @@ done:
     xSemaphoreGive(s_control_lock);
 }
 
-/* 扫描并打印 2.4GHz 可见 AP，便于判断热点是否开启/是否为 5GHz。 */
-static void scan_and_log(void)
-{
-    wifi_scan_config_t scan_cfg = {
-        .ssid = NULL,
-        .bssid = NULL,
-        .channel = 0,
-        .show_hidden = false,
-    };
-
-    esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "scan failed: %s", esp_err_to_name(err));
-        return;
-    }
-
-    uint16_t ap_num = 0;
-    esp_wifi_scan_get_ap_num(&ap_num);
-    if (ap_num == 0) {
-        ESP_LOGW(TAG, "scan: no 2.4GHz AP in range");
-        return;
-    }
-    if (ap_num > 16) {
-        ap_num = 16;
-    }
-
-    wifi_ap_record_t *recs = calloc(ap_num, sizeof(*recs));
-    if (recs == NULL) {
-        return;
-    }
-
-    uint16_t got = ap_num;
-    if (esp_wifi_scan_get_ap_records(&got, recs) == ESP_OK) {
-        ESP_LOGI(TAG, "scan: %u 2.4GHz AP(s) visible", (unsigned)got);
-        for (uint16_t i = 0; i < got; i++) {
-            ESP_LOGI(TAG, "  [%02u] %-24s rssi=%3d ch=%2d auth=%d",
-                     (unsigned)(i + 1), (const char *)recs[i].ssid,
-                     recs[i].rssi, recs[i].primary, (int)recs[i].authmode);
-        }
-    }
-    free(recs);
-    esp_wifi_clear_ap_list();
-}
-
 static void reconnect_task(void *arg)
 {
     (void)arg;
-    bool scanned = false;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(15000));
         xSemaphoreTake(s_control_lock, portMAX_DELAY);
-        bool retry = s_state == EPW_WIFI_FAILED && s_have_cred && s_auto_retry;
+        bool retry = !s_scan_running && s_state == EPW_WIFI_FAILED && s_have_cred && s_auto_retry;
         xSemaphoreGive(s_control_lock);
         if (retry) {
-            /* 首次失败先扫描一次，确认 SSID 是否在 2.4GHz 可见 */
-            if (!scanned) {
-                scan_and_log();
-                scanned = true;
-            }
             xSemaphoreTake(s_control_lock, portMAX_DELAY);
-            if (s_state == EPW_WIFI_FAILED && s_have_cred && s_auto_retry) {
+            if (!s_scan_running && s_state == EPW_WIFI_FAILED && s_have_cred && s_auto_retry) {
                 ESP_LOGI(TAG, "retrying hotspot connection");
                 s_retry_num = 0;
                 s_state = EPW_WIFI_CONNECTING;
@@ -389,6 +340,15 @@ static void scan_task(void *arg)
         .channel = 0,
         .show_hidden = false,
     };
+
+    xSemaphoreTake(s_control_lock, portMAX_DELAY);
+    if (s_state == EPW_WIFI_CONNECTING) {
+        /* 驱动连接期间拒绝扫描；保留账号，暂停本轮连接。 */
+        s_ignore_leave = esp_wifi_disconnect() == ESP_OK;
+        s_user_connect = false;
+        s_state = EPW_WIFI_OFF;
+    }
+    xSemaphoreGive(s_control_lock);
 
     epw_wifi_ap_t tmp[EPW_WIFI_MAX_APS * 2];
     int n = 0;
@@ -455,11 +415,20 @@ static void scan_task(void *arg)
     }
     memcpy(s_scan_aps, tmp, (size_t)n * sizeof(tmp[0]));
     s_scan_count = n;
+    s_scan_failed = err != ESP_OK;
     s_scan_ready = true;
-    s_scan_running = false;
     if (s_scan_lock != NULL) {
         xSemaphoreGive(s_scan_lock);
     }
+
+    xSemaphoreTake(s_control_lock, portMAX_DELAY);
+    s_scan_running = false;
+    if (s_state == EPW_WIFI_OFF && s_have_cred && s_auto_retry) {
+        s_retry_num = 0;
+        s_state = EPW_WIFI_CONNECTING;
+        esp_wifi_connect();
+    }
+    xSemaphoreGive(s_control_lock);
 
     ESP_LOGI(TAG, "ui scan done: %d AP(s)", n);
     vTaskDelete(NULL);
@@ -470,10 +439,13 @@ esp_err_t wifi_scan_async(void)
     if (!s_inited) {
         return ESP_ERR_INVALID_STATE;
     }
+    xSemaphoreTake(s_control_lock, portMAX_DELAY);
     if (s_scan_running) {
+        xSemaphoreGive(s_control_lock);
         return ESP_ERR_INVALID_STATE;
     }
     s_scan_running = true;
+    xSemaphoreGive(s_control_lock);
     s_scan_ready = false;
     s_scan_count = 0;
 
@@ -496,6 +468,9 @@ int wifi_scan_copy(epw_wifi_ap_t *out, int max)
     }
     if (s_scan_running || !s_scan_ready) {
         return -1;
+    }
+    if (s_scan_failed) {
+        return -2;
     }
     int n = s_scan_count;
     if (n > max) {
@@ -631,6 +606,10 @@ esp_err_t wifi_connect_to(const char *ssid, const char *password)
         return ESP_ERR_INVALID_STATE;
     }
     xSemaphoreTake(s_control_lock, portMAX_DELAY);
+    if (s_scan_running) {
+        xSemaphoreGive(s_control_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
     memcpy(s_ssid, ssid, ssid_len + 1);
     memcpy(s_pass, pass, pass_len + 1);
     s_have_cred = true;

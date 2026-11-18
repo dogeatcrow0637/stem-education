@@ -34,7 +34,7 @@ enum {
 esp_err_t power_key_read(uint8_t *events);
 /** 配置软件确认关机、128ms 硬件唤醒与按键边沿 IRQ。 */
 esp_err_t power_key_configure(void);
-/** 冷启动由电源键触发时，黑屏等待本次连续长按满约 5 秒。 */
+/** 冷启动由电源键触发时，黑屏等待本次连续长按满约 3 秒。 */
 esp_err_t power_boot_wait(void);
 /** AXP2101 关闭电源输出；不擦除 NVS。 */
 esp_err_t power_shutdown(void);

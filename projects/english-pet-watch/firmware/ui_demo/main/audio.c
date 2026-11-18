@@ -110,9 +110,15 @@ bool audio_playback_open(void)
             .bits_per_sample = 16, .channel = 1, .sample_rate = EPW_AUDIO_SAMPLE_RATE,
         };
         if (esp_codec_dev_open(s_spk, &fs) == ESP_CODEC_DEV_OK) {
-            esp_codec_dev_set_out_vol(s_spk, s_play_volume);
-            s_play_open = true;
-            ok = true;
+            int err = esp_codec_dev_set_out_vol(s_spk, s_play_volume);
+            if (err == ESP_CODEC_DEV_OK) {
+                s_play_open = true;
+                ok = true;
+                ESP_LOGI(TAG, "playback open, volume=%d", s_play_volume);
+            } else {
+                ESP_LOGW(TAG, "speaker volume failed: %d", err);
+                esp_codec_dev_close(s_spk);
+            }
         } else {
             ESP_LOGW(TAG, "speaker open failed");
         }

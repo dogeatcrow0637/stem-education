@@ -31,6 +31,12 @@ def run_c(source, json=False):
 
 
 class FirmwareTests(unittest.TestCase):
+    def test_normal_boot_has_no_icon_benchmark(self):
+        source = (MAIN / "main.c").read_text()
+        self.assertNotIn("icon_bench", source)
+        self.assertNotIn("ui_debug_icon_", (MAIN / "ui.c").read_text())
+
+
     def test_power_registers_and_boot_hold(self):
         source = r'''#include <assert.h>
 #include <stdbool.h>
@@ -80,9 +86,9 @@ int main(void){
     fault=1;assert(power_key_read(&ev)==-2 && ev==0);fault=0;
     regs[0x10]=0xA0;assert(power_shutdown()==0 && regs[0x10]==0xA1);
     offs=0;regs[0x20]=1;regs[0x49]=0;us=0;
-    assert(power_boot_wait()==0 && us>=4872000 && offs==0);
+    assert(power_boot_wait()==0 && us>=2872000 && offs==0);
     us=0;release_at=1000000;regs[0x49]=0;
-    assert(power_boot_wait()==ESP_FAIL && offs==1 && us<4872000);
+    assert(power_boot_wait()==ESP_FAIL && offs==1 && us<2872000);
     release_at=-1;regs[0x49]=0;us=0;offs=0;reason=2;
     assert(power_boot_wait()==0 && us==0 && offs==0);
     reason=1;regs[0x20]=4;assert(power_boot_wait()==0 && us==0);
@@ -91,7 +97,7 @@ int main(void){
 '''
         run_c(source)
 
-    def test_power_key_five_seconds_once_and_no_short_after_hold(self):
+    def test_power_key_three_seconds_once_and_no_short_after_hold(self):
         source = r'''#include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -114,8 +120,8 @@ static void toggle_apps(const char *s){shorts++;}
         source += r'''
 static void poll(uint32_t t,uint8_t e){now=t;events=e;pwr_key_poll();}
 int main(void){
-    poll(100,2);poll(5099,0);assert(opened==0 && shorts==0);
-    poll(5100,0);poll(10000,0);assert(opened==1);
+    poll(100,2);poll(3099,0);assert(opened==0 && shorts==0);
+    poll(3100,0);poll(10000,0);assert(opened==1);
     poll(10100,9);assert(shorts==0 && !s_pwr_down);
     poll(11000,2);poll(11200,9);assert(shorts==1 && opened==1);
     poll(12000,2);err=-1;poll(12500,0);err=0;poll(18000,0);assert(opened==1);
@@ -1138,7 +1144,7 @@ enum {EPW_WIFI_OFF,EPW_WIFI_CONNECTING,EPW_WIFI_CONNECTED,EPW_WIFI_FAILED};
 typedef struct {struct {unsigned char ssid[32],password[64];struct{int authmode;}threshold;int sae_pwe_h2e;struct{bool capable,required;}pmf_cfg;}sta;}wifi_config_t;
 typedef struct {unsigned char reason;}wifi_event_sta_disconnected_t;
 typedef struct {struct{int ip;}ip_info;}ip_event_got_ip_t;
-static bool s_inited=true,s_have_cred=true,s_user_connect,s_auto_retry=true,s_hinted_no_ap,s_ignore_leave;
+static bool s_inited=true,s_have_cred=true,s_user_connect,s_auto_retry=true,s_hinted_no_ap,s_ignore_leave,s_scan_running;
 static int s_control_lock,s_retry_num,s_state=EPW_WIFI_CONNECTED,saves;
 static char s_ssid[33]="good",s_pass[65]="goodpass",s_ip[16],saved_ssid[33]="good";
 typedef struct {unsigned char ssid[33];}wifi_ap_record_t;
@@ -1148,7 +1154,8 @@ static int xSemaphoreTake(int a,int b){return 1;}
 static int xSemaphoreGive(int a){return 1;}
 static void wifi_init_sta(void){}
 static int esp_wifi_disconnect(void){return ESP_OK;}
-static int esp_wifi_connect(void){return ESP_OK;}
+static int connects;
+static int esp_wifi_connect(void){connects++;return ESP_OK;}
 static int esp_wifi_set_config(int iface,wifi_config_t *cfg){last_config=*cfg;return ESP_OK;}
 static void creds_save(const char *ssid,const char *pass){saves++;snprintf(saved_ssid,sizeof(saved_ssid),"%s",ssid);}
 static void sntp_start_once(void){}
@@ -1160,6 +1167,13 @@ static void configure_dns(void){}
             source += function('wifi.c', signature)
         source += r'''
 int main(void){
+    s_scan_running=true;
+    wifi_event_handler(NULL,WIFI_EVENT,WIFI_EVENT_STA_START,NULL);
+    assert(connects==0);
+    wifi_event_sta_disconnected_t lost={.reason=WIFI_REASON_NO_AP_FOUND};
+    wifi_event_handler(NULL,WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&lost);
+    assert(s_state==EPW_WIFI_OFF && connects==0 && s_auto_retry);
+    s_scan_running=false;
     assert(wifi_connect_to("bad","badpass1")==ESP_OK);assert(saves==0);
     wifi_event_sta_disconnected_t left={.reason=WIFI_REASON_ASSOC_LEAVE};
     wifi_event_handler(NULL,WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&left);
@@ -1176,6 +1190,57 @@ int main(void){
     key[63]='z';assert(wifi_connect_to(ssid,key)==ESP_ERR_INVALID_ARG);
     assert(wifi_connect_to("new","short")==ESP_ERR_INVALID_ARG);
     return 0;
+}
+'''
+        run_c(source)
+
+    def test_wifi_scan_interrupts_connect_and_keeps_saved_network(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#define ESP_OK 0
+#define WIFI_AUTH_OPEN 0
+#define EPW_WIFI_MAX_APS 16
+#define portMAX_DELAY 0
+#define ESP_LOGI(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
+typedef int esp_err_t;
+enum {EPW_WIFI_OFF,EPW_WIFI_CONNECTING,EPW_WIFI_CONNECTED,EPW_WIFI_FAILED};
+typedef struct {const char *ssid,*bssid;int channel;bool show_hidden;}wifi_scan_config_t;
+typedef struct {char ssid[33];int rssi;bool secure;}epw_wifi_ap_t;
+typedef struct {char ssid[33];int rssi,authmode;}wifi_ap_record_t;
+static bool s_scan_running=true,s_scan_ready,s_scan_failed,s_auto_retry=true,s_have_cred=true,s_ignore_leave,s_user_connect;
+static int s_control_lock,s_scan_lock=1,s_state=EPW_WIFI_CONNECTING,s_retry_num,s_scan_count;
+static epw_wifi_ap_t s_scan_aps[16];
+static int scan_error,disconnects,connects;
+static int xSemaphoreTake(int a,int b){return 1;}
+static void xSemaphoreGive(int a){}
+static int esp_wifi_disconnect(void){disconnects++;return 0;}
+static int esp_wifi_connect(void){connects++;return 0;}
+static int esp_wifi_scan_start(wifi_scan_config_t *cfg,bool blocking){assert(s_state!=EPW_WIFI_CONNECTING);return scan_error;}
+static void esp_wifi_scan_get_ap_num(uint16_t *n){*n=3;}
+static int esp_wifi_scan_get_ap_records(uint16_t *n,wifi_ap_record_t *r){
+    strcpy(r[0].ssid,"other");r[0].rssi=-70;r[0].authmode=1;
+    strcpy(r[1].ssid,"other");r[1].rssi=-40;
+    strcpy(r[2].ssid,"new");r[2].rssi=-30;return 0;
+}
+static void esp_wifi_clear_ap_list(void){}
+static void vTaskDelete(void *p){}
+'''
+        source += function('wifi.c', 'static void scan_task(void *arg)')
+        source += function('wifi.c', 'int wifi_scan_copy(epw_wifi_ap_t *out, int max)')
+        source += r'''
+int main(void){
+    scan_task(NULL);assert(disconnects==1 && connects==1 && s_have_cred && !s_scan_running);
+    epw_wifi_ap_t out[16];assert(wifi_scan_copy(out,16)==2);
+    assert(!strcmp(out[0].ssid,"new") && !strcmp(out[1].ssid,"other") && out[1].rssi==-40);
+    s_state=EPW_WIFI_CONNECTED;s_scan_running=true;scan_task(NULL);
+    assert(disconnects==1 && connects==1 && s_state==EPW_WIFI_CONNECTED);
+    scan_error=-1;s_scan_running=true;scan_task(NULL);assert(wifi_scan_copy(out,16)==-2);
+    s_state=EPW_WIFI_CONNECTING;s_auto_retry=false;s_scan_running=true;scan_task(NULL);
+    assert(connects==1 && s_state==EPW_WIFI_OFF && s_have_cred);
 }
 '''
         run_c(source)
@@ -1297,7 +1362,47 @@ int main(void){
 '''
         run_c(source)
         self.assertIn('#define EPW_AUDIO_PLAY_VOLUME 0', (MAIN / 'audio.c').read_text())
-        self.assertIn('audio_set_playback_volume(0);', function('nursery.c', 'void nursery_init(void)'))
+        init = function('nursery.c', 'void nursery_init(void)')
+        self.assertIn('uint8_t volume = 30;', init)
+        self.assertIn('nvs_get_u8(s_nvs, "volume", &volume)', init)
+        self.assertNotIn('audio_set_playback_volume(0);', init)
+
+    def test_nursery_volume_restore_and_save(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#define ESP_OK 0
+#define ESP_LOGW(...) ((void)0)
+typedef int esp_err_t;
+static int s_nvs,stored=255,commits,error;
+static bool s_nvs_ok=true,available=true;
+static struct {uint8_t volume;}s_cfg;
+static int playback_volume;
+static int clamp_int(int v,int lo,int hi){return v<lo?lo:v>hi?hi:v;}
+static int nvs_get_u8(int h,const char *key,uint8_t *v){if(stored==255)return -1;*v=stored;return 0;}
+static int nvs_set_u8(int h,const char *key,uint8_t v){if(error)return error;stored=v;return 0;}
+static int nvs_commit(int h){commits++;return 0;}
+static bool nvs_take(void){return available;}
+static void nvs_give(void){}
+static void audio_set_playback_volume(int v){playback_volume=v;}
+static int audio_get_playback_volume(void){return playback_volume;}
+'''
+        source += function('nursery.c', 'void nursery_save_volume(void)')
+        init = function('nursery.c', 'void nursery_init(void)')
+        start = init.index('    uint8_t volume = 30;')
+        end = init.index('\n\n', start)
+        source += 'static void restore(void){\n' + init[start:end] + '\n}\n'
+        source += r'''
+int main(void){
+    restore();assert(playback_volume==30);
+    s_cfg.volume=45;nursery_save_volume();restore();assert(playback_volume==45 && commits==1);
+    s_cfg.volume=0;nursery_save_volume();restore();assert(playback_volume==0);
+    stored=200;restore();assert(playback_volume==100);
+    error=-1;int before=commits;nursery_save_volume();assert(commits==before);
+    available=false;nursery_save_volume();assert(commits==before);
+}
+'''
+        run_c(source)
 
     def test_playback_write_reports_written_bytes(self):
         # esp_codec_dev_write 成功返回 ESP_CODEC_DEV_OK(0) 而不是字节数，

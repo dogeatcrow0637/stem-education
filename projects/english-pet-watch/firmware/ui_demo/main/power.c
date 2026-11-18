@@ -209,7 +209,7 @@ esp_err_t power_boot_wait(void)
     if (esp_reset_reason() != ESP_RST_POWERON || (source & 0x01) == 0) {
         return power_key_read(&events);
     }
-    ESP_LOGI(TAG, "power-key cold boot: waiting for 5s hold");
+    ESP_LOGI(TAG, "power-key cold boot: waiting for 3s hold");
     while (true) {
         err = power_key_read(&events);
         if (err != ESP_OK) return err;
@@ -221,7 +221,7 @@ esp_err_t power_boot_wait(void)
             return ESP_FAIL; /* 外部供电未断时保留可恢复的错误路径 */
         }
         /* esp_timer 从系统启动计时，另计入 PMU 的 128ms；引导加载耗时有误差。 */
-        if (esp_timer_get_time() >= 4872000) break;
+        if (esp_timer_get_time() >= 2872000) break;
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     ESP_LOGI(TAG, "power-on hold accepted");

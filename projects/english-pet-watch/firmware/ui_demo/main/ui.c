@@ -243,6 +243,7 @@ static lv_obj_t *s_nur_title;
 static lv_obj_t *s_nur_lyric;
 static lv_obj_t *s_nur_library_label;
 static lv_obj_t *s_nur_time;
+static lv_obj_t *s_nur_volume;
 static lv_obj_t *s_nur_play_btn;
 static lv_obj_t *s_nur_mode_btn;
 static lv_obj_t *s_nur_prev_btn;
@@ -1506,6 +1507,7 @@ static void slider_close(void)
     if (s_slider == NULL || !s_slider_open) {
         return;
     }
+    if (s_slider_open && s_slider_kind == SLIDER_VOLUME) nursery_save_volume();
     s_slider_open = false;
     s_slider_dragging = false;
 
@@ -1528,6 +1530,7 @@ static void slider_close_now(void)
     if (s_slider == NULL) {
         return;
     }
+    if (s_slider_open && s_slider_kind == SLIDER_VOLUME) nursery_save_volume();
     s_slider_open = false;
     s_slider_dragging = false;
     lv_anim_delete(s_slider, NULL);
@@ -2467,6 +2470,7 @@ static void wifi_populate_list(void)
     lv_obj_clean(s_wifi_list);
 
     s_wifi_ap_count = wifi_scan_copy(s_wifi_aps, EPW_WIFI_MAX_APS);
+    bool scan_failed = s_wifi_ap_count == -2;
     if (s_wifi_ap_count < 0) {
         s_wifi_ap_count = 0;
     }
@@ -2503,7 +2507,7 @@ static void wifi_populate_list(void)
 
     if (s_wifi_scan_hint != NULL) {
         if (s_wifi_ap_count == 0) {
-            lv_label_set_text(s_wifi_scan_hint, "没有扫描到网络\n点右上角刷新");
+            lv_label_set_text(s_wifi_scan_hint, scan_failed ? "扫描失败\n点右上角重试" : "没有扫描到网络\n点右上角刷新");
             lv_obj_remove_flag(s_wifi_scan_hint, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(s_wifi_scan_hint, LV_OBJ_FLAG_HIDDEN);
@@ -2829,6 +2833,10 @@ static void wifi_row_cb(lv_event_t *e)
         return;
     }
 
+    if (wifi_scan_busy()) {
+        toast_show("正在扫描…");
+        return;
+    }
     epw_wifi_ap_t *ap = &s_wifi_aps[idx];
     if (!ap->secure) {
         /* 开放网络直接连接，连接期间保留列表展示进度 */
@@ -4734,6 +4742,11 @@ static void nursery_update_ui(void)
     int idx = nursery_current_index();
     const epw_nursery_song_t *song = idx >= 0 ? nursery_song(idx) : NULL;
 
+    if (s_nur_volume != NULL) {
+        int volume = nursery_get_volume();
+        if (volume == 0) lv_label_set_text(s_nur_volume, "静音 · 调节");
+        else lv_label_set_text_fmt(s_nur_volume, "音量 %d%% · 调节", volume);
+    }
     if (s_nur_mode_label != NULL) {
         lv_label_set_text(s_nur_mode_label, nur_mode_text());
     }
@@ -5073,6 +5086,11 @@ static lv_obj_t *nur_card_create(lv_obj_t *parent, int y)
     return card;
 }
 
+static void nur_volume_cb(lv_event_t *e)
+{
+    if (!tap_ignore(e)) slider_open(SLIDER_VOLUME);
+}
+
 static void build_nursery_player(lv_obj_t *card)
 {
     s_nur_title = mk_label(card, "选一首儿歌", &epw_cjk_20, COL_TEXT,
@@ -5158,7 +5176,11 @@ static void build_nursery_player(lv_obj_t *card)
     mk_box(next, 49, 20, 5, 32, COL_MUTED, LV_OPA_COVER, 2);
 
     s_nur_time = mk_label(card, "", &epw_cjk_16, COL_MUTED,
-                          0, 252, NUR_CARD_W, LV_TEXT_ALIGN_CENTER);
+                          8, 248, 174, LV_TEXT_ALIGN_CENTER);
+    s_nur_volume = mk_label(card, "", &epw_cjk_16, COL_TEAL,
+                            184, 240, 186, LV_TEXT_ALIGN_CENTER);
+    lv_obj_set_height(s_nur_volume, 44);
+    lv_obj_add_event_cb(s_nur_volume, nur_volume_cb, LV_EVENT_CLICKED, NULL);
 }
 
 static void build_nursery_week(lv_obj_t *card)
@@ -5283,7 +5305,7 @@ static void build_nursery(void)
      * 并让按钮上的手势继续冒泡到页面。 */
     clear_clickable_tree(s_nursery);
     lv_obj_t *interactive[] = {
-        library, s_nur_mode_btn, s_nur_prev_btn, s_nur_play_btn, s_nur_next_btn,
+        library, s_nur_volume, s_nur_mode_btn, s_nur_prev_btn, s_nur_play_btn, s_nur_next_btn,
         s_nur_slot[0], s_nur_slot[1], s_nur_slot[2],
         s_nur_week_row[0], s_nur_week_row[1], s_nur_week_row[2],
         s_nur_week_row[3], s_nur_week_row[4], s_nur_wish_btn,
@@ -5945,57 +5967,4 @@ void ui_update_weather(float temperature, epw_weather_kind_t kind)
         break;
     }
     clear_clickable_tree(s_weather_icon);
-}
-
-#include "esp_timer.h"
-static lv_draw_buf_t *s_bench_art[APP_COUNT][8];
-static int s_bench_level[APP_COUNT];
-void ui_debug_icon_bench_prepare(void)
-{
-    bsp_display_lock(-1);
-    ui_activity();apps_open();
-    for(int i=0;i<APP_COUNT;i++) {
-        s_bench_art[i][0]=s_app_art[i];s_bench_level[i]=-1;
-        lv_obj_t *root=mk_box(s_apps,0,0,120,120,lv_color_hex(0x0A1018),LV_OPA_COVER,0);
-        lv_obj_t *img=lv_image_create(root);
-        lv_image_set_src(img,s_app_art[i]);lv_image_set_inner_align(img,LV_IMAGE_ALIGN_STRETCH);
-        for(int level=1;level<8;level++) {
-            int size=120-level*8;
-            lv_obj_set_size(root,size,size);lv_obj_set_size(img,size,size);
-            s_bench_art[i][level]=app_art_snapshot(root);
-        }
-        lv_obj_delete(root);
-    }
-    bsp_display_unlock();
-}
-unsigned ui_debug_icon_frame(bool legacy,int x,int y)
-{
-    bsp_display_lock(-1);ui_activity();
-    static bool previous_legacy=true;
-    if(!legacy && previous_legacy) {
-        for(int i=0;i<APP_COUNT;i++) {
-            lv_image_set_src(s_app_icons[i],s_app_scaled[i] ? s_app_scaled[i] : s_app_art[i]);
-            s_app_pixel_size[i]=-1;
-        }
-    }
-    previous_legacy=legacy;
-    int64_t start=esp_timer_get_time();
-    s_app_pan=(lv_point_t){x,y};
-    if(legacy) {
-        for(int i=0;i<APP_COUNT;i++) {
-            lv_point_t c=app_icon_center(i);
-            int dx=c.x-CENTER_X,dy=c.y-CENTER_Y,level=0;
-            while(level<7 && dx*dx+dy*dy>=(20+level*40)*(20+level*40))level++;
-            int size=120-level*8;
-            if(s_bench_level[i]!=level) {
-                lv_image_set_src(s_app_icons[i],s_bench_art[i][level]);
-                lv_obj_set_size(s_app_icons[i],size,size);s_bench_level[i]=level;
-            }
-            lv_obj_set_pos(s_app_icons[i],c.x-size/2,c.y-size/2);
-            lv_obj_set_pos(s_app_labels[i],c.x-APP_LABEL_W/2,c.y+size/2+3);
-        }
-    } else apps_layout_icons();
-    lv_refr_now(NULL);
-    unsigned elapsed=esp_timer_get_time()-start;
-    bsp_display_unlock();return elapsed;
 }

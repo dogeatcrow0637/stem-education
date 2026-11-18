@@ -1336,8 +1336,10 @@ void nursery_init(void)
         nvs_load_custom_playlist();
     }
 
-    /* 每次开机从 0 开始，之后允许用户手动调整。 */
-    audio_set_playback_volume(0);
+    /* 独立键不继承旧固件强制写入 cfg 的静音默认值。 */
+    uint8_t volume = 30;
+    if (s_nvs_ok) nvs_get_u8(s_nvs, "volume", &volume);
+    audio_set_playback_volume(clamp_int(volume, 0, 100));
     s_cfg.volume = (uint8_t)audio_get_playback_volume();
 
     if (xTaskCreate(catalog_task, "epw_catalog", 8192, NULL, 3, NULL) != pdPASS) {
@@ -1582,6 +1584,15 @@ void nursery_set_volume(int volume)
 {
     audio_set_playback_volume(volume);
     s_cfg.volume = (uint8_t)audio_get_playback_volume();
+}
+
+void nursery_save_volume(void)
+{
+    if (!nvs_take()) return;
+    esp_err_t err = nvs_set_u8(s_nvs, "volume", s_cfg.volume);
+    if (err == ESP_OK) err = nvs_commit(s_nvs);
+    nvs_give();
+    if (err != ESP_OK) ESP_LOGW(TAG, "saving volume failed: %s", esp_err_to_name(err));
 }
 
 int nursery_get_volume(void)
