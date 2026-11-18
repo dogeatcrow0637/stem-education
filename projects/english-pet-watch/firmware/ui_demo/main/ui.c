@@ -34,6 +34,7 @@
 /* 中文子集字体 + 大号时间字体（由 tools/gen_ui_assets.sh 生成） */
 extern const lv_font_t epw_cjk_16;
 extern const lv_font_t epw_cjk_20;
+extern const lv_font_t epw_cjk_28;
 extern const lv_font_t epw_time_150;
 
 /* -------------------------------------------------------------------------- */
@@ -63,12 +64,13 @@ extern const lv_font_t epw_time_150;
 #define SLIDER_TRACK_TOP (CENTER_Y - SLIDER_TRACK_H / 2)
 #define SLIDER_TRACK_X   (CENTER_X - SLIDER_TRACK_W / 2)
 
-/* 固定九宫格：中心最大，周边递减；拖动仅轻微偏移，松手归位。 */
-#define APP_COUNT          9
+/* 九个真实应用，保留连续泡泡缩放与松手吸附。 */
+#define APP_REAL_COUNT     9
+#define APP_COUNT          APP_REAL_COUNT
 #define APP_ICON_D         120
 #define APP_ROOT_W         APP_ICON_D
 #define APP_ROOT_H         APP_ICON_D
-#define APP_ICON_MIN_D     64
+#define APP_ICON_MIN_D     2
 #define APP_GRID_STEP      116
 #define APP_PAN_OVERSHOOT  16
 #define APP_GRID_DRAG_TH   16
@@ -232,7 +234,7 @@ static lv_point_t s_app_press;
 #define PET_IMG_SIZE 208
 #define PET_IMG_X ((SCREEN_W - PET_IMG_SIZE) / 2)
 #define PET_IMG_Y 108
-#define PET_BUBBLE_Y 304
+#define PET_BUBBLE_Y 318
 static lv_obj_t *s_pet_img;
 static lv_obj_t *s_pet_glow;
 static lv_obj_t *s_pet_halo;
@@ -254,7 +256,7 @@ static int s_pet_scene_idx;
  * 播放器 100，本周曲库 522；切换时两张卡同时上移。 */
 #define NUR_CARD_X       44
 #define NUR_CARD_W       378
-#define NUR_CARD_H       284
+#define NUR_CARD_H       300
 #define NUR_CARD_PLAYER_Y 100
 #define NUR_CARD_WEEK_Y   (SCREEN_H + 56)
 #define NUR_CARD_SHIFT    (NUR_CARD_WEEK_Y - NUR_CARD_PLAYER_Y)
@@ -266,6 +268,7 @@ static lv_obj_t *s_nur_title;
 static lv_obj_t *s_nur_lyric;
 static lv_obj_t *s_nur_library_label;
 static lv_obj_t *s_nur_time;
+static lv_obj_t *s_nur_checkin_time, *s_nur_checkin_bar;
 static lv_obj_t *s_nur_volume;
 static lv_obj_t *s_nur_play_btn;
 static lv_obj_t *s_nur_mode_btn;
@@ -544,18 +547,16 @@ static void draw_sun_duo(lv_obj_t *parent, int cx, int cy, int r,
 /* 儿歌 App 图标：双音符（两个符头 + 符干 + 连梁） */
 static void draw_note_icon(lv_obj_t *parent, int cx, int cy, lv_color_t color)
 {
-    mk_circle(parent, cx - 15, cy + 17, 15, color, LV_OPA_COVER);
-    mk_circle(parent, cx + 15, cy + 11, 15, color, LV_OPA_COVER);
-    mk_box(parent, cx - 10, cy - 22, 5, 40, color, LV_OPA_COVER, 2);
-    mk_box(parent, cx + 20, cy - 28, 5, 40, color, LV_OPA_COVER, 2);
-
-    static const lv_point_precise_t beam[] = {
-        {0, 0}, {30, -6}, {30, 4}, {0, 10}, {0, 0},
-    };
+    mk_circle(parent, cx - 17, cy + 18, 16, color, LV_OPA_COVER);
+    mk_circle(parent, cx + 13, cy + 12, 16, color, LV_OPA_COVER);
+    mk_box(parent, cx - 14, cy - 20, 5, 39, color, LV_OPA_COVER, 2);
+    mk_box(parent, cx + 16, cy - 26, 5, 39, color, LV_OPA_COVER, 2);
+    /* 局部坐标保持非负，避免 LVGL 线条包围盒裁掉连梁顶部。 */
+    static const lv_point_precise_t beam[] = {{0, 6}, {30, 0}};
     lv_obj_t *b = lv_line_create(parent);
-    lv_line_set_points(b, beam, 5);
-    lv_obj_set_pos(b, cx - 10, cy - 22);
-    lv_obj_set_style_line_width(b, 3, 0);
+    lv_line_set_points(b, beam, 2);
+    lv_obj_set_pos(b, cx - 12, cy - 22);
+    lv_obj_set_style_line_width(b, 8, 0);
     lv_obj_set_style_line_color(b, color, 0);
     lv_obj_set_style_line_rounded(b, true, 0);
 }
@@ -3790,7 +3791,7 @@ enum {
     APP_TORCH,
 };
 
-/* Mimi 固定居中，九个功能占满 3×3，不随拖动切换排列。 */
+/* 九个真实功能保留初始位置，不补充模拟应用。 */
 static lv_point_t app_icon_center(int i)
 {
     static const lv_point_t positions[APP_COUNT] = {
@@ -3798,15 +3799,37 @@ static lv_point_t app_icon_center(int i)
         {-APP_GRID_STEP, -APP_GRID_STEP}, {APP_GRID_STEP, APP_GRID_STEP}, {APP_GRID_STEP, -APP_GRID_STEP},
         {0, -APP_GRID_STEP}, {-APP_GRID_STEP, APP_GRID_STEP}, {0, APP_GRID_STEP},
     };
-    return (lv_point_t){CENTER_X + positions[i].x + s_app_pan.x,
-                        CENTER_Y + positions[i].y + s_app_pan.y};
+    float x = positions[i].x + s_app_pan.x;
+    float y = positions[i].y + s_app_pan.y;
+    float ax = fabsf(x), ay = fabsf(y);
+    float major = fmaxf(ax, ay), minor = fminf(ax, ay);
+    float edge = fminf(1, fmaxf(0, (major - APP_GRID_STEP) / APP_GRID_STEP));
+    float compress = 1 - 0.23f * edge * fminf(1, (major - minor) / APP_GRID_STEP);
+    float px = ax <= APP_GRID_STEP ? ax * 104 / APP_GRID_STEP :
+        104 + (ax - APP_GRID_STEP) * 88 / APP_GRID_STEP;
+    float py = ay <= APP_GRID_STEP ? ay * 104 / APP_GRID_STEP :
+        104 + (ay - APP_GRID_STEP) * 88 / APP_GRID_STEP;
+    /* 外层每边三个图标向内收，外层四角自然落在圆屏之外。 */
+    if (ax < ay) px *= compress;
+    else py *= compress;
+    return (lv_point_t){CENTER_X + (int)lroundf(copysignf(px, x)),
+                        CENTER_Y + (int)lroundf(copysignf(py, y))};
 }
 
 static int app_icon_size(lv_point_t center)
 {
-    float dx = center.x - CENTER_X, dy = center.y - CENTER_Y;
-    int size = (int)lroundf(APP_ICON_D - sqrtf(dx * dx + dy * dy) / 5.5f);
-    return size < APP_ICON_MIN_D ? APP_ICON_MIN_D : size;
+    float dx = fabsf((float)(center.x - CENTER_X)), dy = fabsf((float)(center.y - CENTER_Y));
+    float major = fmaxf(dx, dy), minor = fminf(dx, dy);
+    float edge = fminf(1, fmaxf(0, (major - 104) / 88));
+    float diameter = major <= 104 ? 104 - major * 10 / 104 :
+        94 - (major - 104) * 50 / 88;
+    if (major > 0) diameter -= (6 + 6 * edge) * minor / major;
+    float clearance = fmaxf(0, 230 - sqrtf(dx * dx + dy * dy));
+    float fade = fminf(1, clearance / 20);
+    /* 靠近圆屏边界先收小再消失，避免整枚图标突然出现或被裁切。 */
+    diameter = fmaxf(0, fminf(diameter, clearance * 2));
+    int size = (int)lroundf(diameter * fade * fade * (3 - 2 * fade));
+    return size < APP_ICON_MIN_D ? 0 : size;
 }
 
 static uint16_t app_mix_rgb565(uint16_t a, uint16_t b, unsigned weight)
@@ -3839,8 +3862,14 @@ static void app_resize_rgb565(const lv_draw_buf_t *src, lv_draw_buf_t *dst, int 
         const uint16_t *bottom = (const uint16_t *)(src->data + next * src->header.stride);
         for (int x = 0; x < size; x++) {
             int col = sample[x], right = col + (col + 1 < width);
-            uint16_t a = app_mix_rgb565(top[col], top[right], fraction[x]);
-            uint16_t b = app_mix_rgb565(bottom[col], bottom[right], fraction[x]);
+            uint16_t tl = top[col], tr = top[right], bl = bottom[col], br = bottom[right];
+            /* 实心背景和符号内部直接复制，仅边缘执行双线性插值。 */
+            if (tl == tr && tl == bl && tl == br) {
+                out[x] = tl;
+                continue;
+            }
+            uint16_t a = app_mix_rgb565(tl, tr, fraction[x]);
+            uint16_t b = app_mix_rgb565(bl, br, fraction[x]);
             out[x] = app_mix_rgb565(a, b, fraction[y]);
         }
     }
@@ -3862,7 +3891,12 @@ static void apps_layout_icons(void)
         lv_obj_t *icon = s_app_icons[i];
         if (icon == NULL) continue;
         lv_point_t center = app_icon_center(i);
-        int size = app_icon_size((lv_point_t){center.x - s_app_pan.x, center.y - s_app_pan.y});
+        int size = app_icon_size(center);
+        if (size == 0) {
+            lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_remove_flag(icon, LV_OBJ_FLAG_HIDDEN);
         if (s_app_art[i]) {
             app_art_resize(i, size);
             lv_obj_set_size(icon, size, size);
@@ -3918,11 +3952,13 @@ static void app_open_index(int idx)
     }
 }
 
-/* 仅保留小范围弹性反馈；松手目标总为零，不能停在任意偏移。 */
+/* 只允许中心落在内层 3×3；边缘阻尼，避免拖出空白区域。 */
 static int app_pan_bound(int value, bool elastic)
 {
-    if (!elastic) return 0;
-    return LV_CLAMP(-APP_PAN_OVERSHOOT, value / 4, APP_PAN_OVERSHOOT);
+    if (!elastic)
+        return LV_CLAMP(-1, (int)lroundf((float)value / APP_GRID_STEP), 1) * APP_GRID_STEP;
+    int bounded = LV_CLAMP(-APP_GRID_STEP, value, APP_GRID_STEP);
+    return bounded + LV_CLAMP(-APP_PAN_OVERSHOOT, (value - bounded) / 4, APP_PAN_OVERSHOOT);
 }
 
 static void app_pan_anim_cb(void *var, int32_t value)
@@ -3957,9 +3993,10 @@ static void apps_open_at(lv_point_t p)
 {
     int best = -1;
     float best_distance = 1e9f;
-    for (int i = 0; i < APP_COUNT; i++) {
+    for (int i = 0; i < APP_REAL_COUNT; i++) {
         lv_point_t center = app_icon_center(i);
-        int size = app_icon_size((lv_point_t){center.x - s_app_pan.x, center.y - s_app_pan.y});
+        int size = app_icon_size(center);
+        if (size == 0) continue;
         float dx = (float)p.x - center.x;
         float dy = (float)p.y - center.y;
         float radius = size * 0.5f;
@@ -4024,7 +4061,7 @@ static void app_draw_glyph(lv_obj_t *root, int kind, lv_color_t color)
         mk_circle(root, c - 9, c + 2, 5, color, LV_OPA_COVER);
         mk_circle(root, c + 9, c + 2, 5, color, LV_OPA_COVER);
         mk_box(root, c - 4, c + 10, 8, 4, color, LV_OPA_COVER, 2);
-    } else if (kind == APP_NURSERY) draw_note_icon(root, c, c + 2, COL_TEXT);
+    } else if (kind == APP_NURSERY) draw_note_icon(root, c, c, COL_TEXT);
     else if (kind == APP_STATUS) {
         icon_ring(root, c, c, 52, COL_TEXT);
         static const lv_point_precise_t pulse[] = {{3,22},{12,22},{17,12},{25,32},{30,22},{41,22}};
@@ -4083,7 +4120,7 @@ static lv_draw_buf_t *app_art_snapshot(lv_obj_t *root)
 
 static lv_obj_t *app_icon_create(lv_obj_t *parent, int kind)
 {
-    static const uint32_t colors[APP_COUNT] = {
+    static const uint32_t colors[APP_REAL_COUNT] = {
         0xF45B92, 0x00BEA4, 0x318DF5, 0x6659ED, 0x708398, 0xFA9037,
         0xF5BD36, 0xBA55EA, 0x37C594,
     };
@@ -4126,7 +4163,7 @@ static void build_apps(void)
     lv_obj_add_flag(s_apps, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_apps, LV_OBJ_FLAG_PRESS_LOCK);
     lv_obj_remove_flag(s_apps, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    /* 拖动仅作轻微弹性反馈，通过实体按键退出。 */
+    /* 双向跟手拖动，松手吸附，通过实体按键退出。 */
     lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(s_apps, apps_touch_cb, LV_EVENT_RELEASED, NULL);
@@ -4139,7 +4176,10 @@ static void build_apps(void)
     size_t bytes = 0;
     int cached = 0;
     for (int i = 0; i < APP_COUNT; i++) {
-        if (s_app_art[i]) {bytes += s_app_art[i]->data_size; cached++;}
+        if (s_app_art[i]) {
+            bytes += s_app_art[i]->data_size;
+            cached++;
+        }
         if (s_app_scaled[i]) bytes += s_app_scaled[i]->data_size;
     }
     ESP_LOGI(TAG, "app icon cache: %d masters, %lu bytes", cached, (unsigned long)bytes);
@@ -4749,7 +4789,7 @@ static const char *pet_safe_text(const char *in)
             continue;
         }
         lv_font_glyph_dsc_t dsc;
-        bool supported = lv_font_get_glyph_dsc(&epw_cjk_16, &dsc, cp, 0)
+        bool supported = lv_font_get_glyph_dsc(&epw_cjk_28, &dsc, cp, 0)
                          && !dsc.is_placeholder;
         if (supported) {
             memcpy(out + o, p, (size_t)n);
@@ -4783,7 +4823,7 @@ static void pet_text_step(void)
     lv_point_t size;
     int width = lv_obj_get_content_width(s_pet_bubble_label);
     while (s_pet_text_start < s_pet_text_end) {
-        lv_text_get_size(&size, s_pet_text + s_pet_text_start, &epw_cjk_16,
+        lv_text_get_size(&size, s_pet_text + s_pet_text_start, &epw_cjk_28,
                          0, 0, LV_COORD_MAX, LV_TEXT_FLAG_EXPAND);
         if (size.x <= width) break;
         do { s_pet_text_start++; }
@@ -5096,10 +5136,10 @@ static void build_pet(void)
 
     mk_label(s_pet, "Mimi Cat", &epw_cjk_20, COL_TEXT,
              0, 52, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-    s_pet_mood = mk_label(s_pet, "发呆", &epw_cjk_16, COL_TEAL,
+    s_pet_mood = mk_label(s_pet, "发呆", &epw_cjk_20, COL_TEAL,
                           0, 82, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-    mk_label(s_pet, "左滑聊天 · 右滑退出", &epw_cjk_16, COL_MUTED,
-             0, 418, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    mk_label(s_pet, "左滑聊天 · 右滑退出", &epw_cjk_20, COL_MUTED,
+             0, 404, SCREEN_W, LV_TEXT_ALIGN_CENTER);
 
     /* 宠物背后的柔光：两层同心圆纯色填充。
      * 不用 shadow（SW 模糊每帧重算，是宠物页卡顿的主因）。 */
@@ -5125,16 +5165,16 @@ static void build_pet(void)
     }
 
     /* 对话气泡（去掉旋转小尾巴，避免 transform layer 合成） */
-    s_pet_bubble = mk_box(s_pet, 83, PET_BUBBLE_Y, 300, 48,
+    s_pet_bubble = mk_box(s_pet, 64, PET_BUBBLE_Y, 338, 64,
                           COL_SURF_HI, LV_OPA_COVER, 26);
     lv_obj_set_style_border_width(s_pet_bubble, 1, 0);
     lv_obj_set_style_border_color(s_pet_bubble, COL_TEAL, 0);
     lv_obj_set_style_border_opa(s_pet_bubble, LV_OPA_60, 0);
     s_pet_bubble_label = mk_label(s_pet_bubble, "喵～ 你好呀！我是 Mimi。",
-                                  &epw_cjk_16, COL_TEXT,
-                                  16, 13, 268, LV_TEXT_ALIGN_LEFT);
+                                  &epw_cjk_28, COL_TEXT,
+                                  16, 10, 306, LV_TEXT_ALIGN_LEFT);
     lv_label_set_long_mode(s_pet_bubble_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_height(s_pet_bubble_label, 22);
+    lv_obj_set_height(s_pet_bubble_label, 44);
 
     /* 装饰层不拦截触摸，点按交给 s_pet / 猫咪本体处理 */
     lv_obj_remove_flag(s_pet_halo, LV_OBJ_FLAG_CLICKABLE);
@@ -5177,7 +5217,7 @@ static void nursery_card_set(int card, bool animate)
         return;
     }
     s_nur_card = card == 1 ? 1 : 0;
-    lv_label_set_text(s_nur_library_label, s_nur_card ? "返回播放" : "本周曲库");
+    lv_label_set_text(s_nur_library_label, s_nur_card ? "返回播放" : "曲库 · 打卡");
     int player_to = s_nur_card == 0 ? NUR_CARD_PLAYER_Y
                                     : NUR_CARD_PLAYER_Y - NUR_CARD_SHIFT;
     int week_to = s_nur_card == 0 ? NUR_CARD_WEEK_Y : NUR_CARD_PLAYER_Y;
@@ -5226,8 +5266,7 @@ static void nursery_refresh_week(void)
             continue;
         }
         bool on = i < stars;
-        lv_obj_set_style_bg_color(s_nur_stars[i], on ? COL_AMBER : COL_SURF, 0);
-        lv_obj_set_style_border_color(s_nur_stars[i], on ? COL_AMBER : COL_LINE, 0);
+        lv_obj_set_style_line_color(s_nur_stars[i], on ? COL_AMBER : COL_MUTED, 0);
     }
     if (s_nur_week_stars != NULL) {
         lv_label_set_text_fmt(s_nur_week_stars, "%d/%d 星", stars, goal);
@@ -5277,6 +5316,52 @@ static void nursery_refresh_week(void)
     s_nur_last_done = nursery_checkin_today_done();
 }
 
+/* 活跃场次每秒可见；曲库与星星仍走慢刷新。 */
+static void nursery_update_checkin(void)
+{
+    static const char *const names[3] = {"早安", "午后", "晚安"};
+    bool active = false;
+    for (int i = 0; i < 3; i++) {
+        epw_nursery_session_t sess;
+        nursery_checkin_session(i, &sess);
+        char text[40];
+        lv_color_t accent = COL_MUTED, bg = COL_BG, border = COL_LINE;
+        if (sess.active) {
+            active = true;
+            int total = sess.target_minutes * 60;
+            int elapsed = sess.elapsed_seconds < 0 ? 0 : sess.elapsed_seconds;
+            if (elapsed > total) elapsed = total;
+            int remaining = total - elapsed;
+            char clock[16];
+            nur_format_time((uint32_t)remaining * 1000u, clock, sizeof(clock));
+            const char *state = sess.paused || nursery_get_state() == EPW_NURSERY_PAUSED ? "暂停" :
+                                nursery_get_state() == EPW_NURSERY_PLAYING ? "剩余" : "等待";
+            lv_label_set_text_fmt(s_nur_checkin_time, "%s %s %s", names[i], state, clock);
+            lv_bar_set_value(s_nur_checkin_bar, total > 0 ? elapsed * 1000 / total : 0, LV_ANIM_OFF);
+            snprintf(text, sizeof(text), "%s\n%s", names[i], clock);
+            accent = COL_TEAL;
+            bg = COL_BG;
+            border = COL_TEAL;
+        } else if (sess.done) {
+            snprintf(text, sizeof(text), "%s\n完成", names[i]);
+            accent = COL_AMBER;
+            border = COL_AMBER;
+        } else {
+            snprintf(text, sizeof(text), "%s\n%d分钟", names[i], sess.target_minutes);
+        }
+        lv_label_set_text(s_nur_slot_label[i], text);
+        lv_obj_set_style_text_color(s_nur_slot_label[i], accent, 0);
+        lv_obj_set_style_bg_color(s_nur_slot[i], bg, 0);
+        lv_obj_set_style_border_color(s_nur_slot[i], border, 0);
+    }
+    if (!active) {
+        bool done = strcmp(nursery_status_text(), "打卡完成") == 0;
+        lv_label_set_text(s_nur_checkin_time, done ? "打卡完成，你真棒！" : "3S 英语儿歌");
+    }
+    if (active) lv_obj_remove_flag(s_nur_checkin_bar, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(s_nur_checkin_bar, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void nursery_update_ui(void)
 {
     if (s_nur_drag_engaged || page_anim_busy() ||
@@ -5313,9 +5398,11 @@ static void nursery_update_ui(void)
             text = nursery_catalog_loading() && song == NULL ? "" :
                    (st[0] != '\0' ? st : (song != NULL ? "跟着一起唱吧" : "点播放开始"));
         }
-        lv_label_set_text(s_nur_lyric, text);
+        if (strcmp(lv_label_get_text(s_nur_lyric), text) != 0) {
+            lv_label_set_text(s_nur_lyric, text);
+        }
         lv_obj_set_style_text_color(s_nur_lyric,
-                                    state == EPW_NURSERY_ERROR ? COL_CORAL : COL_MUTED, 0);
+                                    state == EPW_NURSERY_ERROR ? COL_CORAL : COL_TEXT, 0);
     }
 
     uint32_t elapsed = nursery_elapsed_ms();
@@ -5341,7 +5428,7 @@ static void nursery_update_ui(void)
         if (pct > 100) {
             pct = 100;
         }
-        lv_arc_set_angles(s_nur_arc, 0, pct > 0 ? pct * 359 / 100 : 0);
+        lv_arc_set_angles(s_nur_arc, 0, pct > 0 ? pct * 270 / 100 : 0);
     }
     if (s_nur_icon_play != NULL && s_nur_icon_pause != NULL) {
         bool playing = state == EPW_NURSERY_PLAYING;
@@ -5354,46 +5441,12 @@ static void nursery_update_ui(void)
         }
     }
 
-    /* 慢刷新：星星 / 打卡 / 愿望卡都要读 NVS，2 秒一次足够 */
+    nursery_update_checkin();
+    /* 星星和本周曲库两秒刷新，倒计时不受此节流影响。 */
     uint32_t now = lv_tick_get();
-    bool heavy = s_nur_ui_ms == 0 || (uint32_t)(now - s_nur_ui_ms) >= 2000u;
-    if (heavy) {
+    if (s_nur_ui_ms == 0 || (uint32_t)(now - s_nur_ui_ms) >= 2000u) {
         s_nur_ui_ms = now;
         nursery_refresh_week();
-        for (int i = 0; i < 3; i++) {
-            if (s_nur_slot[i] == NULL || s_nur_slot_label[i] == NULL) {
-                continue;
-            }
-            epw_nursery_session_t sess;
-            nursery_checkin_session(i, &sess);
-            static const char *const short_cn[3] = {"早", "午", "晚"};
-            char text[24];
-            lv_color_t accent = COL_MUTED;
-            lv_color_t bg = COL_SURF;
-            lv_color_t border = COL_LINE;
-            if (sess.done) {
-                snprintf(text, sizeof(text), "%s 完成", short_cn[i]);
-                accent = COL_AMBER;
-                bg = COL_SURF_HI;
-                border = COL_AMBER;
-            } else if (sess.active) {
-                if (sess.paused) {
-                    snprintf(text, sizeof(text), "%s 暂停", short_cn[i]);
-                } else {
-                    snprintf(text, sizeof(text), "%s %d/%d", short_cn[i],
-                             sess.elapsed_seconds / 60, sess.target_minutes);
-                }
-                accent = COL_TEAL;
-                bg = COL_SURF_HI;
-                border = COL_TEAL;
-            } else {
-                snprintf(text, sizeof(text), "%s %d", short_cn[i], sess.target_minutes);
-            }
-            lv_label_set_text(s_nur_slot_label[i], text);
-            lv_obj_set_style_text_color(s_nur_slot_label[i], accent, 0);
-            lv_obj_set_style_bg_color(s_nur_slot[i], bg, 0);
-            lv_obj_set_style_border_color(s_nur_slot[i], border, 0);
-        }
     }
 
     if (s_nur_wish_btn != NULL) {
@@ -5624,10 +5677,7 @@ static void nur_wish_cb(lv_event_t *e)
 static lv_obj_t *nur_card_create(lv_obj_t *parent, int y)
 {
     lv_obj_t *card = mk_box(parent, NUR_CARD_X, y, NUR_CARD_W, NUR_CARD_H,
-                            COL_SURF, LV_OPA_COVER, 34);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_border_color(card, COL_LINE, 0);
-    lv_obj_set_style_border_opa(card, LV_OPA_60, 0);
+                            COL_BG, LV_OPA_TRANSP, 0);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     return card;
 }
@@ -5639,39 +5689,44 @@ static void nur_volume_cb(lv_event_t *e)
 
 static void build_nursery_player(lv_obj_t *card)
 {
-    s_nur_title = mk_label(card, "选一首儿歌", &epw_cjk_20, COL_TEXT,
-                           16, 18, NUR_CARD_W - 32, LV_TEXT_ALIGN_CENTER);
+    s_nur_title = mk_label(card, "选一首儿歌", &epw_cjk_28, COL_TEXT,
+                           16, 12, NUR_CARD_W - 32, LV_TEXT_ALIGN_CENTER);
     lv_label_set_long_mode(s_nur_title, LV_LABEL_LONG_DOT);
-    lv_obj_set_height(s_nur_title, 28);
+    lv_obj_set_height(s_nur_title, 36);
 
-    s_nur_lyric = mk_label(card, "", &epw_cjk_16, COL_MUTED,
-                           16, 60, NUR_CARD_W - 32, LV_TEXT_ALIGN_CENTER);
-    lv_label_set_long_mode(s_nur_lyric, LV_LABEL_LONG_WRAP);
-    lv_obj_set_height(s_nur_lyric, 42);
+    s_nur_lyric = mk_label(card, "", &epw_cjk_28, COL_TEXT,
+                           20, 64, NUR_CARD_W - 40, LV_TEXT_ALIGN_CENTER);
+    lv_label_set_long_mode(s_nur_lyric, LV_LABEL_LONG_SCROLL);
+    lv_obj_set_height(s_nur_lyric, 36);
 
     /* 环形进度：只做视觉反馈，不接收点击 */
-    s_nur_arc = lv_arc_create(card);
+    s_nur_arc = lv_arc_create(s_nursery);
     lv_obj_remove_flag(s_nur_arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_pos(s_nur_arc, 125, 110);
-    lv_obj_set_size(s_nur_arc, 128, 128);
+    lv_obj_set_pos(s_nur_arc, 10, 10);
+    lv_obj_set_size(s_nur_arc, 446, 446);
     lv_obj_remove_style(s_nur_arc, NULL, LV_PART_KNOB);
     lv_obj_set_style_bg_opa(s_nur_arc, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_nur_arc, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_nur_arc, 0, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(s_nur_arc, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_nur_arc, 2, LV_PART_MAIN);
     lv_obj_set_style_arc_color(s_nur_arc, COL_LINE, LV_PART_MAIN);
     lv_obj_set_style_arc_opa(s_nur_arc, LV_OPA_60, LV_PART_MAIN);
     lv_obj_set_style_arc_width(s_nur_arc, 4, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(s_nur_arc, COL_TEAL, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_nur_arc, COL_AMBER, LV_PART_INDICATOR);
     lv_obj_set_style_arc_opa(s_nur_arc, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_arc_rounded(s_nur_arc, true, LV_PART_INDICATOR);
-    lv_arc_set_rotation(s_nur_arc, 270);
-    lv_arc_set_bg_angles(s_nur_arc, 0, 359);
+    lv_arc_set_rotation(s_nur_arc, 135);
+    lv_arc_set_bg_angles(s_nur_arc, 0, 270);
     lv_arc_set_angles(s_nur_arc, 0, 0);
 
+    /* 小熊耳朵和腮红复用矢量控件，不增加位图缓存。 */
+    mk_circle(card, NUR_CARD_W / 2 - 35, 123, 28, COL_ORANGE, LV_OPA_COVER);
+    mk_circle(card, NUR_CARD_W / 2 + 35, 123, 28, COL_ORANGE, LV_OPA_COVER);
     /* 播放 / 暂停大按钮 */
-    s_nur_play_btn = mk_circle(card, NUR_CARD_W / 2, 174, 104,
-                               COL_TEAL, LV_OPA_COVER);
+    s_nur_play_btn = mk_circle(card, NUR_CARD_W / 2, 166, 104,
+                               COL_AMBER, LV_OPA_COVER);
+    mk_circle(s_nur_play_btn, 16, 66, 12, COL_ORANGE, LV_OPA_COVER);
+    mk_circle(s_nur_play_btn, 88, 66, 12, COL_ORANGE, LV_OPA_COVER);
     lv_obj_add_flag(s_nur_play_btn, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_nur_play_btn, nur_play_cb, LV_EVENT_CLICKED, NULL);
 
@@ -5691,8 +5746,8 @@ static void build_nursery_player(lv_obj_t *card)
     lv_obj_add_flag(s_nur_icon_pause, LV_OBJ_FLAG_HIDDEN);
 
     /* 上一首 / 下一首 */
-    lv_obj_t *prev = mk_circle(card, NUR_CARD_W / 2 - 130, 174, 72,
-                               COL_SURF_HI, LV_OPA_COVER);
+    lv_obj_t *prev = mk_circle(card, NUR_CARD_W / 2 - 130, 184, 72,
+                               lv_color_hex(0x30456C), LV_OPA_COVER);
     s_nur_prev_btn = prev;
     lv_obj_set_style_border_width(prev, 1, 0);
     lv_obj_set_style_border_color(prev, COL_LINE, 0);
@@ -5706,8 +5761,8 @@ static void build_nursery_player(lv_obj_t *card)
     lv_obj_set_style_line_rounded(pl, true, 0);
     mk_box(prev, 19, 20, 5, 32, COL_MUTED, LV_OPA_COVER, 2);
 
-    lv_obj_t *next = mk_circle(card, NUR_CARD_W / 2 + 130, 174, 72,
-                               COL_SURF_HI, LV_OPA_COVER);
+    lv_obj_t *next = mk_circle(card, NUR_CARD_W / 2 + 130, 184, 72,
+                               lv_color_hex(0x40395F), LV_OPA_COVER);
     s_nur_next_btn = next;
     lv_obj_set_style_border_width(next, 1, 0);
     lv_obj_set_style_border_color(next, COL_LINE, 0);
@@ -5721,10 +5776,10 @@ static void build_nursery_player(lv_obj_t *card)
     lv_obj_set_style_line_rounded(nl, true, 0);
     mk_box(next, 49, 20, 5, 32, COL_MUTED, LV_OPA_COVER, 2);
 
-    s_nur_time = mk_label(card, "", &epw_cjk_16, COL_MUTED,
-                          8, 248, 174, LV_TEXT_ALIGN_CENTER);
-    s_nur_volume = mk_label(card, "", &epw_cjk_16, COL_TEAL,
-                            184, 240, 186, LV_TEXT_ALIGN_CENTER);
+    s_nur_time = mk_label(card, "", &epw_cjk_20, COL_TEXT,
+                          8, 238, NUR_CARD_W - 16, LV_TEXT_ALIGN_CENTER);
+    s_nur_volume = mk_label(card, "", &epw_cjk_20, COL_TEAL,
+                            39, 272, 300, LV_TEXT_ALIGN_CENTER);
     lv_obj_set_height(s_nur_volume, 44);
     lv_obj_add_event_cb(s_nur_volume, nur_volume_cb, LV_EVENT_CLICKED, NULL);
 }
@@ -5735,15 +5790,17 @@ static void build_nursery_week(lv_obj_t *card)
     lv_obj_remove_flag(card, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_scroll_dir(card, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
-    mk_label(card, "本周曲库", &epw_cjk_20, COL_TEXT,
-             18, 14, 170, LV_TEXT_ALIGN_LEFT);
-    s_nur_week_stars = mk_label(card, "", &epw_cjk_16, COL_MUTED,
-                                200, 20, 160, LV_TEXT_ALIGN_RIGHT);
+    mk_label(card, "听歌打卡", &epw_cjk_28, COL_TEXT,
+             18, 8, NUR_CARD_W - 36, LV_TEXT_ALIGN_CENTER);
+    s_nur_week_stars = mk_label(card, "", &epw_cjk_20, COL_MUTED,
+                                18, 48, NUR_CARD_W - 36, LV_TEXT_ALIGN_CENTER);
 
+    mk_label(card, "本周曲库", &epw_cjk_20, COL_TEXT,
+             18, 264, NUR_CARD_W - 36, LV_TEXT_ALIGN_LEFT);
     for (int i = 0; i < EPW_NURSERY_WEEKLY_MAX; i++) {
-        lv_obj_t *row = mk_box(card, 16, 52 + i * 56, NUR_CARD_W - 32, 50,
-                               COL_SURF_HI, LV_OPA_COVER, 19);
-        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_t *row = mk_box(card, 16, 304 + i * 64, NUR_CARD_W - 32, 58,
+                               COL_BG, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_border_color(row, COL_LINE, 0);
         lv_obj_set_style_border_opa(row, LV_OPA_40, 0);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
@@ -5754,24 +5811,24 @@ static void build_nursery_week(lv_obj_t *card)
 
         char no[4];
         snprintf(no, sizeof(no), "%d", i + 1);
-        mk_label(row, no, &epw_cjk_16, COL_MUTED, 10, 15, 22, LV_TEXT_ALIGN_CENTER);
-        s_nur_week_title[i] = mk_label(row, "", &epw_cjk_16, COL_TEXT,
-                                       38, 15, 198, LV_TEXT_ALIGN_LEFT);
+        mk_label(row, no, &epw_cjk_20, COL_MUTED, 10, 16, 22, LV_TEXT_ALIGN_CENTER);
+        s_nur_week_title[i] = mk_label(row, "", &epw_cjk_28, COL_TEXT,
+                                       38, 12, 198, LV_TEXT_ALIGN_LEFT);
         lv_label_set_long_mode(s_nur_week_title[i], LV_LABEL_LONG_DOT);
-        lv_obj_set_height(s_nur_week_title[i], 22);
-        s_nur_week_meta[i] = mk_label(row, "", &epw_cjk_16, COL_MUTED,
-                                      244, 15, 86, LV_TEXT_ALIGN_RIGHT);
+        lv_obj_set_height(s_nur_week_title[i], 36);
+        s_nur_week_meta[i] = mk_label(row, "", &epw_cjk_20, COL_MUTED,
+                                      244, 16, 86, LV_TEXT_ALIGN_RIGHT);
     }
     /* 模式胶囊：点一下切换 列表 / 单曲 / 随机 */
-    lv_obj_t *mode = mk_box(card, 18, 342, 150, 44, COL_SURF_HI, LV_OPA_COVER, 15);
+    lv_obj_t *mode = mk_box(card, 109, 636, 160, 44, COL_SURF_HI, LV_OPA_COVER, 15);
     s_nur_mode_btn = mode;
     lv_obj_set_style_border_width(mode, 1, 0);
     lv_obj_set_style_border_color(mode, COL_TEAL, 0);
     lv_obj_set_style_border_opa(mode, LV_OPA_40, 0);
     lv_obj_add_flag(mode, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(mode, nur_mode_cb, LV_EVENT_CLICKED, NULL);
-    s_nur_mode_label = mk_label(mode, nur_mode_text(), &epw_cjk_16, COL_TEAL,
-                                0, 12, 150, LV_TEXT_ALIGN_CENTER);
+    s_nur_mode_label = mk_label(mode, nur_mode_text(), &epw_cjk_20, COL_TEAL,
+                                0, 10, 160, LV_TEXT_ALIGN_CENTER);
 
 }
 
@@ -5782,9 +5839,7 @@ static void build_nursery(void)
     lv_obj_remove_flag(s_nursery, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(s_nursery, SCREEN_W, SCREEN_H);
     lv_obj_set_pos(s_nursery, 0, 0);
-    lv_obj_set_style_bg_color(s_nursery, lv_color_hex(0x05070C), 0);
-    lv_obj_set_style_bg_grad_color(s_nursery, lv_color_hex(0x101A26), 0);
-    lv_obj_set_style_bg_grad_dir(s_nursery, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_color(s_nursery, COL_BG, 0);
     lv_obj_set_style_bg_opa(s_nursery, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_nursery, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_flag(s_nursery, LV_OBJ_FLAG_CLICKABLE);
@@ -5796,8 +5851,31 @@ static void build_nursery(void)
     lv_obj_add_event_cb(s_nursery, nursery_page_drag_cb, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(s_nursery, nursery_page_drag_cb, LV_EVENT_PRESS_LOST, NULL);
 
-    mk_label(s_nursery, "3S 英语儿歌", &epw_cjk_20, COL_TEXT,
-             0, 50, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    static const lv_point_precise_t sparkle[] = {
+        {6, 0}, {7, 5}, {12, 6}, {7, 7}, {6, 12},
+        {5, 7}, {0, 6}, {5, 5}, {6, 0},
+    };
+    static const lv_point_t sparkle_pos[] = {
+        {96, 80}, {354, 78}, {28, 224}, {420, 214}, {76, 348}, {380, 340},
+    };
+    for (size_t i = 0; i < sizeof(sparkle_pos) / sizeof(sparkle_pos[0]); i++) {
+        lv_obj_t *star = lv_line_create(s_nursery);
+        lv_obj_set_pos(star, sparkle_pos[i].x, sparkle_pos[i].y);
+        lv_line_set_points(star, sparkle, 9);
+        lv_obj_set_style_line_width(star, i % 2 ? 1 : 2, 0);
+        lv_obj_set_style_line_color(star, i % 2 ? COL_PURPLE : COL_AMBER, 0);
+        lv_obj_set_style_line_opa(star, LV_OPA_60, 0);
+    }
+
+    s_nur_checkin_time = mk_label(s_nursery, "3S 英语儿歌", &epw_cjk_28, COL_TEXT,
+                                    36, 42, SCREEN_W - 72, LV_TEXT_ALIGN_CENTER);
+    s_nur_checkin_bar = lv_bar_create(s_nursery);
+    lv_obj_set_pos(s_nur_checkin_bar, 134, 84);
+    lv_obj_set_size(s_nur_checkin_bar, 198, 6);
+    lv_obj_set_style_bg_color(s_nur_checkin_bar, COL_LINE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_nur_checkin_bar, COL_TEAL, LV_PART_INDICATOR);
+    lv_bar_set_range(s_nur_checkin_bar, 0, 1000);
+    lv_obj_add_flag(s_nur_checkin_bar, LV_OBJ_FLAG_HIDDEN);
 
     s_nur_player_card = nur_card_create(s_nursery, NUR_CARD_PLAYER_Y);
     build_nursery_player(s_nur_player_card);
@@ -5805,21 +5883,25 @@ static void build_nursery(void)
     s_nur_week_card = nur_card_create(s_nursery, NUR_CARD_WEEK_Y);
     build_nursery_week(s_nur_week_card);
 
-    /* 本周星星：一个圆点代表一颗星，右侧用 Y/N 星补足语义 */
-    mk_label(s_nur_week_card, "本周", &epw_cjk_16, COL_MUTED,
-             18, 405, 60, LV_TEXT_ALIGN_RIGHT);
+    mk_label(s_nur_week_card, "本周", &epw_cjk_20, COL_TEXT,
+             18, 218, 60, LV_TEXT_ALIGN_RIGHT);
+    static const lv_point_precise_t star[] = {
+        {12, 0}, {16, 8}, {25, 9}, {18, 16}, {20, 25},
+        {12, 21}, {4, 25}, {6, 16}, {0, 9}, {9, 8}, {12, 0},
+    };
     for (int i = 0; i < 5; i++) {
-        s_nur_stars[i] = mk_circle(s_nur_week_card, 112 + i * 32, 414, 14,
-                                   COL_SURF, LV_OPA_COVER);
-        lv_obj_set_style_border_width(s_nur_stars[i], 1, 0);
-        lv_obj_set_style_border_color(s_nur_stars[i], COL_LINE, 0);
+        s_nur_stars[i] = lv_line_create(s_nur_week_card);
+        lv_obj_set_pos(s_nur_stars[i], 96 + i * 36, 218);
+        lv_line_set_points(s_nur_stars[i], star, 11);
+        lv_obj_set_style_line_width(s_nur_stars[i], 3, 0);
+        lv_obj_set_style_line_rounded(s_nur_stars[i], true, 0);
     }
 
     /* 早 / 午 / 晚三场打卡：点按开始或暂停，长按结束 */
     static const int slot_x[3] = {18, 132, 246};
     for (int i = 0; i < 3; i++) {
-        lv_obj_t *chip = mk_box(s_nur_week_card, slot_x[i], 454, 104, 44,
-                                COL_SURF, LV_OPA_COVER, 16);
+        lv_obj_t *chip = mk_box(s_nur_week_card, slot_x[i], 94, 104, 104,
+                                COL_BG, LV_OPA_COVER, LV_RADIUS_CIRCLE);
         lv_obj_set_style_border_width(chip, 1, 0);
         lv_obj_set_style_border_color(chip, COL_LINE, 0);
         lv_obj_add_flag(chip, LV_OBJ_FLAG_CLICKABLE);
@@ -5827,25 +5909,25 @@ static void build_nursery(void)
         lv_obj_add_event_cb(chip, nur_slot_long_cb, LV_EVENT_LONG_PRESSED,
                             (void *)(intptr_t)i);
         s_nur_slot[i] = chip;
-        s_nur_slot_label[i] = mk_label(chip, "", &epw_cjk_16, COL_MUTED,
-                                       0, 12, 104, LV_TEXT_ALIGN_CENTER);
+        s_nur_slot_label[i] = mk_label(chip, "", &epw_cjk_28, COL_MUTED,
+                                       0, 18, 104, LV_TEXT_ALIGN_CENTER);
     }
 
-    s_nur_wish_btn = mk_box(s_nur_week_card, 74, 518, 230, 48,
+    s_nur_wish_btn = mk_box(s_nur_week_card, 54, 700, 270, 48,
                             COL_SURF, LV_OPA_COVER, 18);
     lv_obj_set_style_border_width(s_nur_wish_btn, 1, 0);
     lv_obj_set_style_border_color(s_nur_wish_btn, COL_LINE, 0);
     lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_nur_wish_btn, nur_wish_cb, LV_EVENT_CLICKED, NULL);
-    s_nur_wish_label = mk_label(s_nur_wish_btn, "集满 5 星换愿望卡", &epw_cjk_16,
-                                COL_MUTED, 0, 14, 230, LV_TEXT_ALIGN_CENTER);
+    s_nur_wish_label = mk_label(s_nur_wish_btn, "集满 5 星换愿望卡", &epw_cjk_20,
+                                COL_MUTED, 0, 10, 270, LV_TEXT_ALIGN_CENTER);
     lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t *library = mk_box(s_nursery, 139, 403, 188, 44,
-                               COL_SURF_HI, LV_OPA_COVER, 22);
+    lv_obj_t *library = mk_box(s_nursery, 129, 410, 208, 44,
+                               COL_BG, LV_OPA_TRANSP, 22);
     lv_obj_add_event_cb(library, nur_library_cb, LV_EVENT_CLICKED, NULL);
-    s_nur_library_label = mk_label(library, "本周曲库", &epw_cjk_20, COL_TEXT,
-                                    0, 10, 188, LV_TEXT_ALIGN_CENTER);
+    s_nur_library_label = mk_label(library, "曲库 · 打卡", &epw_cjk_20, COL_TEXT,
+                                    0, 10, 208, LV_TEXT_ALIGN_CENTER);
 
     /* 装饰容器不拦触摸，让滑动落到整页做翻卡/返回；只保留按钮的点击，
      * 并让按钮上的手势继续冒泡到页面。 */

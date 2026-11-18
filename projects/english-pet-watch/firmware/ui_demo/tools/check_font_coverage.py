@@ -7,7 +7,7 @@
   2. 豆包桥接返回的 text 是服务端动态生成的，静态子集永远追不上，
      生僻字 / emoji 必然变方框。
 
-16px 字体包含 GB2312 全集（6763 字）；20px 仅保留静态界面汉字；
+16px、28px 字体包含 GB2312 全集（6763 字）；20px 仅保留静态界面汉字；
 运行时 ui.c 的 pet_safe_text() 还会过滤字体里确实没有的码点。
 
 用法：python3 tools/check_font_coverage.py
@@ -22,7 +22,8 @@ ROOT = Path(__file__).resolve().parent.parent
 UI_C = ROOT / "main" / "ui.c"
 MOCK_PY = ROOT / "tools" / "doubao_bridge_mock.py"
 FONTS = [ROOT / "main" / "assets" / "epw_cjk_16.c",
-         ROOT / "main" / "assets" / "epw_cjk_20.c"]
+         ROOT / "main" / "assets" / "epw_cjk_20.c",
+         ROOT / "main" / "assets" / "epw_cjk_28.c"]
 
 # 豆包常见回复里的口语字，防止只检查静态 UI 漏掉动态场景
 DYNAMIC_SAMPLES = [
@@ -103,9 +104,9 @@ def font_codepoints(path: Path) -> set:
 
 
 def required_characters(size: int) -> set:
-    # 20px 仅用于静态界面；动态回复只使用 16px 字体。
+    # 20px 用于静态界面，16px/28px 覆盖动态回复。
     needed = set().union(*(literals_cjk(p) for p in (ROOT / "main").glob("*.c")))
-    if size == 16:
+    if size in (16, 28):
         if MOCK_PY.exists():
             needed |= literals_cjk(MOCK_PY)
         needed |= {c for line in DYNAMIC_SAMPLES for c in line if "\u4e00" <= c <= "\u9fff"}
@@ -123,7 +124,7 @@ def main() -> int:
             ok = False
             print(f"[FAIL] {font.name}: 缺 {len(missing)} 字 -> {''.join(missing[:60])}")
         else:
-            scope = "界面 + GB2312 动态回复" if size == 16 else "静态界面子集"
+            scope = "界面 + GB2312 动态回复" if size in (16, 28) else "静态界面子集"
             print(f"[OK]   {font.name}: {len(have)} 字形，{scope}全覆盖")
     if not ok:
         print("请重跑 ./tools/gen_ui_assets.sh 后再编译。")

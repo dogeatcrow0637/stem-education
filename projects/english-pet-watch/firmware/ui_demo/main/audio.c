@@ -1,5 +1,6 @@
 /* 音频总线：录音固定 16 kHz 双声道后混为单声道；儿歌播放复用同一条 I2S。 */
 #include "audio.h"
+#include <stdint.h>
 
 #include "bsp/esp-bsp.h"
 #include "driver/i2s_std.h"
@@ -22,14 +23,12 @@ static bool s_ready;
 static bool s_play_open;
 static int s_play_volume = EPW_AUDIO_PLAY_VOLUME;
 
-/* esp_codec_dev 的 I2S 数据层只接受偶数声道；用 LEFT 掩码保持单声道数据流，
- * 硬件会把左槽数据复制到右槽，因此写入的仍是 16 kHz 单声道 PCM。 */
+/* 播放与采集使用相同双声道时钟，写入时把单声道复制到两个槽。 */
 static esp_codec_dev_sample_info_t playback_fs(void)
 {
     esp_codec_dev_sample_info_t fs = {
         .bits_per_sample = 16,
         .channel = 2,
-        .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
         .sample_rate = EPW_AUDIO_SAMPLE_RATE,
     };
     return fs;
@@ -58,7 +57,7 @@ static bool audio_init_locked(void)
 
     const i2s_std_config_t i2s_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(EPW_AUDIO_SAMPLE_RATE),
-        .slot_cfg = I2S_STD_PHILIP_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .slot_cfg = I2S_STD_PHILIP_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = BSP_I2S_MCLK,
             .bclk = BSP_I2S_SCLK,
@@ -142,18 +141,26 @@ int audio_playback_write(const void *pcm, size_t bytes)
     if (pcm == NULL || bytes == 0) {
         return 0;
     }
+    if (bytes % sizeof(int16_t)) return -1;
     SemaphoreHandle_t lock = audio_lock();
-    if (lock == NULL || xSemaphoreTake(lock, portMAX_DELAY) != pdTRUE) {
-        return -1;
-    }
+    if (lock == NULL || xSemaphoreTake(lock, portMAX_DELAY) != pdTRUE) return -1;
     int ret = -1;
     if (s_play_open) {
-        /* esp_codec_dev 成功返回 ESP_CODEC_DEV_OK(0)，不是写入字节数。 */
-        int err = esp_codec_dev_write(s_spk, (void *)pcm, (int)bytes);
-        if (err == ESP_CODEC_DEV_OK) {
-            ret = (int)bytes;
-        } else {
-            ESP_LOGW(TAG, "speaker write failed: %d", err);
+        const int16_t *input = pcm;
+        int16_t stereo[256 * 2];
+        size_t remaining = bytes / sizeof(int16_t);
+        ret = (int)bytes;
+        while (remaining) {
+            size_t n = remaining < 256 ? remaining : 256;
+            for (size_t i = 0; i < n; i++) stereo[2*i] = stereo[2*i+1] = input[i];
+            int err = esp_codec_dev_write(s_spk, stereo, (int)(n * 4));
+            if (err != ESP_CODEC_DEV_OK) {
+                ESP_LOGW(TAG, "speaker write failed: %d", err);
+                ret = -1;
+                break;
+            }
+            input += n;
+            remaining -= n;
         }
     }
     xSemaphoreGive(lock);

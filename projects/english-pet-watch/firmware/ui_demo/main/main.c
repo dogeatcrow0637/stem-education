@@ -5,10 +5,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
 #include "button.h"
+#include "audio.h"
 #include "doubao_bridge.h"
 #include "nursery.h"
 #include "power.h"
@@ -43,6 +45,9 @@ void app_main(void)
     ESP_ERROR_CHECK(power_key_configure());
     esp_err_t boot_err = power_boot_wait();
     if (boot_err != ESP_OK) ESP_LOGE(TAG, "power-on check failed: %s", esp_err_to_name(boot_err));
+
+    /* 先预留音频 DMA，避免界面和联网分配造成内部堆碎片后才初始化。 */
+    if (!audio_init()) ESP_LOGW(TAG, "audio preallocation failed; voice will retry on demand");
 
     /* 屏幕 + 触摸 + LVGL */
     bsp_display_start();
@@ -80,5 +85,8 @@ void app_main(void)
     xTaskCreate(shot_capture_demo_pages, "epw_shot", 8192, NULL, 4, NULL);
 #endif
 
-    ESP_LOGI(TAG, "UI ready");
+    ESP_LOGI(TAG, "UI ready; free internal=%u, PSRAM=%u, largest PSRAM=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 }

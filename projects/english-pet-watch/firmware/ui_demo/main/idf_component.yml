@@ -2,14 +2,15 @@
 ## BSP 负责 CO5300 屏幕、CST9217 触摸、I2C 与 LVGL 适配
 dependencies:
   espressif/cjson:
-    version: "^1.7.19"
+    version: ^1.7.19
   waveshare/esp32_s3_touch_amoled_1_75c:
-    version: "^3.0.0"
+    version: ^3.0.0
   lvgl/lvgl:
-    version: "9.5.0"
+    version: 9.5.0
     public: true
   ## 语音链路：WebSocket 客户端 + Opus 编解码（xiaozhi-server v1 协议）
   espressif/esp_websocket_client:
-    version: "~1.8.0"
+    version: ~1.8.0
   espressif/esp_audio_codec:
-    version: "~2.6.2"
+    version: ~2.6.2
+  espressif/esp-sr: ==2.6.2

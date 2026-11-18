@@ -10,6 +10,14 @@ if(EXISTS "${EPW_BSP_SRC}")
     if(NOT _epw_bsp_patched MATCHES "chan_cfg.dma_frame_num = 120;")
         string(REPLACE "chan_cfg.auto_clear = true;" "chan_cfg.dma_frame_num = 120;\n    chan_cfg.auto_clear = true;" _epw_bsp_patched "${_epw_bsp_patched}")
     endif()
+    # 初始化失败必须停通道并清空句柄，否则再次启动会误报成功并断言。
+    foreach(_epw_channel i2s_tx_chan i2s_rx_chan)
+        string(REPLACE "        i2s_del_channel(${_epw_channel});\n    }"
+            "        i2s_channel_disable(${_epw_channel});\n        i2s_del_channel(${_epw_channel});\n        ${_epw_channel} = NULL;\n    }"
+            _epw_bsp_patched "${_epw_bsp_patched}")
+    endforeach()
+    string(REPLACE "    assert(i2s_data_if);" "    if (i2s_data_if == NULL) return NULL;"
+        _epw_bsp_patched "${_epw_bsp_patched}")
     if(NOT _epw_bsp_patched STREQUAL _epw_bsp_src)
         file(WRITE "${EPW_BSP_SRC}" "${_epw_bsp_patched}")
         message(STATUS "epw: patched BSP to a 50-line internal single draw buffer")
@@ -39,11 +47,11 @@ endif()
 
 idf_component_register(
     SRCS "main.c" "ui.c" "power.c" "wifi.c" "shot.c" "button.c" "doubao_bridge.c"
-         "audio.c" "voice_client.c" "weather.c" "nursery.c" "watch_system.c"
-         "assets/epw_cjk_16.c" "assets/epw_cjk_20.c" "assets/epw_time_150.c"
+         "audio.c" "voice_client.c" "voice_barge.c" "weather.c" "nursery.c" "watch_system.c"
+         "assets/epw_cjk_16.c" "assets/epw_cjk_20.c" "assets/epw_cjk_28.c" "assets/epw_time_150.c"
          "assets/pip_faces.c"
     INCLUDE_DIRS "." "assets"
     PRIV_REQUIRES esp_driver_i2c esp_driver_gpio esp_driver_i2s esp_wifi esp_netif esp_event
                   nvs_flash esp_timer spi_flash esp_http_client mbedtls esp_psram
-                  esp_websocket_client esp_audio_codec cjson
+                  esp_websocket_client esp_audio_codec esp-sr cjson
 )

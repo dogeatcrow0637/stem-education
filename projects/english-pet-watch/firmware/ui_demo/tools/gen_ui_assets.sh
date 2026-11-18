@@ -44,8 +44,8 @@ download_emoji "Weary cat" "weary_cat" "sleepy"
 download_emoji "Crying cat" "crying_cat" "sad"
 download_emoji "Kissing cat" "kissing_cat" "love"
 
-echo "[3/5] 生成中文字体（16px 完整字库 / 20px 静态子集）"
-for size in 16 20; do
+echo "[3/5] 生成中文字体（16px/28px 完整字库 / 20px 静态子集）"
+for size in 16 20 28; do
   SYMBOLS="$(python3 - "${ROOT}/tools" "${size}" <<'FONT_PY'
 import sys
 sys.path.insert(0, sys.argv[1])
@@ -85,4 +85,4 @@ python3 "${ROOT}/tools/png_to_lvgl.py" "${TMP}" "${ROOT}/main/assets"
 echo "[check] 校验 ui.c 文案是否全部有字形"
 python3 "${ROOT}/tools/check_font_coverage.py"
 
-echo "done: main/assets/epw_cjk_16.c, epw_cjk_20.c, epw_time_150.c, pip_faces.c"
+echo "done: main/assets/epw_cjk_16.c, epw_cjk_20.c, epw_cjk_28.c, epw_time_150.c, pip_faces.c"

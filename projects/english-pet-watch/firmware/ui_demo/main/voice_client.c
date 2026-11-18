@@ -1,5 +1,6 @@
 /* 宠物页左滑启动，退出停止；上传 Opus，回复文字与语音同步播放。 */
 #include "voice_client.h"
+#include "voice_barge.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -48,6 +49,9 @@ static atomic_bool s_have_reply;
 static atomic_uint s_progress_tick;
 static unsigned s_tts_packets, s_tts_bytes;
 static char s_session_id[96];
+/* 仅由 WebSocket 文本回调维护：情绪随首句一起呈现，本轮后续保持不变。 */
+static char s_reply_emotion[32];
+static bool s_reply_presented;
 
 /* WebSocket 回调只入队，解码和 I2S 写入由已有语音任务完成。 */
 typedef struct {
@@ -56,10 +60,13 @@ typedef struct {
 } voice_packet_t;
 static QueueHandle_t s_tts_queue;
 static atomic_bool s_tts_end;
+static atomic_bool s_drop_reply;
+static bool s_barge_ready;
 static void *s_dec;
 static uint8_t *s_tts_pcm;
 static bool s_tts_output;
 static void close_audio(void);
+static bool open_audio(void);
 
 static bool session_current(void)
 {
@@ -82,6 +89,8 @@ bool voice_client_set_active(bool active)
         return false;
     }
     if (!atomic_load(&s_requested)) {
+        /* 进入新一轮聊天时恢复可听音量，避免旧的静音设置表现为没有回应。 */
+        if (audio_get_playback_volume() == 0) audio_set_playback_volume(30);
         atomic_fetch_add(&s_epoch, 1);
         atomic_store(&s_requested, true);
     }
@@ -161,13 +170,39 @@ static void tts_close(void)
     atomic_store(&s_tts_end, false);
 }
 
+static bool tts_interrupt(void)
+{
+    atomic_store(&s_drop_reply, true);
+    tts_close();
+    atomic_store(&s_reply_active, false);
+    if (!send_json("{\"type\":\"abort\"}")) return false;
+    send_listen_start();
+    if (!session_current() || !atomic_load(&s_listening)) return false;
+    size_t bytes;
+    const uint8_t *pcm = (const uint8_t *)voice_barge_preroll(&bytes);
+    int frame_bytes = 0, max_out = 0;
+    uint8_t *opus = heap_caps_malloc(VOICE_MAX_OPUS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    bool ok = opus && esp_opus_enc_get_frame_size(s_enc, &frame_bytes, &max_out) == ESP_AUDIO_ERR_OK &&
+              frame_bytes > 0 && frame_bytes <= VOICE_MAX_PCM && pcm && bytes >= (size_t)frame_bytes &&
+              max_out > 0 && max_out <= VOICE_MAX_OPUS;
+    for (size_t pos = 0; ok && pos + frame_bytes <= bytes; pos += frame_bytes) {
+        esp_audio_enc_in_frame_t in = {.buffer = (uint8_t *)pcm + pos, .len = frame_bytes};
+        esp_audio_enc_out_frame_t out = {.buffer = opus, .len = max_out};
+        ok = esp_opus_enc_process(s_enc, &in, &out) == ESP_AUDIO_ERR_OK && out.encoded_bytes > 0;
+        if (ok) ok = esp_websocket_client_send_bin(s_ws, (const char *)opus, out.encoded_bytes,
+                                                   pdMS_TO_TICKS(500)) == (int)out.encoded_bytes;
+    }
+    free(opus);
+    ESP_LOGI(TAG, "speech interrupted reply; preroll %s", ok ? "sent" : "failed");
+    return ok;
+}
+
 static bool tts_pump(void)
 {
     voice_packet_t *packet = NULL;
     if (xQueueReceive(s_tts_queue, &packet, 0) == pdTRUE) {
         bool ok = true;
         if (s_dec == NULL) {
-            close_audio();
             esp_opus_dec_cfg_t cfg = ESP_OPUS_DEC_CONFIG_DEFAULT();
             cfg.sample_rate = VOICE_SAMPLE_RATE;
             cfg.channel = 1;
@@ -176,27 +211,54 @@ static bool tts_pump(void)
             ok = s_tts_pcm && esp_opus_dec_open(&cfg, sizeof(cfg), &s_dec) == ESP_AUDIO_ERR_OK;
             if (ok) {
                 s_tts_output = audio_playback_open();
-                ok = s_tts_output;
+                ok = s_tts_output && (s_enc || open_audio());
+                s_barge_ready = ok && voice_barge_begin();
+                ESP_LOGI(TAG, "speech interrupt detector: %s", s_barge_ready ? "AEC+VAD active" : "unavailable");
             }
         }
+        bool interrupted = false;
         if (ok) {
             esp_audio_dec_in_raw_t raw = {.buffer = packet->data, .len = packet->bytes};
             esp_audio_dec_out_frame_t frame = {.buffer = s_tts_pcm, .len = VOICE_MAX_PCM * 2};
             esp_audio_dec_info_t info = {0};
             ok = esp_opus_dec_decode(s_dec, &raw, &frame, &info) == ESP_AUDIO_ERR_OK &&
                  raw.consumed == packet->bytes && frame.decoded_size > 0 &&
-                 frame.decoded_size <= VOICE_MAX_PCM * 2 &&
-                 audio_playback_write(s_tts_pcm, frame.decoded_size) == (int)frame.decoded_size;
+                 frame.decoded_size <= VOICE_MAX_PCM * 2 && frame.decoded_size % 2 == 0;
+            int16_t mic[VOICE_BARGE_SAMPLES * 2];
+            for (size_t pos = 0; ok && session_current() && pos < frame.decoded_size; ) {
+                size_t bytes = frame.decoded_size - pos;
+                if (bytes > VOICE_BARGE_SAMPLES * 2) bytes = VOICE_BARGE_SAMPLES * 2;
+                ok = audio_playback_write(s_tts_pcm + pos, bytes) == (int)bytes;
+                if (ok && s_barge_ready) {
+                    if (esp_codec_dev_read(s_mic, mic, bytes * 2) != ESP_CODEC_DEV_OK) {
+                        s_barge_ready = false;
+                        ESP_LOGW(TAG, "interrupt microphone failed; continuing playback");
+                    } else if (voice_barge_feed(mic, (const int16_t *)(s_tts_pcm + pos), bytes / 2)) {
+                        interrupted = true;
+                        break;
+                    }
+                }
+                pos += bytes;
+            }
         }
         free(packet);
+        if (interrupted) ok = tts_interrupt();
         if (!ok) {
             pet_set("sad", "语音播放失败，请重试。");
-            voice_client_set_active(false);
+            if (session_current()) voice_client_set_active(false);
         }
         return true;
     }
     if (atomic_load(&s_tts_end)) {
-        if (s_tts_output) vTaskDelay(pdMS_TO_TICKS(60)); /* 等最后一块 DMA 播完。 */
+        if (s_tts_output) {
+            vTaskDelay(pdMS_TO_TICKS(60)); /* 等最后一块 DMA 播完。 */
+            int16_t drain[VOICE_BARGE_SAMPLES * 2];
+            /* 麦克风保持开启，恢复 ASR 前丢弃 DMA 中最后的扬声器尾音。 */
+            if (s_enc) {
+                esp_codec_dev_read(s_mic, drain, sizeof(drain));
+                esp_codec_dev_read(s_mic, drain, sizeof(drain));
+            }
+        }
         tts_close();
         atomic_store(&s_reply_active, false);
         ESP_LOGI(TAG, "TTS playback complete");
@@ -204,7 +266,15 @@ static bool tts_pump(void)
         return true;
     }
     if (s_tts_output) {
-        vTaskDelay(pdMS_TO_TICKS(10));
+        if (s_barge_ready) {
+            int16_t mic[160 * 2], silence[160] = {0};
+            if (esp_codec_dev_read(s_mic, mic, sizeof(mic)) != ESP_CODEC_DEV_OK) {
+                s_barge_ready = false;
+            } else if (voice_barge_feed(mic, silence, 160) && !tts_interrupt()) {
+                pet_set("sad", "语音打断失败，请重试。");
+                if (session_current()) voice_client_set_active(false);
+            }
+        } else vTaskDelay(pdMS_TO_TICKS(10));
         return true;
     }
     return false;
@@ -229,6 +299,9 @@ static void handle_text(const char *data, size_t len)
         const char *id = json_string(json, "session_id");
         if (id[0] != '\0' && strlen(id) < sizeof(s_session_id)) {
             snprintf(s_session_id, sizeof(s_session_id), "%s", id);
+            s_reply_emotion[0] = '\0';
+            s_reply_presented = false;
+            atomic_store(&s_drop_reply, false);
             atomic_store(&s_hello, true);
             atomic_store(&s_progress_tick, xTaskGetTickCount());
             send_listen_start();
@@ -247,13 +320,19 @@ static void handle_text(const char *data, size_t len)
     }
     atomic_store(&s_progress_tick, xTaskGetTickCount());
     if (strcmp(type, "stt") == 0 && text[0] != '\0') {
+        atomic_store(&s_drop_reply, false);
         atomic_store(&s_reply_active, true);
         atomic_store(&s_listening, false);
+        s_reply_emotion[0] = '\0';
+        s_reply_presented = false;
         pet_set("thinking", text);
         ESP_LOGI(TAG, "ASR text received");
+    } else if (atomic_load(&s_drop_reply)) {
+        /* 打断后的旧回答元数据等待下一次 ASR 再放行。 */
     } else if (strcmp(type, "llm") == 0) {
         const char *emotion = json_string(json, "emotion");
-        pet_set(emotion[0] ? emotion : "speaking", text[0] ? text : NULL);
+        if (!s_reply_presented && emotion[0] && strlen(emotion) < sizeof(s_reply_emotion))
+            snprintf(s_reply_emotion, sizeof(s_reply_emotion), "%s", emotion);
     } else if (strcmp(type, "tts") == 0) {
         const char *state = json_string(json, "state");
         if (strcmp(state, "start") == 0) {
@@ -266,7 +345,8 @@ static void handle_text(const char *data, size_t len)
             atomic_store(&s_tts_end, true);
         } else if (strcmp(state, "sentence_start") == 0 && text[0] != '\0') {
             atomic_store(&s_have_reply, true);
-            pet_set("speaking", text);
+            s_reply_presented = true;
+            pet_set(s_reply_emotion[0] ? s_reply_emotion : "speaking", text);
         }
     }
     cJSON_Delete(json);
@@ -308,7 +388,7 @@ static void ws_event_handler(void *arg, esp_event_base_t base, int32_t event_id,
                                 (size_t)data->payload_offset, (size_t)data->payload_len,
                                 data->data_ptr, (size_t)data->data_len)) {
             if (s_message->opcode == 1) handle_text(s_message->data, s_message->used);
-            else if (s_message->opcode == 2 && atomic_load(&s_hello)) {
+            else if (s_message->opcode == 2 && atomic_load(&s_hello) && !atomic_load(&s_drop_reply)) {
                 s_tts_packets++;
                 s_tts_bytes += s_message->used;
                 atomic_store(&s_progress_tick, xTaskGetTickCount());
@@ -411,6 +491,9 @@ static void close_session(void)
         s_ws = NULL;
     }
     tts_close();
+    voice_barge_close();
+    s_barge_ready = false;
+    atomic_store(&s_drop_reply, false);
     atomic_store(&s_connected, false);
     free(s_message);
     s_message = NULL;
@@ -486,16 +569,17 @@ static void voice_task(void *arg)
                     opus = NULL;
                 }
                 /* 回复期间排空输入 DMA，避免下一轮把上一轮缓存误送给 ASR。 */
-                if (s_enc != NULL && atomic_load(&s_connected) && atomic_load(&s_hello)) {
+                if (s_enc != NULL && pcm != NULL && atomic_load(&s_connected) && atomic_load(&s_hello)) {
                     if (esp_codec_dev_read(s_mic, pcm, in_size * 2) != ESP_CODEC_DEV_OK)
                         vTaskDelay(pdMS_TO_TICKS(20));
                 } else vTaskDelay(pdMS_TO_TICKS(20));
                 continue;
             }
-            if (s_enc == NULL) {
+            if (s_enc == NULL || pcm == NULL) {
+                free(pcm);
                 pcm = heap_caps_malloc(VOICE_MAX_PCM * 2 + VOICE_MAX_OPUS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
                 opus = pcm != NULL ? pcm + VOICE_MAX_PCM * 2 : NULL;
-                if (pcm == NULL || !open_audio() ||
+                if (pcm == NULL || (s_enc == NULL && !open_audio()) ||
                     esp_opus_enc_get_frame_size(s_enc, &in_size, &out_size) != ESP_AUDIO_ERR_OK ||
                     in_size <= 0 || in_size > VOICE_MAX_PCM || out_size <= 0 || out_size > VOICE_MAX_OPUS) {
                     pet_set("sad", "录音启动失败，请重试。");

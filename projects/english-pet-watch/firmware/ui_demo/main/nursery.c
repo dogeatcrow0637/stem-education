@@ -589,7 +589,7 @@ static void catalog_task(void *arg)
     (void)arg;
     if (NURSERY_BASE[0] == '\0') {
         ESP_LOGW(TAG, "nursery base not configured, skip catalog");
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(NULL);
         return;
     }
     s_catalog_loading = true;
@@ -597,7 +597,7 @@ static void catalog_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(8000));
     }
     s_catalog_loading = false;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1352,10 +1352,13 @@ void nursery_init(void)
     audio_set_playback_volume(clamp_int(volume, 0, 100));
     s_cfg.volume = (uint8_t)audio_get_playback_volume();
 
-    if (xTaskCreate(catalog_task, "epw_catalog", 8192, NULL, 3, NULL) != pdPASS) {
+    /* 将联网与解码栈放 PSRAM，内部 RAM 留给 DMA 和网络控制块。 */
+    if (xTaskCreateWithCaps(catalog_task, "epw_catalog", 8192, NULL, 3, NULL,
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGE(TAG, "catalog task creation failed");
     }
-    if (xTaskCreatePinnedToCore(playback_task, "epw_play", 12288, NULL, 6, NULL, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCoreWithCaps(playback_task, "epw_play", 12288, NULL, 6, NULL, 0,
+                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGE(TAG, "playback task creation failed");
     }
 }
@@ -1486,7 +1489,17 @@ static void send_cmd(uint8_t cmd, int arg)
         return;
     }
     nursery_cmd_t msg = {.cmd = cmd, .arg = (int16_t)clamp_int(arg, -32768, 32767)};
-    xQueueSend(s_cmd_q, &msg, 0);
+    if (xQueueSend(s_cmd_q, &msg, 0) != pdTRUE) return;
+    /* 播放器与打卡按钮共用暂停状态，避免恢复声音后计时仍被锁住。 */
+    if (s_act.valid && (cmd == CMD_PAUSE || cmd == CMD_RESUME ||
+                        cmd == CMD_PLAY_INDEX || cmd == CMD_PLAY_WEEKLY)) {
+        bool paused = cmd == CMD_PAUSE;
+        if (s_act.paused != paused) {
+            s_act.paused = paused;
+            s_tick_ms = (uint32_t)(esp_timer_get_time() / 1000);
+            nvs_save_active();
+        }
+    }
 }
 
 void nursery_play_index(int index)
