@@ -1,4 +1,4 @@
-/* 音频总线：录音固定 16 kHz 单声道；儿歌播放复用同一条 I2S。 */
+/* 音频总线：录音固定 16 kHz 双声道后混为单声道；儿歌播放复用同一条 I2S。 */
 #include "audio.h"
 
 #include "bsp/esp-bsp.h"
@@ -21,6 +21,19 @@ static esp_codec_dev_handle_t s_spk;
 static bool s_ready;
 static bool s_play_open;
 static int s_play_volume = EPW_AUDIO_PLAY_VOLUME;
+
+/* esp_codec_dev 的 I2S 数据层只接受偶数声道；用 LEFT 掩码保持单声道数据流，
+ * 硬件会把左槽数据复制到右槽，因此写入的仍是 16 kHz 单声道 PCM。 */
+static esp_codec_dev_sample_info_t playback_fs(void)
+{
+    esp_codec_dev_sample_info_t fs = {
+        .bits_per_sample = 16,
+        .channel = 2,
+        .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
+        .sample_rate = EPW_AUDIO_SAMPLE_RATE,
+    };
+    return fs;
+}
 
 /* audio_init 由语音任务和儿歌播放任务共用，需要串行化。 */
 static StaticSemaphore_t s_lock_buf;
@@ -74,10 +87,9 @@ static bool audio_init_locked(void)
         return false;
     }
 
-    esp_codec_dev_sample_info_t fs = {
-        .bits_per_sample = 16, .channel = 1, .sample_rate = EPW_AUDIO_SAMPLE_RATE,
-    };
+    esp_codec_dev_sample_info_t fs = playback_fs();
     if (esp_codec_dev_open(s_spk, &fs) != ESP_CODEC_DEV_OK) {
+        ESP_LOGW(TAG, "speaker open failed during init");
         return false;
     }
     int ret = esp_codec_dev_set_out_vol(s_spk, EPW_AUDIO_VOLUME);
@@ -106,9 +118,7 @@ bool audio_playback_open(void)
     }
     bool ok = false;
     if (audio_init_locked()) {
-        esp_codec_dev_sample_info_t fs = {
-            .bits_per_sample = 16, .channel = 1, .sample_rate = EPW_AUDIO_SAMPLE_RATE,
-        };
+        esp_codec_dev_sample_info_t fs = playback_fs();
         if (esp_codec_dev_open(s_spk, &fs) == ESP_CODEC_DEV_OK) {
             int err = esp_codec_dev_set_out_vol(s_spk, s_play_volume);
             if (err == ESP_CODEC_DEV_OK) {

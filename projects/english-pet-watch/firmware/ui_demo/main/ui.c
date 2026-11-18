@@ -50,8 +50,9 @@ extern const lv_font_t epw_time_150;
 #define RING_WIDTH     8
 #define BATT_SIZE      414
 #define BATT_WIDTH     7
-#define BATT_FROM_DEG  120
-#define BATT_TO_DEG    240
+/* 电量弧收窄到 90°，明显短于底部橙色环段（122°-238°，116°）。 */
+#define BATT_FROM_DEG  135
+#define BATT_TO_DEG    225
 
 #define TILE_D      84
 #define TILE_DOT_D  10
@@ -489,17 +490,27 @@ static void mk_ring_seg(lv_obj_t *parent, int from, int to, lv_color_t color)
                from + 2, to - 2, lv_color_hex(0xFFFFFF), LV_OPA_30);
 }
 
-/* 双色太阳：琥珀色光芒 + 亮黄核心 */
+/* 双色太阳：琥珀色光芒 + 亮黄核心。
+ * 光芒与核心之间留出空隙，细长圆头且严格沿半径方向；否则小尺寸下光芒
+ * 会贴着核心糊成一朵齿轮。光芒总长度控制在 2r 多一点，保证落在图标框内。 */
 static void draw_sun_duo(lv_obj_t *parent, int cx, int cy, int r,
                          lv_color_t ray_color, lv_color_t core_color)
 {
+    const int gap = r >= 8 ? 3 : 2;
+    const int len = r >= 8 ? 8 : 5;
+    const int width = r >= 8 ? 3 : 2;
+    const int mid = r + gap + len / 2;
     for (int i = 0; i < 8; i++) {
         int deg = i * 45;
         float rad = (float)deg * (float)M_PI / 180.0f;
-        int rr = r + 6;
-        int x = cx + (int)lroundf((float)rr * sinf(rad));
-        int y = cy - (int)lroundf((float)rr * cosf(rad));
-        lv_obj_t *ray = mk_box(parent, x - 2, y - 5, 4, 10, ray_color, LV_OPA_COVER, 2);
+        int x = cx + (int)lroundf((float)mid * sinf(rad));
+        int y = cy - (int)lroundf((float)mid * cosf(rad));
+        lv_obj_t *ray = mk_box(parent, x - width / 2, y - len / 2,
+                               width, len, ray_color, LV_OPA_COVER, width / 2);
+        /* 旋转默认轴心是对象左上角，必须移到光芒中心，否则 8 根光芒会绕着
+         * 各自的角转，整朵太阳就散架了。 */
+        lv_obj_set_style_transform_pivot_x(ray, width / 2, 0);
+        lv_obj_set_style_transform_pivot_y(ray, len / 2, 0);
         lv_obj_set_style_transform_rotation(ray, deg * 10, 0);
     }
     mk_circle(parent, cx, cy, r * 2, core_color, LV_OPA_COVER);
@@ -571,6 +582,8 @@ static void draw_brightness_icon(lv_obj_t *parent, int cx, int cy)
         int x = cx + (int)lroundf(20.0f * sinf(rad));
         int y = cy - (int)lroundf(20.0f * cosf(rad));
         lv_obj_t *ray = mk_box(parent, x - 1, y - 3, 3, 7, COL_AMBER, LV_OPA_COVER, 2);
+        lv_obj_set_style_transform_pivot_x(ray, 1, 0);
+        lv_obj_set_style_transform_pivot_y(ray, 3, 0);
         lv_obj_set_style_transform_rotation(ray, i * 450, 0);
     }
 }
