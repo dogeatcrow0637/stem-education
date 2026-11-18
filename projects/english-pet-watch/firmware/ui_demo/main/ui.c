@@ -1309,11 +1309,11 @@ static void home_pull_cb(lv_event_t *e)
     lv_indev_get_point(indev, &p);
 
     if (code == LV_EVENT_PRESSED) {
-        /* 下拉只在表盘顶部 1/3 起手：中部和边缘横向滑动留给其它手势，
+        /* 下拉只在表盘顶部 1/12 起手：中部和边缘横向滑动留给其它手势，
          * 避免从右往左滑时被误判成下拉控制中心。 */
         s_center_dragging = false;
         s_center_drag_engaged = false;
-        if (p.y > SCREEN_H / 3) {
+        if (p.y > SCREEN_H / 12) {
             return;
         }
         center_anim_stop();
@@ -3102,7 +3102,7 @@ static void build_dial(lv_obj_t *page)
     clear_clickable_tree(page);
 
     /* 华为手表式跟手下拉：不依赖手势识别，手指拖多少露出多少。
-     * 只接受顶部 1/3 起手，且要求竖向位移大于横向，避免横滑误触发。 */
+     * 只接受顶部 1/12 起手，且要求竖向位移大于横向，避免横滑误触发。 */
     lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(page, home_pull_cb, LV_EVENT_RELEASED, NULL);

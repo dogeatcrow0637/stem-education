@@ -1133,8 +1133,8 @@ int main(void){
     point_y=420;e.code=LV_EVENT_PRESSING;home_pull_cb(&e);assert(s_center_reveal==0);
     e.code=LV_EVENT_RELEASED;home_pull_cb(&e);assert(!s_center_open);
     /* 顶部横滑（右往左）：竖向位移小于横向时不抢手势 */
-    point_x=420;point_y=40;e.code=LV_EVENT_PRESSED;home_pull_cb(&e);
-    point_x=300;point_y=50;e.code=LV_EVENT_PRESSING;home_pull_cb(&e);assert(s_center_reveal==0);
+    point_x=420;point_y=20;e.code=LV_EVENT_PRESSED;home_pull_cb(&e);
+    point_x=300;point_y=30;e.code=LV_EVENT_PRESSING;home_pull_cb(&e);assert(s_center_reveal==0);
     e.code=LV_EVENT_RELEASED;home_pull_cb(&e);assert(!s_center_open);
     s_tools_open=true;s_status_open=true;ui_demo_toggle_apps();assert(!s_tools_open && s_status_open);
     s_status_open=false;
