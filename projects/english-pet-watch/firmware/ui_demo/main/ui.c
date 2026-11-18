@@ -142,9 +142,9 @@ static int s_center_press_y;
 static int s_center_press_reveal;
 static int s_center_reveal;
 
-/* 底部通知抽屉：s_notice_reveal 表示面板从底部上拉出来的高度 0..NOTICE_H，
+/* 底部通知页：s_notice_reveal 表示面板从底部上拉出来的高度 0..NOTICE_H，
  * 面板 y = SCREEN_H - reveal。起手区域与顶部下拉对称，只认底部 1/12。 */
-#define NOTICE_H        300
+#define NOTICE_H        SCREEN_H
 #define NOTICE_EDGE_H   (SCREEN_H / 12)
 static bool s_notice_open;
 static bool s_notice_dragging;
@@ -3529,28 +3529,7 @@ static void draw_bell_icon(lv_obj_t *parent, int cx, int cy, lv_color_t color)
     mk_circle(parent, cx, cy + 14, 5, color, LV_OPA_COVER);
 }
 
-static void draw_chat_mini(lv_obj_t *parent, int cx, int cy, lv_color_t color)
-{
-    lv_obj_t *b = mk_box(parent, cx - 9, cy - 8, 18, 14, color, LV_OPA_TRANSP, 5);
-    lv_obj_set_style_border_width(b, 2, 0);
-    lv_obj_set_style_border_color(b, color, 0);
-    mk_box(parent, cx - 6, cy + 5, 5, 3, color, LV_OPA_COVER, 1);
-    mk_circle(parent, cx - 4, cy - 1, 2, color, LV_OPA_COVER);
-    mk_circle(parent, cx, cy - 1, 2, color, LV_OPA_COVER);
-    mk_circle(parent, cx + 4, cy - 1, 2, color, LV_OPA_COVER);
-}
-
-static void draw_calendar_mini(lv_obj_t *parent, int cx, int cy, lv_color_t color)
-{
-    lv_obj_t *b = mk_box(parent, cx - 8, cy - 7, 16, 15, color, LV_OPA_TRANSP, 4);
-    lv_obj_set_style_border_width(b, 2, 0);
-    lv_obj_set_style_border_color(b, color, 0);
-    mk_box(parent, cx - 8, cy - 7, 16, 4, color, LV_OPA_COVER, 2);
-    mk_circle(parent, cx - 3, cy + 2, 2, color, LV_OPA_COVER);
-    mk_circle(parent, cx + 3, cy + 2, 2, color, LV_OPA_COVER);
-}
-
-/* 底部上拉通知抽屉：先做空状态 + 分类图标占位，后续在这里挂消息列表。 */
+/* 底部上拉通知页：全屏空状态，后续在这里挂消息列表。 */
 static void build_notice(void)
 {
     lv_obj_t *sheet = lv_obj_create(s_screen);
@@ -3562,7 +3541,7 @@ static void build_notice(void)
     lv_obj_set_pos(sheet, 0, SCREEN_H);
     lv_obj_set_style_bg_color(sheet, COL_SURF, 0);
     lv_obj_set_style_bg_opa(sheet, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(sheet, 40, 0);
+    lv_obj_set_style_radius(sheet, 0, 0);
     s_notice = sheet;
 
     lv_obj_add_event_cb(sheet, notice_drag_cb, LV_EVENT_PRESSED, NULL);
@@ -3574,27 +3553,15 @@ static void build_notice(void)
     mk_box(sheet, CENTER_X - 30, 12, 60, 5, COL_LINE, LV_OPA_COVER, 3);
     mk_label(sheet, "通知", &epw_cjk_20, COL_TEXT, 0, 28, SCREEN_W, LV_TEXT_ALIGN_CENTER);
 
-    /* 分类图标占位：消息 / 日历 / 提醒 */
-    const int chip_y = 88;
-    const int chip_x[3] = {CENTER_X - 64, CENTER_X, CENTER_X + 64};
-    for (int i = 0; i < 3; i++) {
-        mk_circle(sheet, chip_x[i], chip_y, 36, COL_SURF_HI, LV_OPA_COVER);
-    }
-    draw_chat_mini(sheet, chip_x[0], chip_y, COL_TEAL);
-    draw_calendar_mini(sheet, chip_x[1], chip_y, COL_AMBER);
-    draw_bell_icon(sheet, chip_x[2], chip_y, COL_PURPLE);
-
-    /* 空状态：柔光圆底 + 铃铛 + 文案 */
-    lv_obj_t *halo = mk_circle(sheet, CENTER_X, 162, 92, COL_SURF_HI, LV_OPA_COVER);
+    /* 空状态：只保留柔光圆底、铃铛和一句「没有通知」。 */
+    lv_obj_t *halo = mk_circle(sheet, CENTER_X, CENTER_Y - 6, 112, COL_SURF_HI, LV_OPA_COVER);
     lv_obj_set_style_border_width(halo, 1, 0);
     lv_obj_set_style_border_color(halo, COL_LINE, 0);
-    draw_bell_icon(sheet, CENTER_X, 158, COL_MUTED);
+    draw_bell_icon(sheet, CENTER_X, CENTER_Y - 10, COL_MUTED);
     mk_label(sheet, "没有通知", &epw_cjk_20, COL_MUTED,
-             0, 216, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-    mk_label(sheet, "新的提醒会出现在这里", &epw_cjk_16, lv_color_hex(0x5E6A7A),
-             0, 248, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+             0, CENTER_Y + 66, SCREEN_W, LV_TEXT_ALIGN_CENTER);
 
-    /* 装饰图形不接收点击，拖动统一由抽屉接收 */
+    /* 装饰图形不接收点击，拖动统一由通知页接收 */
     clear_clickable_tree(sheet);
     lv_obj_add_flag(sheet, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_y(sheet, SCREEN_H);

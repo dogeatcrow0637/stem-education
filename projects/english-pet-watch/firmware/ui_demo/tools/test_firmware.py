@@ -1660,7 +1660,7 @@ typedef int lv_obj_t;
 enum {LV_EVENT_PRESSED=1, LV_EVENT_PRESSING, LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST};
 #define SCREEN_H 466
 #define CENTER_DRAG_TH 8
-#define NOTICE_H 300
+#define NOTICE_H SCREEN_H
 #define NOTICE_EDGE_H (SCREEN_H / 12)
 #define LV_OBJ_FLAG_HIDDEN 1
 #define LV_UNUSED(x) (void)(x)
@@ -1703,6 +1703,16 @@ int main(void){
 }
 '''
         run_c(source)
+
+    def test_notice_page_is_fullscreen_and_minimal(self):
+        ui = (MAIN / "ui.c").read_text()
+        self.assertIn("#define NOTICE_H        SCREEN_H", ui)
+        body = ui.split("static void build_notice(void)", 1)[1].split("\n}", 1)[0]
+        # 只保留标题和「没有通知」，不再放分类图标与说明文案。
+        self.assertEqual(body.count("mk_label("), 2, body)
+        self.assertNotIn("新的提醒会出现在这里", body)
+        self.assertNotIn("chip_x", body)
+        self.assertNotIn("draw_chat_mini", body)
 
     def test_wifi_save_only_after_success(self):
         source = r'''
