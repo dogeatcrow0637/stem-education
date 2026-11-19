@@ -691,11 +691,13 @@ static lv_obj_t icon_objects[APP_COUNT],*s_app_icons[APP_COUNT];
 static bool s_app_drag_active,s_app_drag_moved,busy;
 typedef int lv_draw_buf_t;
 static lv_draw_buf_t *s_app_art[APP_COUNT];
-static int opened=-1,layouts,sources;
+static lv_point_t s_app_rest_center[APP_COUNT];
+static int s_app_rest_size[APP_COUNT],s_app_render_size[APP_COUNT];
+static int opened=-1,layouts,sources,sizes;
 static void app_art_resize(int i,int size){}
 static void lv_label_set_text(lv_obj_t *o,const char *t){}
 static void lv_image_set_src(lv_obj_t *o,void *src){sources++;}
-static void lv_obj_set_size(lv_obj_t *o,int w,int h){}
+static void lv_obj_set_size(lv_obj_t *o,int w,int h){sizes++;}
 static void lv_obj_add_flag(lv_obj_t *o,int f){}
 static void lv_obj_remove_flag(lv_obj_t *o,int f){}
 
@@ -718,7 +720,8 @@ static void lv_obj_set_pos(lv_obj_t *o,int x,int y){layouts++;}
 static void lv_obj_set_style_transform_scale_x(lv_obj_t *o,int s,int p){}
 static void lv_obj_set_style_transform_scale_y(lv_obj_t *o,int s,int p){}
 '''
-        for signature in ('static lv_point_t app_icon_center(int i)',
+        for signature in ('static lv_point_t app_rest_center(int i)',
+                          'static lv_point_t app_icon_center(int i)',
                           'static int app_icon_size(lv_point_t center)',
                           'static void apps_layout_icons(void)',
                           'static int app_pan_bound(int value, bool elastic)',
@@ -730,7 +733,12 @@ static void lv_obj_set_style_transform_scale_y(lv_obj_t *o,int s,int p){}
         source += r'''
 static void event(int code,int x,int y){lv_event_t e={code};point=(lv_point_t){x,y};apps_touch_cb(&e);}
 int main(void){
-    for(int i=0;i<APP_COUNT;i++)s_app_icons[i]=&icon_objects[i];
+    for(int i=0;i<APP_COUNT;i++){
+        s_app_icons[i]=&icon_objects[i];
+        s_app_rest_center[i]=app_rest_center(i);
+        s_app_rest_size[i]=app_icon_size(s_app_rest_center[i]);
+        s_app_render_size[i]=s_app_rest_size[i];
+    }
     const int directions[][2]={{60,0},{-60,0},{0,60},{0,-60},{60,60},{60,-60},{-60,60},{-60,-60}};
     for(int i=0;i<8;i++){
         s_app_pan=(lv_point_t){0,0};opened=-1;
@@ -748,7 +756,7 @@ int main(void){
         event(LV_EVENT_PRESSING,233+sign*300,233+sign*300);
         assert(s_app_pan.x==sign*(APP_GRID_STEP+APP_PAN_OVERSHOOT) && s_app_pan.y==sign*(APP_GRID_STEP+APP_PAN_OVERSHOOT));
         event(LV_EVENT_RELEASED,233+sign*300,233+sign*300);
-        assert(s_app_pan.x==sign*APP_GRID_STEP && s_app_pan.y==sign*APP_GRID_STEP);
+        assert(s_app_pan.x==0 && s_app_pan.y==0);
     }
     s_app_pan=(lv_point_t){0,0};
     for(int i=0;i<APP_COUNT;i++){
@@ -772,54 +780,39 @@ int main(void){
     s_app_pan=(lv_point_t){0,0};assert(app_icon_size(app_icon_center(0))==104);
     assert(app_icon_size(app_icon_center(1))<APP_ICON_D);
     assert(app_icon_size(app_icon_center(3))<app_icon_size(app_icon_center(1)));
-    for(int i=0;i<APP_COUNT;i++){
-        lv_point_t p=app_icon_center(i);
-        float dx=p.x-CENTER_X,dy=p.y-CENTER_Y;
-        if(app_icon_size(p)==0)continue;
-        assert(sqrtf(dx*dx+dy*dy)+app_icon_size(p)/2.0f<233);
-        for(int j=0;j<i;j++){
-            lv_point_t q=app_icon_center(j);if(!app_icon_size(q))continue;dx=p.x-q.x;dy=p.y-q.y;
-            assert(sqrtf(dx*dx+dy*dy)>=(app_icon_size(p)+app_icon_size(q))/2.0f);
-        }
-    }
-    for(int x=-132;x<=132;x+=11)for(int y=-132;y<=132;y+=11){
-        s_app_pan=(lv_point_t){x,y};
-        for(int i=0;i<APP_COUNT;i++){
-            lv_point_t p=app_icon_center(i);
-            float dx=p.x-CENTER_X,dy=p.y-CENTER_Y;
-            int size=app_icon_size(p);
-            if(!size)continue;
-            assert(sqrtf(dx*dx+dy*dy)+(size+1)/2.0f+1<233);
-            for(int j=0;j<i;j++){
-                lv_point_t q=app_icon_center(j);if(!app_icon_size(q))continue;dx=p.x-q.x;dy=p.y-q.y;
-                assert(sqrtf(dx*dx+dy*dy)+1>=(size+app_icon_size(q))/2.0f);
-            }
-        }
-    }
     assert(app_icon_size((lv_point_t){1000,1000})==0);
     s_app_pan=(lv_point_t){0,0};
     assert(app_icon_size(app_icon_center(1))==94);
     assert(app_icon_size(app_icon_center(3))==88);
     int visible=0;
-    for(int i=0;i<APP_COUNT;i++)if(app_icon_size(app_icon_center(i)))visible++;
+    for(int i=0;i<APP_COUNT;i++)if(s_app_rest_size[i])visible++;
     assert(APP_COUNT==9 && visible==9);
-    int previous[APP_COUNT];
-    s_app_pan=(lv_point_t){0,0};
-    for(int i=0;i<APP_COUNT;i++)previous[i]=app_icon_size(app_icon_center(i));
-    bool disappeared=false;
-    for(int x=1;x<=116;x++){
-        s_app_pan=(lv_point_t){x,x};
-        for(int i=0;i<APP_COUNT;i++){
-            int size=app_icon_size(app_icon_center(i));
-            assert(abs(size-previous[i])<=6);previous[i]=size;
+    /* 静置时九枚图标全部落在圆屏安全区且互不重叠。 */
+    for(int i=0;i<APP_COUNT;i++){
+        lv_point_t p=app_icon_center(i);
+        float dx=p.x-CENTER_X,dy=p.y-CENTER_Y;
+        assert(sqrtf(dx*dx+dy*dy)+s_app_rest_size[i]/2.0f<233);
+        for(int j=0;j<i;j++){
+            lv_point_t q=app_icon_center(j);dx=p.x-q.x;dy=p.y-q.y;
+            assert(sqrtf(dx*dx+dy*dy)>=(s_app_rest_size[i]+s_app_rest_size[j])/2.0f);
         }
-        if(previous[4]==0)disappeared=true;
     }
-    assert(disappeared && previous[3]==104 && previous[4]==0);
+    /* 拖动只做整体平移：位移与手指一一对应，不再按位置改尺寸。 */
+    for(int x=-116;x<=116;x+=29)for(int y=-116;y<=116;y+=29){
+        s_app_pan=(lv_point_t){x,y};
+        for(int i=0;i<APP_COUNT;i++){
+            lv_point_t c=app_icon_center(i);
+            assert(c.x==s_app_rest_center[i].x+x && c.y==s_app_rest_center[i].y+y);
+        }
+    }
     s_app_pan=(lv_point_t){0,0};
     s_app_art[0]=(lv_draw_buf_t *)&apps;
-    apps_layout_icons();int before=sources;apps_layout_icons();assert(sources==before);
-    s_app_pan=(lv_point_t){80,80};apps_layout_icons();assert(sources==before);
+    int source_before=sources,size_before=sizes;
+    apps_layout_icons();assert(sources==source_before && sizes==size_before);
+    s_app_pan=(lv_point_t){80,80};apps_layout_icons();
+    assert(sources==source_before && sizes==size_before);
+    event(LV_EVENT_PRESSED,233,233);event(LV_EVENT_PRESSING,320,300);
+    assert(sources==source_before && sizes==size_before);
     int last=104;
     for(int x=0;x<400;x++){
         int size=app_icon_size((lv_point_t){CENTER_X+x,CENTER_Y});

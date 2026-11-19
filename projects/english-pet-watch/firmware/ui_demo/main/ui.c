@@ -64,7 +64,7 @@ extern const lv_font_t epw_time_150;
 #define SLIDER_TRACK_TOP (CENTER_Y - SLIDER_TRACK_H / 2)
 #define SLIDER_TRACK_X   (CENTER_X - SLIDER_TRACK_W / 2)
 
-/* 九个真实应用，保留连续泡泡缩放与松手吸附。 */
+/* 九个真实应用；拖动只整体平移，松手回弹，图标尺寸与形状保持不变。 */
 #define APP_REAL_COUNT     9
 #define APP_COUNT          APP_REAL_COUNT
 #define APP_ICON_D         120
@@ -212,6 +212,10 @@ static lv_obj_t *s_app_icons[APP_COUNT];
 static lv_draw_buf_t *s_app_art[APP_COUNT];
 static lv_draw_buf_t *s_app_scaled[APP_COUNT];
 static int s_app_pixel_size[APP_COUNT];
+/* 图标只在初始化时栅格化一次；拖动和回弹只改位置，不再缩放位图。 */
+static lv_point_t s_app_rest_center[APP_COUNT];
+static int s_app_rest_size[APP_COUNT];
+static int s_app_render_size[APP_COUNT];
 static lv_obj_t *s_tools, *s_settings_page, *s_timer_page, *s_timer_value, *s_timer_hint;
 static lv_obj_t *s_timer_action, *s_timer_reset_label;
 static lv_obj_t *s_idle_options[6];
@@ -3791,16 +3795,16 @@ enum {
     APP_TORCH,
 };
 
-/* 九个真实功能保留初始位置，不补充模拟应用。 */
-static lv_point_t app_icon_center(int i)
+/* 静置九宫格：图标尺寸由所在槽位决定，拖动时保持原尺寸。 */
+static lv_point_t app_rest_center(int i)
 {
     static const lv_point_t positions[APP_COUNT] = {
         {0, 0}, {-APP_GRID_STEP, 0}, {APP_GRID_STEP, 0},
         {-APP_GRID_STEP, -APP_GRID_STEP}, {APP_GRID_STEP, APP_GRID_STEP}, {APP_GRID_STEP, -APP_GRID_STEP},
         {0, -APP_GRID_STEP}, {-APP_GRID_STEP, APP_GRID_STEP}, {0, APP_GRID_STEP},
     };
-    float x = positions[i].x + s_app_pan.x;
-    float y = positions[i].y + s_app_pan.y;
+    float x = positions[i].x;
+    float y = positions[i].y;
     float ax = fabsf(x), ay = fabsf(y);
     float major = fmaxf(ax, ay), minor = fminf(ax, ay);
     float edge = fminf(1, fmaxf(0, (major - APP_GRID_STEP) / APP_GRID_STEP));
@@ -3814,6 +3818,13 @@ static lv_point_t app_icon_center(int i)
     else py *= compress;
     return (lv_point_t){CENTER_X + (int)lroundf(copysignf(px, x)),
                         CENTER_Y + (int)lroundf(copysignf(py, y))};
+}
+
+/* 当前手指位移只做整体平移，不参与尺寸计算。 */
+static lv_point_t app_icon_center(int i)
+{
+    return (lv_point_t){s_app_rest_center[i].x + s_app_pan.x,
+                        s_app_rest_center[i].y + s_app_pan.y};
 }
 
 static int app_icon_size(lv_point_t center)
@@ -3885,32 +3896,48 @@ static void app_art_resize(int i, int size)
     s_app_pixel_size[i] = size;
 }
 
-static void apps_layout_icons(void)
+/* 初始化时把九枚图标按静置槽位栅格化一次，之后不再重采样。 */
+static void apps_apply_icon_sizes(void)
 {
     for (int i = 0; i < APP_COUNT; i++) {
         lv_obj_t *icon = s_app_icons[i];
         if (icon == NULL) continue;
-        lv_point_t center = app_icon_center(i);
-        int size = app_icon_size(center);
+        int size = s_app_rest_size[i];
         if (size == 0) {
             lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
+            s_app_render_size[i] = 0;
             continue;
         }
         lv_obj_remove_flag(icon, LV_OBJ_FLAG_HIDDEN);
-        if (s_app_art[i]) {
+        if (s_app_art[i] && s_app_scaled[i]) {
             app_art_resize(i, size);
+            s_app_render_size[i] = size;
             lv_obj_set_size(icon, size, size);
-            lv_obj_set_pos(icon, center.x - size / 2, center.y - size / 2);
+        } else if (s_app_art[i]) {
+            /* 缩放缓冲申请失败时保留 120px 母版，避免运行时拉伸。 */
+            s_app_render_size[i] = APP_ICON_D;
+            lv_obj_set_size(icon, APP_ICON_D, APP_ICON_D);
         } else {
-            /* 内存不足时保留可用的矢量图标。 */
+            /* 内存不足时保留可用的矢量图标，缩放只设置一次。 */
             int scale = size * 256 / APP_ICON_D;
+            s_app_render_size[i] = APP_ICON_D;
+            lv_obj_set_size(icon, APP_ICON_D, APP_ICON_D);
             lv_obj_set_style_transform_scale_x(icon, scale, 0);
             lv_obj_set_style_transform_scale_y(icon, scale, 0);
-            lv_obj_set_pos(icon, center.x - APP_ICON_D / 2, center.y - APP_ICON_D / 2);
         }
-
     }
+}
 
+/* 拖动/回弹只改位置：位图、控件尺寸和缩放全部保持静置状态。 */
+static void apps_layout_icons(void)
+{
+    for (int i = 0; i < APP_COUNT; i++) {
+        lv_obj_t *icon = s_app_icons[i];
+        if (icon == NULL || s_app_render_size[i] == 0) continue;
+        lv_point_t center = app_icon_center(i);
+        int size = s_app_render_size[i];
+        lv_obj_set_pos(icon, center.x - size / 2, center.y - size / 2);
+    }
 }
 
 static void app_open_index(int idx)
@@ -3952,11 +3979,11 @@ static void app_open_index(int idx)
     }
 }
 
-/* 只允许中心落在内层 3×3；边缘阻尼，避免拖出空白区域。 */
+/* 跟手时允许一个格子的位移和 16px 过冲；松手始终回到原始九宫格。
+ * 九宫格本来就装得下全部 9 个应用，滚动换页只会让图标被圆屏裁掉。 */
 static int app_pan_bound(int value, bool elastic)
 {
-    if (!elastic)
-        return LV_CLAMP(-1, (int)lroundf((float)value / APP_GRID_STEP), 1) * APP_GRID_STEP;
+    if (!elastic) return 0;
     int bounded = LV_CLAMP(-APP_GRID_STEP, value, APP_GRID_STEP);
     return bounded + LV_CLAMP(-APP_PAN_OVERSHOOT, (value - bounded) / 4, APP_PAN_OVERSHOOT);
 }
@@ -3994,9 +4021,9 @@ static void apps_open_at(lv_point_t p)
     int best = -1;
     float best_distance = 1e9f;
     for (int i = 0; i < APP_REAL_COUNT; i++) {
-        lv_point_t center = app_icon_center(i);
-        int size = app_icon_size(center);
+        int size = s_app_rest_size[i];
         if (size == 0) continue;
+        lv_point_t center = app_icon_center(i);
         float dx = (float)p.x - center.x;
         float dy = (float)p.y - center.y;
         float radius = size * 0.5f;
@@ -4031,9 +4058,13 @@ static void apps_touch_cb(lv_event_t *e)
         if (dx * dx + dy * dy > APP_GRID_DRAG_TH * APP_GRID_DRAG_TH)
             s_app_drag_moved = true;
         if (s_app_drag_moved) {
-            s_app_pan.x = app_pan_bound(s_app_pan_start.x + dx, true);
-            s_app_pan.y = app_pan_bound(s_app_pan_start.y + dy, true);
-            apps_layout_icons();
+            lv_point_t next = {app_pan_bound(s_app_pan_start.x + dx, true),
+                               app_pan_bound(s_app_pan_start.y + dy, true)};
+            /* 1px 内的触摸抖动不重排，减少无效重绘。 */
+            if (next.x != s_app_pan.x || next.y != s_app_pan.y) {
+                s_app_pan = next;
+                apps_layout_icons();
+            }
         }
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
         if (!s_app_drag_active) return;
@@ -4186,6 +4217,11 @@ static void build_apps(void)
     clear_clickable_tree(s_apps);
     lv_obj_add_flag(s_apps, LV_OBJ_FLAG_HIDDEN);
     s_app_pan = (lv_point_t){0, 0};
+    for (int i = 0; i < APP_COUNT; i++) {
+        s_app_rest_center[i] = app_rest_center(i);
+        s_app_rest_size[i] = app_icon_size(s_app_rest_center[i]);
+    }
+    apps_apply_icon_sizes();
     apps_layout_icons();
 }
 
