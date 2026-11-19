@@ -64,7 +64,7 @@ extern const lv_font_t epw_time_150;
 #define SLIDER_TRACK_TOP (CENTER_Y - SLIDER_TRACK_H / 2)
 #define SLIDER_TRACK_X   (CENTER_X - SLIDER_TRACK_W / 2)
 
-/* 九个真实应用；拖动只整体平移，松手回弹，图标尺寸与形状保持不变。 */
+/* 九个真实应用：拖动时位置逐帧跟手，尺寸按泡泡效果缩放并吸附到最近格位。 */
 #define APP_REAL_COUNT     9
 #define APP_COUNT          APP_REAL_COUNT
 #define APP_ICON_D         120
@@ -74,6 +74,11 @@ extern const lv_font_t epw_time_150;
 #define APP_GRID_STEP      116
 #define APP_PAN_OVERSHOOT  16
 #define APP_GRID_DRAG_TH   16
+/* 每次布局最多重采样两枚图标：位置仍逐帧跟手，尺寸轮转补齐，避免九枚
+ * 图标同时做双线性缩放把一帧拖到 30ms 以上。 */
+#define APP_RESIZE_BUDGET  2
+/* 1px 的尺寸差肉眼不可见，攒到 2px 再重采样可再省一半栅格化。 */
+#define APP_RESIZE_STEP    2
 
 static const char *TAG = "epw-ui";
 
@@ -212,10 +217,10 @@ static lv_obj_t *s_app_icons[APP_COUNT];
 static lv_draw_buf_t *s_app_art[APP_COUNT];
 static lv_draw_buf_t *s_app_scaled[APP_COUNT];
 static int s_app_pixel_size[APP_COUNT];
-/* 图标只在初始化时栅格化一次；拖动和回弹只改位置，不再缩放位图。 */
+/* 静置槽位与当前渲染尺寸：拖动时位置逐帧更新，尺寸按预算轮转重采样。 */
 static lv_point_t s_app_rest_center[APP_COUNT];
-static int s_app_rest_size[APP_COUNT];
 static int s_app_render_size[APP_COUNT];
+static int s_app_resize_cursor;
 static lv_obj_t *s_tools, *s_settings_page, *s_timer_page, *s_timer_value, *s_timer_hint;
 static lv_obj_t *s_timer_action, *s_timer_reset_label;
 static lv_obj_t *s_idle_options[6];
@@ -3886,57 +3891,95 @@ static void app_resize_rgb565(const lv_draw_buf_t *src, lv_draw_buf_t *dst, int 
     }
 }
 
-static void app_art_resize(int i, int size)
+/* 只改缓冲内容，不改变对象尺寸；失败时由调用方退回母版，避免拉伸变形。 */
+static bool app_art_resize(int i, int size)
 {
-    if (!s_app_scaled[i] || s_app_pixel_size[i] == size) return;
-    if (!lv_draw_buf_reshape(s_app_scaled[i], LV_COLOR_FORMAT_RGB565, size, size, LV_STRIDE_AUTO)) return;
+    if (!s_app_scaled[i]) return false;
+    if (s_app_pixel_size[i] == size) return true;
+    if (!lv_draw_buf_reshape(s_app_scaled[i], LV_COLOR_FORMAT_RGB565, size, size, LV_STRIDE_AUTO))
+        return false;
     app_resize_rgb565(s_app_art[i], s_app_scaled[i], size);
     lv_image_cache_drop(s_app_scaled[i]);
     lv_image_set_src(s_app_icons[i], s_app_scaled[i]);
     s_app_pixel_size[i] = size;
+    return true;
 }
 
-/* 初始化时把九枚图标按静置槽位栅格化一次，之后不再重采样。 */
-static void apps_apply_icon_sizes(void)
+/* 把一枚图标栅格化到指定尺寸并显示；控件尺寸与位图尺寸始终一致。 */
+static void app_apply_icon_size(int i, int size)
+{
+    lv_obj_t *icon = s_app_icons[i];
+    if (s_app_art[i] && s_app_scaled[i] && app_art_resize(i, size)) {
+        s_app_render_size[i] = size;
+        lv_obj_set_size(icon, size, size);
+    } else if (s_app_art[i]) {
+        /* 缩放缓冲申请失败时保留 120px 母版，避免运行时拉伸。 */
+        s_app_render_size[i] = APP_ICON_D;
+        lv_obj_set_size(icon, APP_ICON_D, APP_ICON_D);
+    } else {
+        /* 内存不足时用矢量图标缩放，控件保持母版尺寸。 */
+        int scale = size * 256 / APP_ICON_D;
+        s_app_render_size[i] = APP_ICON_D;
+        lv_obj_set_size(icon, APP_ICON_D, APP_ICON_D);
+        lv_obj_set_style_transform_scale_x(icon, scale, 0);
+        lv_obj_set_style_transform_scale_y(icon, scale, 0);
+    }
+    lv_obj_remove_flag(icon, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* 拖动/回弹：位置每帧跟手，尺寸每帧最多重采样 APP_RESIZE_BUDGET 枚，
+ * 其余沿用上一帧的位图先平移，下一帧轮转补齐，避免整帧卡顿。 */
+static void apps_layout_icons(void)
+{
+    int budget = APP_RESIZE_BUDGET;
+    for (int n = 0; n < APP_COUNT; n++) {
+        int i = (s_app_resize_cursor + n) % APP_COUNT;
+        lv_obj_t *icon = s_app_icons[i];
+        if (icon == NULL) continue;
+        lv_point_t center = app_icon_center(i);
+        int size = app_icon_size(center);
+        if (size == 0) {
+            if (s_app_render_size[i] != 0) {
+                lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
+                s_app_render_size[i] = 0;
+            }
+            continue;
+        }
+        int render = s_app_render_size[i];
+        if (render == 0) {
+            /* 从隐藏态进入视野必须立刻栅格化，否则会按旧尺寸闪现。 */
+            app_apply_icon_size(i, size);
+        } else {
+            int delta = size - render;
+            if (delta < 0) delta = -delta;
+            if (delta >= APP_RESIZE_STEP && budget > 0) {
+                budget--;
+                app_apply_icon_size(i, size);
+            }
+        }
+        render = s_app_render_size[i];
+        lv_obj_set_pos(icon, center.x - render / 2, center.y - render / 2);
+    }
+    s_app_resize_cursor = (s_app_resize_cursor + APP_RESIZE_BUDGET) % APP_COUNT;
+}
+
+/* 落定后统一对齐到最终尺寸，消除拖动过程中的轮转滞后。 */
+static void apps_sync_icon_sizes(void)
 {
     for (int i = 0; i < APP_COUNT; i++) {
         lv_obj_t *icon = s_app_icons[i];
         if (icon == NULL) continue;
-        int size = s_app_rest_size[i];
+        lv_point_t center = app_icon_center(i);
+        int size = app_icon_size(center);
         if (size == 0) {
             lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
             s_app_render_size[i] = 0;
             continue;
         }
-        lv_obj_remove_flag(icon, LV_OBJ_FLAG_HIDDEN);
-        if (s_app_art[i] && s_app_scaled[i]) {
-            app_art_resize(i, size);
-            s_app_render_size[i] = size;
-            lv_obj_set_size(icon, size, size);
-        } else if (s_app_art[i]) {
-            /* 缩放缓冲申请失败时保留 120px 母版，避免运行时拉伸。 */
-            s_app_render_size[i] = APP_ICON_D;
-            lv_obj_set_size(icon, APP_ICON_D, APP_ICON_D);
-        } else {
-            /* 内存不足时保留可用的矢量图标，缩放只设置一次。 */
-            int scale = size * 256 / APP_ICON_D;
-            s_app_render_size[i] = APP_ICON_D;
-            lv_obj_set_size(icon, APP_ICON_D, APP_ICON_D);
-            lv_obj_set_style_transform_scale_x(icon, scale, 0);
-            lv_obj_set_style_transform_scale_y(icon, scale, 0);
-        }
-    }
-}
-
-/* 拖动/回弹只改位置：位图、控件尺寸和缩放全部保持静置状态。 */
-static void apps_layout_icons(void)
-{
-    for (int i = 0; i < APP_COUNT; i++) {
-        lv_obj_t *icon = s_app_icons[i];
-        if (icon == NULL || s_app_render_size[i] == 0) continue;
-        lv_point_t center = app_icon_center(i);
-        int size = s_app_render_size[i];
-        lv_obj_set_pos(icon, center.x - size / 2, center.y - size / 2);
+        if (s_app_render_size[i] != size) app_apply_icon_size(i, size);
+        else lv_obj_remove_flag(icon, LV_OBJ_FLAG_HIDDEN);
+        int render = s_app_render_size[i];
+        lv_obj_set_pos(icon, center.x - render / 2, center.y - render / 2);
     }
 }
 
@@ -3979,11 +4022,11 @@ static void app_open_index(int idx)
     }
 }
 
-/* 跟手时允许一个格子的位移和 16px 过冲；松手始终回到原始九宫格。
- * 九宫格本来就装得下全部 9 个应用，滚动换页只会让图标被圆屏裁掉。 */
+/* 跟手时允许一个格子的位移和 16px 过冲；松手吸附到最近的格位。 */
 static int app_pan_bound(int value, bool elastic)
 {
-    if (!elastic) return 0;
+    if (!elastic)
+        return LV_CLAMP(-1, (int)lroundf((float)value / APP_GRID_STEP), 1) * APP_GRID_STEP;
     int bounded = LV_CLAMP(-APP_GRID_STEP, value, APP_GRID_STEP);
     return bounded + LV_CLAMP(-APP_PAN_OVERSHOOT, (value - bounded) / 4, APP_PAN_OVERSHOOT);
 }
@@ -3996,6 +4039,8 @@ static void app_pan_anim_cb(void *var, int32_t value)
     s_app_pan.y = s_app_settle_from.y +
         (s_app_settle_to.y - s_app_settle_from.y) * value / 256;
     apps_layout_icons();
+    /* 动画终点统一对齐一次，避免预算轮转留下 1~2px 的尺寸差。 */
+    if (value >= 256) apps_sync_icon_sizes();
 }
 
 static void apps_settle_bounds(void)
@@ -4005,7 +4050,10 @@ static void apps_settle_bounds(void)
                                   app_pan_bound(s_app_pan.y, false)};
     lv_anim_delete(s_apps, app_pan_anim_cb);
     if (s_app_settle_from.x == s_app_settle_to.x &&
-        s_app_settle_from.y == s_app_settle_to.y) return;
+        s_app_settle_from.y == s_app_settle_to.y) {
+        apps_sync_icon_sizes();
+        return;
+    }
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_apps);
@@ -4021,7 +4069,7 @@ static void apps_open_at(lv_point_t p)
     int best = -1;
     float best_distance = 1e9f;
     for (int i = 0; i < APP_REAL_COUNT; i++) {
-        int size = s_app_rest_size[i];
+        int size = s_app_render_size[i];
         if (size == 0) continue;
         lv_point_t center = app_icon_center(i);
         float dx = (float)p.x - center.x;
@@ -4217,12 +4265,12 @@ static void build_apps(void)
     clear_clickable_tree(s_apps);
     lv_obj_add_flag(s_apps, LV_OBJ_FLAG_HIDDEN);
     s_app_pan = (lv_point_t){0, 0};
+    s_app_resize_cursor = 0;
     for (int i = 0; i < APP_COUNT; i++) {
         s_app_rest_center[i] = app_rest_center(i);
-        s_app_rest_size[i] = app_icon_size(s_app_rest_center[i]);
+        s_app_render_size[i] = 0;
     }
-    apps_apply_icon_sizes();
-    apps_layout_icons();
+    apps_sync_icon_sizes();
 }
 
 /* 系统设置和计时器复用同一覆盖页，返回后保留完整应用九宫格。 */

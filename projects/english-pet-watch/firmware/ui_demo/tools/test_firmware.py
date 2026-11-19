@@ -678,6 +678,8 @@ typedef struct {void (*cb)(void *,int32_t);} lv_anim_t;
 #define APP_GRID_STEP 116
 #define APP_PAN_OVERSHOOT 16
 #define APP_GRID_DRAG_TH 16
+#define APP_RESIZE_BUDGET 2
+#define APP_RESIZE_STEP 2
 #define LV_OBJ_FLAG_HIDDEN 1
 #define LV_EVENT_PRESSED 1
 #define LV_EVENT_PRESSING 2
@@ -690,11 +692,11 @@ static lv_point_t s_app_pan,s_app_pan_start,s_app_settle_from,s_app_settle_to,s_
 static lv_obj_t icon_objects[APP_COUNT],*s_app_icons[APP_COUNT];
 static bool s_app_drag_active,s_app_drag_moved,busy;
 typedef int lv_draw_buf_t;
-static lv_draw_buf_t *s_app_art[APP_COUNT];
+static lv_draw_buf_t *s_app_art[APP_COUNT],*s_app_scaled[APP_COUNT];
 static lv_point_t s_app_rest_center[APP_COUNT];
-static int s_app_rest_size[APP_COUNT],s_app_render_size[APP_COUNT];
-static int opened=-1,layouts,sources,sizes;
-static void app_art_resize(int i,int size){}
+static int s_app_pixel_size[APP_COUNT],s_app_render_size[APP_COUNT],s_app_resize_cursor;
+static int opened=-1,layouts,sources,sizes,resizes;
+static bool app_art_resize(int i,int size){resizes++;s_app_pixel_size[i]=size;return s_app_scaled[i]!=0;}
 static void lv_label_set_text(lv_obj_t *o,const char *t){}
 static void lv_image_set_src(lv_obj_t *o,void *src){sources++;}
 static void lv_obj_set_size(lv_obj_t *o,int w,int h){sizes++;}
@@ -723,7 +725,9 @@ static void lv_obj_set_style_transform_scale_y(lv_obj_t *o,int s,int p){}
         for signature in ('static lv_point_t app_rest_center(int i)',
                           'static lv_point_t app_icon_center(int i)',
                           'static int app_icon_size(lv_point_t center)',
+                          'static void app_apply_icon_size(int i, int size)',
                           'static void apps_layout_icons(void)',
+                          'static void apps_sync_icon_sizes(void)',
                           'static int app_pan_bound(int value, bool elastic)',
                           'static void app_pan_anim_cb(void *var, int32_t value)',
                           'static void apps_settle_bounds(void)',
@@ -735,9 +739,10 @@ static void event(int code,int x,int y){lv_event_t e={code};point=(lv_point_t){x
 int main(void){
     for(int i=0;i<APP_COUNT;i++){
         s_app_icons[i]=&icon_objects[i];
+        s_app_art[i]=(lv_draw_buf_t *)&icon_objects[i];
+        s_app_scaled[i]=(lv_draw_buf_t *)&icon_objects[i];
         s_app_rest_center[i]=app_rest_center(i);
-        s_app_rest_size[i]=app_icon_size(s_app_rest_center[i]);
-        s_app_render_size[i]=s_app_rest_size[i];
+        s_app_render_size[i]=app_icon_size(s_app_rest_center[i]);
     }
     const int directions[][2]={{60,0},{-60,0},{0,60},{0,-60},{60,60},{60,-60},{-60,60},{-60,-60}};
     for(int i=0;i<8;i++){
@@ -756,9 +761,11 @@ int main(void){
         event(LV_EVENT_PRESSING,233+sign*300,233+sign*300);
         assert(s_app_pan.x==sign*(APP_GRID_STEP+APP_PAN_OVERSHOOT) && s_app_pan.y==sign*(APP_GRID_STEP+APP_PAN_OVERSHOOT));
         event(LV_EVENT_RELEASED,233+sign*300,233+sign*300);
-        assert(s_app_pan.x==0 && s_app_pan.y==0);
+        /* 松手吸附到最近的格位，而不是强制回到原点。 */
+        assert(s_app_pan.x==sign*APP_GRID_STEP && s_app_pan.y==sign*APP_GRID_STEP);
     }
     s_app_pan=(lv_point_t){0,0};
+    apps_sync_icon_sizes();
     for(int i=0;i<APP_COUNT;i++){
         opened=-1;lv_point_t p=app_icon_center(i);
         event(LV_EVENT_PRESSED,p.x,p.y);event(LV_EVENT_RELEASED,p.x,p.y);assert(opened==(i<APP_REAL_COUNT?i:-1));
@@ -777,6 +784,8 @@ int main(void){
         }
     }
     assert(app_pan_bound(50,false)==0 && app_pan_bound(-50,false)==0);
+    assert(app_pan_bound(80,false)==APP_GRID_STEP && app_pan_bound(-80,false)==-APP_GRID_STEP);
+    assert(app_pan_bound(250,false)==APP_GRID_STEP);
     s_app_pan=(lv_point_t){0,0};assert(app_icon_size(app_icon_center(0))==104);
     assert(app_icon_size(app_icon_center(1))<APP_ICON_D);
     assert(app_icon_size(app_icon_center(3))<app_icon_size(app_icon_center(1)));
@@ -785,19 +794,20 @@ int main(void){
     assert(app_icon_size(app_icon_center(1))==94);
     assert(app_icon_size(app_icon_center(3))==88);
     int visible=0;
-    for(int i=0;i<APP_COUNT;i++)if(s_app_rest_size[i])visible++;
+    for(int i=0;i<APP_COUNT;i++)if(app_icon_size(app_icon_center(i)))visible++;
     assert(APP_COUNT==9 && visible==9);
     /* 静置时九枚图标全部落在圆屏安全区且互不重叠。 */
     for(int i=0;i<APP_COUNT;i++){
         lv_point_t p=app_icon_center(i);
+        int size=app_icon_size(p);
         float dx=p.x-CENTER_X,dy=p.y-CENTER_Y;
-        assert(sqrtf(dx*dx+dy*dy)+s_app_rest_size[i]/2.0f<233);
+        assert(sqrtf(dx*dx+dy*dy)+size/2.0f<233);
         for(int j=0;j<i;j++){
             lv_point_t q=app_icon_center(j);dx=p.x-q.x;dy=p.y-q.y;
-            assert(sqrtf(dx*dx+dy*dy)>=(s_app_rest_size[i]+s_app_rest_size[j])/2.0f);
+            assert(sqrtf(dx*dx+dy*dy)>=(size+app_icon_size(q))/2.0f);
         }
     }
-    /* 拖动只做整体平移：位移与手指一一对应，不再按位置改尺寸。 */
+    /* 拖动时位置与手指一一对应；尺寸按预算分批重采样，落定后对齐。 */
     for(int x=-116;x<=116;x+=29)for(int y=-116;y<=116;y+=29){
         s_app_pan=(lv_point_t){x,y};
         for(int i=0;i<APP_COUNT;i++){
@@ -806,13 +816,35 @@ int main(void){
         }
     }
     s_app_pan=(lv_point_t){0,0};
-    s_app_art[0]=(lv_draw_buf_t *)&apps;
-    int source_before=sources,size_before=sizes;
-    apps_layout_icons();assert(sources==source_before && sizes==size_before);
-    s_app_pan=(lv_point_t){80,80};apps_layout_icons();
-    assert(sources==source_before && sizes==size_before);
+    int resample_before=resizes;
+    apps_layout_icons();
+    assert(resizes==resample_before);
+    for(int x=-116;x<=116;x+=29)for(int y=-116;y<=116;y+=29){
+        s_app_pan=(lv_point_t){x,y};
+        int was[APP_COUNT],entered=0;
+        for(int i=0;i<APP_COUNT;i++)was[i]=s_app_render_size[i];
+        int before=resizes;
+        apps_layout_icons();
+        /* 从隐藏进入视野的图标必须立刻栅格化，不计入每帧预算。 */
+        for(int i=0;i<APP_COUNT;i++)
+            if(was[i]==0 && s_app_render_size[i]!=0)entered++;
+        assert(resizes-before<=APP_RESIZE_BUDGET+entered);
+        for(int i=0;i<APP_COUNT;i++)
+            assert(s_app_render_size[i]==0 || s_app_render_size[i]>=APP_ICON_MIN_D);
+    }
+    s_app_pan=(lv_point_t){80,80};
+    apps_sync_icon_sizes();
+    for(int i=0;i<APP_COUNT;i++){
+        int want=app_icon_size(app_icon_center(i));
+        assert(s_app_render_size[i]==want);
+    }
     event(LV_EVENT_PRESSED,233,233);event(LV_EVENT_PRESSING,320,300);
-    assert(sources==source_before && sizes==size_before);
+    assert(resizes>resample_before);
+    event(LV_EVENT_RELEASED,320,300);
+    for(int i=0;i<APP_COUNT;i++){
+        int want=app_icon_size(app_icon_center(i));
+        assert(s_app_render_size[i]==want);
+    }
     int last=104;
     for(int x=0;x<400;x++){
         int size=app_icon_size((lv_point_t){CENTER_X+x,CENTER_Y});
@@ -870,7 +902,7 @@ static void lv_image_set_src(int *o,lv_draw_buf_t *b){sources++;}
 '''
         for signature in ('static uint16_t app_mix_rgb565(uint16_t a, uint16_t b, unsigned weight)',
                           'static void app_resize_rgb565(const lv_draw_buf_t *src, lv_draw_buf_t *dst, int size)',
-                          'static void app_art_resize(int i, int size)'):
+                          'static bool app_art_resize(int i, int size)'):
             source += function('ui.c', signature)
         source += r'''
 int main(void){
