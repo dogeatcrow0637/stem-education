@@ -43,6 +43,9 @@ class FirmwareTests(unittest.TestCase):
                 dest = root / 'managed_components' / path
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 text = (ROOT / 'managed_components' / path).read_text()
+                if path == paths[0]:
+                    text = text.replace('.buffer_height = 24,', '.buffer_height = 50,')
+                    text = text.replace('.use_psram = false,', '.use_psram = true,')
                 text = text.replace('    chan_cfg.dma_frame_num = 120;\n', '')
                 for call in ('data_if->set_fmt(data_if, dev->dev_caps, fs)',
                              'data_if->enable(data_if, dev->dev_caps, true)'):
@@ -58,6 +61,9 @@ class FirmwareTests(unittest.TestCase):
             subprocess.run(['cmake', '-P', str(patch)], check=True, capture_output=True)
             self.assertEqual(first, [(root / 'managed_components' / path).read_text() for path in paths])
             self.assertEqual(first[0].count('chan_cfg.dma_frame_num = 120;'), 1)
+            self.assertIn('.buffer_height = 24,', first[0])
+            self.assertIn('.use_psram = false,', first[0])
+            self.assertIn('.require_double_buffer = true,', first[0])
             def extract(text, signature):
                 start = text.index(signature + '\n{')
                 return text[start:text.index('\n}', start) + 2] + '\n'
@@ -296,10 +302,136 @@ int main(void){
 '''
         run_c(source)
 
+    def test_scale_cache_preserves_pixels_padding_and_falls_back_when_full(self):
+        source = r"""#include <assert.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
+#define APP_COUNT 2
+#define APP_ICON_D 8
+#define APP_ICON_MIN_D 2
+#define APP_SCALE_CACHE_BYTES cache_bytes
+#define MALLOC_CAP_SPIRAM 1
+#define MALLOC_CAP_8BIT 2
+#define LV_COLOR_FORMAT_RGB565 0
+#define LV_STRIDE_AUTO 0
+#define ESP_LOGI(...) ((void)0)
+typedef struct {struct {int stride;}header;uint8_t data[128];int id;}lv_draw_buf_t;
+typedef struct {uint32_t offset[APP_COUNT][APP_ICON_D+1];uint16_t runs[];}app_scale_cache_t;
+static app_scale_cache_t *s_app_scale_cache;
+static lv_draw_buf_t masters[2],scaled[2],*s_app_art[2]={masters,masters+1},*s_app_scaled[2]={scaled,scaled+1};
+static int s_app_pixel_size[2],cache_bytes=4096,allocation_fails,patterns,reshapes;
+static void *heap_caps_calloc(int n,int bytes,int caps){assert(caps==3);return allocation_fails?NULL:calloc(n,bytes);}
+typedef struct {int x,y;}lv_point_t;
+#define CENTER_X 233
+#define CENTER_Y 233
+static int app_icon_size(lv_point_t center){return APP_ICON_D;}
+static void vTaskDelay(int ticks){assert(ticks==1);}
+static bool lv_draw_buf_reshape(lv_draw_buf_t *d,int fmt,int w,int h,int stride){reshapes++;d->header.stride=(w*2+3)&~3;return true;}
+static void app_resize_rgb565(const lv_draw_buf_t *src,lv_draw_buf_t *dst,int size){
+ for(int y=0;y<size;y++)for(int x=0;x<size;x++){
+  uint16_t color=patterns?src->id*1000+y*size+x:src->id+10+y/2;
+  memcpy(dst->data+y*dst->header.stride+x*2,&color,2);
+ }
+}
+"""
+        source += function('ui.c', 'static bool app_scale_cache_restore(int i, lv_draw_buf_t *dst, int size)')
+        source += function('ui.c', 'static void app_scale_cache_build(void)')
+        source += r"""
+int main(void){
+ masters[0].id=1;masters[1].id=2;
+ for(patterns=0;patterns<2;patterns++)for(int small=0;small<2;small++){
+  cache_bytes=small?sizeof(app_scale_cache_t)+40:4096;
+  app_scale_cache_build();assert(s_app_scale_cache);int hits=0,misses=0;
+  for(int size=2;size<=APP_ICON_D;size++)for(int i=0;i<APP_COUNT;i++){
+   lv_draw_buf_t actual={0},expected={0};actual.header.stride=expected.header.stride=(size*2+3)&~3;
+   memset(actual.data,0xcc,sizeof(actual.data));memset(expected.data,0xcc,sizeof(expected.data));
+   bool hit=app_scale_cache_restore(i,&actual,size);if(hit)hits++;else misses++;
+   if(!hit)app_resize_rgb565(s_app_art[i],&actual,size);
+   app_resize_rgb565(s_app_art[i],&expected,size);
+   assert(memcmp(actual.data,expected.data,sizeof(actual.data))==0);
+  }
+  assert(hits>0 && (!small?misses==0:misses>0));
+  assert(s_app_pixel_size[0]==0 && s_app_pixel_size[1]==0);
+  free(s_app_scale_cache);s_app_scale_cache=NULL;
+ }
+ allocation_fails=1;app_scale_cache_build();assert(!s_app_scale_cache);
+ assert(!app_scale_cache_restore(0,&scaled[0],2));return 0;
+}
+"""
+        run_c(source)
+
+    def test_display_te_waits_once_per_frame_and_falls_back_without_signal(self):
+        source = r"""#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdatomic.h>
+#define IRAM_ATTR
+#define LV_EVENT_RENDER_START 1
+#define LV_EVENT_FLUSH_START 2
+#define pdTRUE 1
+#define pdFALSE 0
+#define pdMS_TO_TICKS(x) (x)
+#define ESP_LOGI(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
+#define portYIELD_FROM_ISR() ((void)0)
+typedef int BaseType_t;
+typedef struct {int code;}lv_event_t;
+static bool s_enabled=true,s_first_flush,s_logged,fresh=true;
+static unsigned s_misses,stale,waits,clears,isr_gives,delays;
+static atomic_uint s_last_te_us,s_period_us;
+static int s_te=1;
+static void vTaskDelay(unsigned ticks){assert(ticks==4);delays++;}
+static uint32_t now;
+static uint32_t esp_timer_get_time(void){return now;}
+static int lv_event_get_code(lv_event_t *e){return e->code;}
+static int xSemaphoreTake(int sem,int timeout){
+ assert(sem==1);if(!timeout){clears++;if(stale){stale--;return 1;}return 0;}
+ assert(timeout==35);assert(!stale);waits++;return fresh;
+}
+static void xSemaphoreGiveFromISR(int sem,int *wake){assert(sem==1);isr_gives++;*wake=0;}
+"""
+        source += function('display_sync.c', 'static void IRAM_ATTR display_te_isr(void *arg)')
+        source += function('display_sync.c', 'static void display_sync_event(lv_event_t *event)')
+        source += r"""
+static void event(int code){lv_event_t e={code};display_sync_event(&e);}
+int main(void){
+ now=10000;display_te_isr(0);now+=16667;display_te_isr(0);
+ assert(isr_gives==2 && s_period_us==16667);
+ event(2);assert(waits==0);
+ for(int frame=0;frame<10;frame++){
+  event(1);assert(s_first_flush);stale=2;event(2);
+  assert(!s_first_flush && waits==(unsigned)frame+1 && s_misses==0);
+  for(int chunk=0;chunk<30;chunk++)event(2);
+  assert(waits==(unsigned)frame+1);
+ }
+ assert(s_logged && clears==30 && delays==10);
+ s_period_us=9999;event(1);event(2);assert(delays==10);
+ s_period_us=25001;event(1);event(2);assert(delays==10);
+ s_period_us=16667;
+ fresh=false;event(1);event(2);assert(s_enabled && s_misses==1);
+ fresh=true;event(1);event(2);assert(s_enabled && s_misses==0);
+ fresh=false;
+ for(int frame=0;frame<3;frame++){event(1);event(2);}
+ assert(!s_enabled && s_misses==3);unsigned before=waits;
+ event(1);event(2);assert(waits==before);
+ now=UINT32_MAX-10;s_last_te_us=now;now=15;display_te_isr(0);assert(s_period_us==26);
+ return 0;
+}
+"""
+        run_c(source)
+
     def test_normal_boot_has_no_icon_benchmark(self):
         source = (MAIN / "main.c").read_text()
         self.assertNotIn("icon_bench", source)
         self.assertNotIn("ui_debug_icon_", (MAIN / "ui.c").read_text())
+        self.assertNotIn("DRAG BENCH", (MAIN / "ui.c").read_text())
+        self.assertNotIn("LINE QA", (MAIN / "ui.c").read_text())
+        self.assertNotIn("SYNC PERF", (MAIN / "ui.c").read_text())
+        self.assertNotIn("ROUND QA", (MAIN / "ui.c").read_text())
+        self.assertNotIn("ui_round_qa_start", source)
+        self.assertNotIn("ui_drag_bench_start", source)
 
     def test_three_color_ring_has_no_gray_underlay_or_highlight(self):
         ui = (MAIN / "ui.c").read_text()
@@ -548,6 +680,7 @@ static void lv_anim_set_var(lv_anim_t *a,void *o){a->obj=o;}
 static void lv_anim_set_values(lv_anim_t *a,int from,int to){a->end=to;}
 static void lv_anim_set_duration(lv_anim_t *a,int t){}
 static void lv_anim_path_ease_out(void){}
+static void lv_anim_path_overshoot(void){}
 static void lv_anim_set_path_cb(lv_anim_t *a,void (*cb)(void)){}
 static void lv_anim_set_exec_cb(lv_anim_t *a,void (*cb)(void *,int32_t)){a->exec=cb;}
 static void lv_anim_start(lv_anim_t *a){a->exec(a->obj,a->end);}
@@ -676,8 +809,7 @@ typedef struct {void (*cb)(void *,int32_t);} lv_anim_t;
 #define APP_ROOT_H 120
 #define APP_ICON_MIN_D 2
 #define APP_GRID_STEP 116
-#define APP_PAN_OVERSHOOT 16
-#define APP_GRID_DRAG_TH 16
+#define APP_GRID_DRAG_TH 8
 #define LV_OBJ_FLAG_HIDDEN 1
 #define LV_EVENT_PRESSED 1
 #define LV_EVENT_PRESSING 2
@@ -691,7 +823,13 @@ static lv_obj_t icon_objects[APP_COUNT],*s_app_icons[APP_COUNT];
 static bool s_app_drag_active,s_app_drag_moved,busy;
 typedef int lv_draw_buf_t;
 static lv_draw_buf_t *s_app_art[APP_COUNT];
-static int opened=-1,layouts,sources;
+static int opened=-1,layouts,sources,anim_deletes;
+#define LV_PART_MAIN 0
+#define LV_STYLE_PROP_ANY 0
+static bool style_enabled=true;
+static unsigned style_batches;
+static void lv_obj_enable_style_refresh(bool enabled){style_enabled=enabled;}
+static void lv_obj_refresh_style(lv_obj_t *o,int part,int prop){assert(style_enabled);style_batches++;}
 static void app_art_resize(int i,int size){}
 static void lv_label_set_text(lv_obj_t *o,const char *t){}
 static void lv_image_set_src(lv_obj_t *o,void *src){sources++;}
@@ -705,12 +843,13 @@ static lv_indev_t *lv_event_get_indev(lv_event_t *e){return &input;}
 static void lv_indev_get_point(lv_indev_t *i,lv_point_t *p){*p=point;}
 static bool page_anim_busy(void){return busy;}
 static void app_open_index(int i){opened=i;}
-static void lv_anim_delete(void *obj,void (*cb)(void *,int32_t)){}
+static void lv_anim_delete(void *obj,void (*cb)(void *,int32_t)){anim_deletes++;}
 static void lv_anim_init(lv_anim_t *a){}
 static void lv_anim_set_var(lv_anim_t *a,void *v){}
 static void lv_anim_set_values(lv_anim_t *a,int x,int y){}
 static void lv_anim_set_duration(lv_anim_t *a,int ms){}
 static void lv_anim_path_ease_out(void){}
+static void lv_anim_path_overshoot(void){}
 static void lv_anim_set_path_cb(lv_anim_t *a,void (*cb)(void)){}
 static void lv_anim_set_exec_cb(lv_anim_t *a,void (*cb)(void *,int32_t)){a->cb=cb;}
 static void lv_anim_start(lv_anim_t *a){a->cb(s_apps,256);}
@@ -736,20 +875,45 @@ int main(void){
         s_app_pan=(lv_point_t){0,0};opened=-1;
         event(LV_EVENT_PRESSED,233,233);
         event(LV_EVENT_PRESSING,233+directions[i][0],233+directions[i][1]);
-        assert(s_app_pan.x==app_pan_bound(directions[i][0],true) && s_app_pan.y==app_pan_bound(directions[i][1],true));
+        assert(s_app_pan.x==app_pan_bound(directions[i][0]*9/10,true) && s_app_pan.y==app_pan_bound(directions[i][1]*9/10,true));
         event(LV_EVENT_RELEASED,233+directions[i][0],233+directions[i][1]);
         assert(opened==-1 && !s_app_drag_active);
-        assert(s_app_pan.x==app_pan_bound(directions[i][0],false) && s_app_pan.y==app_pan_bound(directions[i][1],false));
+        assert(s_app_pan.x==app_pan_bound(directions[i][0]*9/10,false) && s_app_pan.y==app_pan_bound(directions[i][1]*9/10,false));
     }
     assert(layouts>0);
+    s_app_pan=(lv_point_t){0,0};event(LV_EVENT_PRESSED,233,233);
+    event(LV_EVENT_PRESSING,243,233);assert(s_app_pan.x==9);
+    int unchanged=layouts;event(LV_EVENT_PRESSING,243,233);assert(layouts==unchanged);
+    event(LV_EVENT_RELEASED,310,233);assert(s_app_pan.x==APP_GRID_STEP);
+
     for(int sign=-1;sign<=1;sign+=2){
         s_app_pan=(lv_point_t){0,0};
         event(LV_EVENT_PRESSED,233,233);
         event(LV_EVENT_PRESSING,233+sign*300,233+sign*300);
-        assert(s_app_pan.x==sign*(APP_GRID_STEP+APP_PAN_OVERSHOOT) && s_app_pan.y==sign*(APP_GRID_STEP+APP_PAN_OVERSHOOT));
+        assert(s_app_pan.x==sign*270 && s_app_pan.y==sign*270);
         event(LV_EVENT_RELEASED,233+sign*300,233+sign*300);
         assert(s_app_pan.x==sign*APP_GRID_STEP && s_app_pan.y==sign*APP_GRID_STEP);
     }
+    /* 越界仍跟随、停住不偷跑；反向移动不等手指跨回原边界。 */
+    s_app_pan=(lv_point_t){APP_GRID_STEP,0};
+    event(LV_EVENT_PRESSED,100,233);
+    event(LV_EVENT_PRESSING,250,233);assert(s_app_pan.x==APP_GRID_STEP+135);
+    unchanged=layouts;event(LV_EVENT_PRESSING,250,233);
+    assert(s_app_pan.x==APP_GRID_STEP+135 && layouts==unchanged);
+    event(LV_EVENT_PRESSING,240,233);assert(s_app_pan.x==APP_GRID_STEP+126);
+    event(LV_EVENT_RELEASED,260,233);
+    assert(s_app_settle_from.x==APP_GRID_STEP+144 && s_app_settle_to.x==APP_GRID_STEP);
+    /* 回弹中按住，沿当前显示坐标续拖，没有跳回停靠点。 */
+    s_app_pan=(lv_point_t){180,-150};
+    int before_grab=anim_deletes;
+    event(LV_EVENT_PRESSED,233,233);
+    assert(anim_deletes==before_grab+1);
+    assert(s_app_pan.x==180 && s_app_pan.y==-150);
+    event(LV_EVENT_PRESSING,253,223);assert(s_app_pan.x==198 && s_app_pan.y==-159);
+    event(LV_EVENT_PRESS_LOST,300,300);
+    assert(s_app_settle_from.x==198 && s_app_settle_from.y==-159);
+    assert(s_app_pan.x==APP_GRID_STEP && s_app_pan.y==-APP_GRID_STEP);
+    for(int x=-582;x<=582;x++)assert(app_pan_bound(x,true)==x);
     s_app_pan=(lv_point_t){0,0};
     for(int i=0;i<APP_COUNT;i++){
         opened=-1;lv_point_t p=app_icon_center(i);
@@ -818,7 +982,9 @@ int main(void){
     assert(disappeared && previous[3]==104 && previous[4]==0);
     s_app_pan=(lv_point_t){0,0};
     s_app_art[0]=(lv_draw_buf_t *)&apps;
-    apps_layout_icons();int before=sources;apps_layout_icons();assert(sources==before);
+    unsigned batches_before=style_batches;
+    apps_layout_icons();assert(style_enabled && style_batches==batches_before+1);
+    int before=sources;apps_layout_icons();assert(sources==before && style_enabled);
     s_app_pan=(lv_point_t){80,80};apps_layout_icons();assert(sources==before);
     int last=104;
     for(int x=0;x<400;x++){
@@ -867,6 +1033,9 @@ int main(void){
 #define LV_COLOR_FORMAT_RGB565 1
 #define LV_STRIDE_AUTO 0
 typedef struct {struct{int w,h,stride;}header;uint8_t *data;}lv_draw_buf_t;
+#define APP_COUNT 6
+typedef struct {uint32_t offset[APP_COUNT][APP_ICON_D+1];uint16_t runs[];}app_scale_cache_t;
+static app_scale_cache_t *s_app_scale_cache;
 static lv_draw_buf_t *s_app_art[6],*s_app_scaled[6];
 static int s_app_pixel_size[6],icon,*s_app_icons[6],sources,drops;
 static lv_draw_buf_t *lv_draw_buf_reshape(lv_draw_buf_t *b,int cf,int w,int h,int stride){
@@ -875,7 +1044,8 @@ static lv_draw_buf_t *lv_draw_buf_reshape(lv_draw_buf_t *b,int cf,int w,int h,in
 static void lv_image_cache_drop(lv_draw_buf_t *b){drops++;}
 static void lv_image_set_src(int *o,lv_draw_buf_t *b){sources++;}
 '''
-        for signature in ('static uint16_t app_mix_rgb565(uint16_t a, uint16_t b, unsigned weight)',
+        for signature in ('static bool app_scale_cache_restore(int i, lv_draw_buf_t *dst, int size)',
+                          'static uint16_t app_mix_rgb565(uint16_t a, uint16_t b, unsigned weight)',
                           'static void app_resize_rgb565(const lv_draw_buf_t *src, lv_draw_buf_t *dst, int size)',
                           'static void app_art_resize(int i, int size)'):
             source += function('ui.c', signature)
@@ -1199,6 +1369,9 @@ int main(void){
     pet_text_set("Hi猫咪ABC");assert(shown[0]==0);
     for(int i=0;i<7;i++)pet_text_step();assert(!strcmp(shown,"咪ABC"));
     pet_text_set("换一句");pet_text_step();assert(!strcmp(shown,"换"));
+    pet_text_set("甲乙丙丁戊");for(int i=0;i<5;i++)pet_text_step();
+    pet_text_set("乙丙丁戊己");assert(s_pet_text_end==12);pet_text_step();assert(!strcmp(shown,"丁戊己"));
+
     assert(!strcmp(pet_safe_text("甲\n乙\r\nA\tB😀"),"甲 乙  A B"));
     char bad[]={ (char)0xE4,0 };assert(pet_safe_text(bad)[0]==0);
     assert(!strcmp(pet_safe_text("中文"),"中文"));
@@ -1525,6 +1698,48 @@ int main(void){
 '''
         run_c(source)
 
+    def test_voice_ui_mailbox_keeps_latest_utf8_and_rejects_old_session(self):
+        original = (MAIN / 'voice_client.c').read_text()
+        start = original.index('typedef struct {\n    unsigned epoch;')
+        types = original[start:original.index('static QueueHandle_t s_ui_queue;', start)]
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <string.h>
+#define pdTRUE 1
+''' + types + r'''
+static void *s_ui_queue=(void*)1;
+static atomic_uint s_epoch=1;
+static unsigned s_session_epoch=1;
+static atomic_bool s_requested=true;
+static voice_ui_update_t pending;
+static bool queued;
+static int updates;
+static char shown[320],mood[32];
+static bool session_current(void){return s_requested && s_epoch==s_session_epoch;}
+static int xQueueOverwrite(void *q,const voice_ui_update_t *u){pending=*u;queued=true;return 1;}
+static int xQueueReceive(void *q,voice_ui_update_t *u,int wait){if(!queued)return 0;*u=pending;queued=false;return 1;}
+static int xQueuePeek(void *q,voice_ui_update_t *u,int wait){if(!queued)return 0;*u=pending;return 1;}
+static void ui_activity(void){}
+static void ui_pet_set_state_by_name(const char *e,const char *t){updates++;snprintf(mood,sizeof(mood),"%s",e);if(t)snprintf(shown,sizeof(shown),"%s",t);}
+'''
+        source += function('voice_client.c', 'static void pet_set(const char *emotion, const char *text)')
+        source += function('voice_client.c', 'void voice_client_update_ui(void)')
+        source += r'''
+int main(void){
+ pet_set("thinking","旧文字");pet_set("speaking","最新文字");assert(updates==0);
+ pet_set("listening",NULL);voice_client_update_ui();assert(updates==1 && !strcmp(shown,"最新文字") && !strcmp(mood,"listening"));
+ char long_text[610];for(int i=0;i<200;i++)memcpy(long_text+i*3,"猫",3);strcpy(long_text+600,"结束");
+ pet_set("speaking",long_text);voice_client_update_ui();assert(strlen(shown)<=319 && strlen(shown)%3==0 && !strcmp(shown+strlen(shown)-6,"结束"));
+ pet_set("sad","错误提示");s_requested=false;s_epoch=2;voice_client_update_ui();assert(!strcmp(shown,"错误提示"));
+ s_requested=true;s_session_epoch=2;pet_set("thinking","上一轮");s_epoch=3;s_session_epoch=3;
+ int before=updates;voice_client_update_ui();assert(updates==before);
+ s_ui_queue=NULL;pet_set("sad","忽略");voice_client_update_ui();assert(updates==before);
+}
+'''
+        run_c(source)
+
     def test_protocol_and_session(self):
         self.assertTrue((CJSON / 'cJSON.c').exists(), '先运行 idf.py build 获取依赖')
         source = r'''
@@ -1547,7 +1762,7 @@ static int sends,updates,volume;
 static int audio_get_playback_volume(void){return volume;}
 static void audio_set_playback_volume(int v){volume=v;}
 static char mood[32],s_reply_emotion[32];
-static bool s_reply_presented;
+static bool s_reply_presented,s_reply_streaming;
 static void pet_set(const char *emotion, const char *text) {
     updates++;snprintf(mood,sizeof(mood),"%s",emotion);
     if (text) snprintf(reply, sizeof(reply), "%s", text);
@@ -1564,7 +1779,7 @@ static bool send_json(const char *text) {
         source += r'''
 int main(void) {
     assert(!voice_client_set_active(true));
-    s_ready = true; assert(voice_client_set_active(true));assert(volume==30);
+    s_ready = true; assert(voice_client_set_active(true));assert(volume==0);
     volume=22;
     s_session_epoch = s_epoch; assert(session_current());
     unsigned epoch=s_epoch;assert(voice_client_set_active(true) && s_epoch==epoch && session_current() && volume==22);
@@ -1578,6 +1793,8 @@ int main(void) {
     handle_text(hello, strlen(hello)); assert(sends == 1 && s_listening);
     cJSON *j = cJSON_Parse(sent); assert(j);
     assert(!strcmp(json_string(j, "session_id"), "id\"quoted")); cJSON_Delete(j);
+    const char *partial="{\"type\":\"stt\",\"text\":\"你好呀\",\"final\":false}";
+    handle_text(partial,strlen(partial));assert(s_listening && !s_reply_active && !strcmp(mood,"listening") && !strcmp(reply,"你好呀"));
     const char *raw = "{\"type\":\"stt\",\"text\":\"你好\"}";
     handle_text(raw, strlen(raw)); assert(!strcmp(reply, "你好"));
     const char *escaped = "{\"type\":\"stt\",\"text\":\"\\u4f60\\u597d\"}";
@@ -1630,6 +1847,13 @@ int main(void) {
     handle_text(raw,strlen(raw));assert(!s_drop_reply && s_reply_active && !s_listening);
 
     handle_text(hello,strlen(hello));assert(!s_reply_presented && !s_reply_emotion[0]);
+    handle_text(raw,strlen(raw));
+    const char *stream="{\"type\":\"llm\",\"state\":\"partial\",\"text\":\"实时回答\"}";
+    handle_text(stream,strlen(stream));assert(s_reply_streaming && !strcmp(reply,"实时回答"));
+    handle_text(sentence,strlen(sentence));assert(!strcmp(reply,"实时回答"));
+    const char *revision="{\"type\":\"llm\",\"state\":\"partial\",\"text\":\"实时回答完成\",\"final\":true}";
+    handle_text(revision,strlen(revision));assert(!strcmp(reply,"实时回答完成"));
+    handle_text(hello,strlen(hello));assert(!s_reply_streaming);
     const char *empty_hello="{\"type\":\"hello\",\"session_id\":\"\"}";
     handle_text(empty_hello,strlen(empty_hello));assert(!s_requested);
     return 0;
@@ -1973,7 +2197,12 @@ typedef int esp_audio_err_t;
 #define pdMS_TO_TICKS(x) (x)
 typedef struct {uint8_t *buffer;uint32_t len;}esp_audio_enc_in_frame_t;
 typedef struct {uint8_t *buffer;uint32_t len;unsigned encoded_bytes;}esp_audio_enc_out_frame_t;
-static atomic_bool s_requested,s_connected,s_hello,s_listening,s_reply_active;
+static atomic_bool s_requested,s_connected,s_hello,s_listening,s_reply_active,s_interrupt_requested;
+static bool s_barge_ready;
+static int audio_get_playback_volume(void){return 0;}
+static bool voice_barge_begin(void){return true;}
+static bool voice_barge_feed(const int16_t *m,const int16_t *r,size_t n);
+static bool tts_interrupt(bool with_preroll);
 static atomic_uint s_progress_tick;
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
@@ -1985,20 +2214,22 @@ static atomic_uint s_epoch;
 static unsigned s_session_epoch;
 static epw_ws_message_t *s_message;
 static void *s_enc,*s_ws,*s_mic;
-static int mode,reads,encodes,sends,opens,closes;
+static int mode,reads,encodes,sends,opens,closes,interrupts;
+static bool voice_barge_feed(const int16_t *m,const int16_t *r,size_t n){assert(n==960);for(size_t i=0;i<n;i++)assert(r[i]==0);return mode==9;}
+static bool tts_interrupt(bool with_preroll){assert(with_preroll==(mode==9));interrupts++;s_listening=true;s_reply_active=false;return true;}
 static jmp_buf finished;
 static int wifi_get_state(void){return EPW_WIFI_CONNECTED;}
-static void vTaskDelay(int ticks){if(!s_requested)longjmp(finished,1);s_requested=false;}
+static void vTaskDelay(int ticks){if(!s_requested)longjmp(finished,1);if(ticks!=500)s_requested=false;}
 static void pet_set(const char *emotion,const char *text){}
 static bool voice_client_set_active(bool value){s_requested=value;return value;}
-static bool ws_start(void){s_connected=true;s_hello=mode!=2;s_listening=true;return true;}
+static bool ws_start(void){s_connected=true;s_hello=mode!=2;s_listening=mode!=10;s_reply_active=mode==9 || mode==10;s_interrupt_requested=mode==10;return true;}
 static bool tts_pump(void){return false;}
 static void tts_close(void){}
 static bool open_audio(void){opens++;s_enc=(void*)1;return true;}
 static int esp_opus_enc_get_frame_size(void *enc,int *in,int *out){*in=1920;*out=128;return 0;}
 static int esp_codec_dev_read(void *mic,void *pcm,int len){reads++;assert(len==3840);memset(pcm,1,len);if(mode==1)s_requested=false;if(mode==4 && reads==2)s_listening=true;return mode==3?1:0;}
 static int esp_opus_enc_process(void *enc,esp_audio_enc_in_frame_t *in,esp_audio_enc_out_frame_t *out){encodes++;assert(in->len==1920);out->encoded_bytes=8;return mode==6?-1:0;}
-static int esp_websocket_client_send_bin(void *ws,const char *data,int len,int timeout){assert(len==8);sends++;if(mode==4 && sends==1)s_listening=false;else s_requested=false;return mode==5?-1:len;}
+static int esp_websocket_client_send_bin(void *ws,const char *data,int len,int timeout){assert(len==8);sends++;if(mode==7 && sends==1)return -1;if(mode==8)return -1;if((mode==4 || mode==9) && sends==1)s_listening=false;else s_requested=false;return mode==5?-1:len;}
 static void close_audio(void){s_enc=NULL;}
 static void close_session(void){closes++;free(s_message);s_message=NULL;close_audio();}
 '''
@@ -2009,11 +2240,15 @@ static void close_session(void){closes++;free(s_message);s_message=NULL;close_au
         source += function('voice_client.c', 'static void voice_task(void *arg)')
         source += r'''
 int main(void){
-    for(mode=0;mode<7;mode++){
-        reads=encodes=sends=opens=closes=0;s_requested=true;s_epoch=1;s_enc=NULL;
+    for(mode=0;mode<11;mode++){
+        reads=encodes=sends=opens=closes=interrupts=0;s_requested=true;s_epoch=1;s_enc=NULL;
         if(setjmp(finished)==0)voice_task(NULL);
-        assert(closes==1);
-        if(mode==0){assert(reads==1 && encodes==1 && sends==1);}
+        assert(closes==(mode==7?2:mode==8?3:1));
+        if(mode==7){assert(sends==2 && opens==2);}
+        else if(mode==8){assert(sends==3 && opens==3);}
+        else if(mode==9){assert(reads==3 && encodes==2 && sends==2 && interrupts==1);}
+        else if(mode==10){assert(reads==1 && sends==1 && interrupts==1 && !s_interrupt_requested);}
+        else if(mode==0){assert(reads==1 && encodes==1 && sends==1);}
         else if(mode==4){assert(reads==3 && encodes==2 && sends==2);}
         else if(mode==5){assert(reads==1 && encodes==1 && sends==1);}
         else if(mode==6){assert(reads==1 && encodes==1 && sends==0);}
@@ -2024,6 +2259,28 @@ int main(void){
 }
 '''
         run_c(source)
+
+    def test_chat_tap_interrupt_is_async_and_only_during_reply(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+static atomic_bool s_requested,s_reply_active,s_interrupt_requested;
+static bool voice_client_is_active(void){return s_requested;}
+'''
+        source += function('voice_client.c', 'void voice_client_interrupt(void)')
+        source += r'''
+int main(void){
+ voice_client_interrupt();assert(!s_interrupt_requested);
+ s_requested=true;voice_client_interrupt();assert(!s_interrupt_requested);
+ s_reply_active=true;voice_client_interrupt();assert(s_interrupt_requested);
+ s_interrupt_requested=false;s_requested=false;voice_client_interrupt();assert(!s_interrupt_requested);
+ return 0;
+}
+'''
+        run_c(source)
+        touch = function('ui.c', 'static void pet_touch_cb(lv_event_t *e)')
+        self.assertIn('voice_client_interrupt();', touch)
+        self.assertLess(touch.index('tap_ignore(e)'), touch.index('voice_client_interrupt();'))
 
     def test_voice_wait_timeouts_and_tick_wrap(self):
         source = r'''#include <assert.h>
@@ -2282,7 +2539,7 @@ int main(void){
 #define ESP_LOGW(tag, fmt, ...) do {} while (0)
 #define TAG "test"
 typedef int SemaphoreHandle_t;
-static int s_spk, write_result;
+static int s_spk, write_result,s_play_volume=30;
 static bool s_play_open = true;
 static size_t written_bytes;
 static int16_t *expected;static size_t offset;
@@ -2291,7 +2548,7 @@ static int xSemaphoreTake(int lock, int timeout){return 1;}
 static void xSemaphoreGive(int lock){}
 static int esp_codec_dev_write(int dev, void *pcm, int bytes){
  written_bytes+=(size_t)bytes;int16_t *stereo=pcm;
- for(int i=0;i<bytes/4;i++)if(expected){assert(stereo[2*i]==expected[offset+i] && stereo[2*i+1]==expected[offset+i]);}
+ for(int i=0;i<bytes/4;i++)if(expected){int16_t value=s_play_volume?expected[offset+i]:0;assert(stereo[2*i]==value && stereo[2*i+1]==value);}
  offset+=bytes/4;return write_result;
 }
 '''
@@ -2304,6 +2561,9 @@ int main(void){
     assert(written_bytes==sizeof(pcm)*2);
     int16_t large[300];for(int i=0;i<300;i++)large[i]=i*101-15000;
     expected=large;offset=0;written_bytes=0;
+    assert(audio_playback_write(large,sizeof(large))==sizeof(large));
+    assert(offset==300 && written_bytes==1200);
+    s_play_volume=0;offset=0;written_bytes=0;
     assert(audio_playback_write(large,sizeof(large))==sizeof(large));
     assert(offset==300 && written_bytes==1200);expected=NULL;
     assert(audio_playback_write(pcm,1)==-1);
@@ -2338,6 +2598,7 @@ static atomic_bool s_drop_reply,s_reply_active,s_listening;
 static void *s_enc=(void*)1,*s_ws=(void*)1;
 static int stage,closed,aborted,frames,sent;
 static int16_t pre[1920];
+static void pet_set(const char *emotion,const char *text){assert(strcmp(emotion,"listening")==0);}
 static void tts_close(void){assert(s_drop_reply);closed++;}
 static bool send_json(const char *p){assert(closed && strstr(p,"abort"));aborted++;return stage!=1;}
 static void send_listen_start(void){assert(aborted);s_listening=stage!=2;}
@@ -2350,15 +2611,17 @@ static int esp_opus_enc_process(void *enc,esp_audio_enc_in_frame_t *in,esp_audio
 }
 static int esp_websocket_client_send_bin(void *w,const char *p,unsigned n,int wait){assert(s_listening);sent++;return stage==4?0:n;}
 '''
-        source += function('voice_client.c', 'static bool tts_interrupt(void)')
+        source += function('voice_client.c', 'static bool tts_interrupt(bool with_preroll)')
         source += r'''
 int main(void){
  for(int i=0;i<1920;i++)pre[i]=1234;
  for(stage=0;stage<=5;stage++){
   closed=aborted=frames=sent=0;s_reply_active=true;s_listening=false;s_drop_reply=false;
-  bool ok=tts_interrupt();assert(ok==(stage==0));assert(closed==1 && aborted==1 && s_drop_reply && !s_reply_active);
+  bool ok=tts_interrupt(true);assert(ok==(stage==0));assert(closed==1 && aborted==1 && s_drop_reply && !s_reply_active);
   if(!stage)assert(frames==2 && sent==2 && s_listening);
  }
+ stage=0;closed=aborted=frames=sent=0;s_reply_active=true;s_listening=false;
+ assert(tts_interrupt(false));assert(closed==1 && aborted==1 && frames==0 && sent==0 && s_listening);
  return 0;
 }
 '''
@@ -2456,14 +2719,18 @@ typedef struct {uint8_t *buffer;size_t len,decoded_size;}esp_audio_dec_out_frame
 typedef int esp_audio_dec_info_t;
 static void *s_tts_queue=(void*)1,*s_dec;
 static uint8_t *s_tts_pcm;
+#define CONFIG_EPW_VOICE_BARGE_IN 0
 static bool s_tts_output,active=true,s_barge_ready;
 static void *s_enc=(void*)1;static int s_mic;
 static bool session_current(void){return active;}
 static bool open_audio(void){return true;}
+static int audio_get_playback_volume(void){return 0;}
 static bool voice_barge_begin(void){return true;}
 static int esp_codec_dev_read(int dev,void *p,size_t n){memset(p,0,n);return 0;}
-static bool voice_barge_feed(void *m,const void *r,size_t n){return false;}
-static bool tts_interrupt(void){return true;}
+static bool voice_barge_feed(void *m,const void *r,size_t n){
+ const int16_t *ref=r;for(size_t i=0;i<n;i++)assert(ref[i]==0);return false;
+}
+static bool tts_interrupt(bool with_preroll){return true;}
 static atomic_bool s_tts_end,s_reply_active;
 static voice_packet_t *queue[4];static int queued,writes,listens,closed,dec_closed,mic_closed,failure;
 static void *heap_caps_malloc(size_t n,int caps){return malloc(n);}

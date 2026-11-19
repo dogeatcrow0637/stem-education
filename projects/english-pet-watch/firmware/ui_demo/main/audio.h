@@ -17,7 +17,7 @@ bool audio_init(void);
  */
 bool audio_playback_open(void);
 
-/** 写入 PCM。返回实际写入字节数，失败返回负数。 */
+/** 写入 PCM；音量为 0 时数字输出全为零。返回实际写入字节数，失败返回负数。 */
 int audio_playback_write(const void *pcm, size_t bytes);
 
 /** 关闭扬声器输出，释放功放。 */

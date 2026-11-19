@@ -15,6 +15,12 @@ bool voice_client_set_active(bool active);
 /** 是否有用户请求的语音会话（包含等待网络的状态）。 */
 bool voice_client_is_active(void);
 
+/** 请求打断当前回答并恢复收音，由语音任务执行，不阻塞 UI。 */
+void voice_client_interrupt(void);
+
+/** 由 LVGL 线程消费最新语音状态，网络回调不等待界面锁。 */
+void voice_client_update_ui(void);
+
 #ifdef __cplusplus
 }
 #endif

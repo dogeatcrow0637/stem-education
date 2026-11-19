@@ -55,6 +55,13 @@ config EPW_VOICE_TOKEN
         Optional Bearer token for xiaozhi-server. Keep the real value in
         sdkconfig.local (not committed).
 
+config EPW_VOICE_BARGE_IN
+    bool "Enable experimental AEC speech interruption"
+    default n
+    help
+        Enable only after calibrating echo cancellation on the actual enclosure.
+        Disabled by default so speaker echo cannot truncate a reply.
+
 config EPW_NURSERY_BASE
     string "Nursery catalog base URL"
     default ""

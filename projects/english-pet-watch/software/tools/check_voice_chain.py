@@ -5,6 +5,7 @@ import asyncio
 import json
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -25,31 +26,46 @@ async def fixture(text, directory, index):
     return result.stdout
 
 
-async def send_audio(socket, pcm):
+async def send_audio(socket, pcm, timeline=None):
     encoder = opuslib_next.Encoder(16000, 1, opuslib_next.APPLICATION_AUDIO)
     frame_bytes = 1920  # 60ms at 16kHz / mono / int16
     pcm = bytes(frame_bytes * 5) + pcm + bytes(frame_bytes * 35)
+    speech_end = len(pcm) - frame_bytes * 35
     for offset in range(0, len(pcm), frame_bytes):
         frame = pcm[offset:offset + frame_bytes].ljust(frame_bytes, b"\0")
         await socket.send(encoder.encode(frame, 960))
         await asyncio.sleep(0.06)
+        if timeline is not None and offset + frame_bytes >= speech_end:
+            timeline.setdefault("speech_end", time.monotonic())
 
 
-async def receive_turn(socket):
+async def receive_turn(socket, timeline=None):
     result = {"asr": False, "llm_event": False, "tts_start": False,
-              "tts_text": False, "tts_stop": False, "opus_packets": 0, "pcm_bytes": 0}
+              "tts_text": False, "tts_stop": False, "opus_packets": 0, "pcm_bytes": 0,
+              "asr_partials": 0, "llm_snapshots": 0}
+    started = time.monotonic()
+    times = {}
     decoder = opuslib_next.Decoder(16000, 1)
     async for raw in socket:
         if isinstance(raw, bytes):
+            times.setdefault("first_audio", time.monotonic())
             pcm = decoder.decode(raw, 1920)
             result["opus_packets"] += 1
             result["pcm_bytes"] += len(pcm)
             continue  # 没有输出设备，也不把合成音频发送给手表。
         message = json.loads(raw)
         if message.get("type") == "stt":
-            result["asr"] |= bool(message.get("text"))
+            if message.get("final") is False:
+                result["asr_partials"] += 1
+                times.setdefault("first_asr_partial", time.monotonic())
+            else:
+                result["asr"] |= bool(message.get("text"))
+                times.setdefault("final_asr", time.monotonic())
         elif message.get("type") == "llm":
             result["llm_event"] = True
+            if message.get("state") == "partial" and message.get("text"):
+                result["llm_snapshots"] += 1
+                times.setdefault("first_llm_text", time.monotonic())
         elif message.get("type") == "tts":
             state = message.get("state")
             if state == "start":
@@ -58,13 +74,18 @@ async def receive_turn(socket):
                 result["tts_text"] |= bool(message.get("text"))
             elif state == "stop":
                 result["tts_stop"] = True
+                times["tts_complete"] = time.monotonic()
                 break
     assert all(result[k] for k in ("asr", "tts_start", "tts_text", "tts_stop")), result
     assert result["opus_packets"] > 0 and result["pcm_bytes"] > 0, result
+    result["from_start_ms"] = {key: round((value - started) * 1000) for key, value in times.items()}
+    if timeline and "speech_end" in timeline:
+        result["after_speech_ms"] = {key: round((value - timeline["speech_end"]) * 1000) for key, value in times.items()}
+    result["decoded_audio_ms"] = round(result["pcm_bytes"] / 32)
     return result
 
 
-async def check(url):
+async def check(url, require_stream=False):
     # 固定的合成句子，无环境录音、无个人数据。
     questions = ["你好，请只说一句简短的中文问候。", "请告诉我一加一等于几。"]
     with tempfile.TemporaryDirectory(prefix="epw-silent-") as temporary:
@@ -72,6 +93,7 @@ async def check(url):
         headers = {"Device-Id": "epw-silent-" + uuid.uuid4().hex[:12], "Protocol-Version": "1"}
         async with websockets.connect(url, additional_headers=headers, max_size=65536) as socket:
             await socket.send(json.dumps({"type": "hello", "version": 1, "transport": "websocket",
+                "features": {"text_stream": True},
                 "audio_params": {"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60}}))
             hello = json.loads(await asyncio.wait_for(socket.recv(), 15))
             assert hello.get("type") == "hello" and hello.get("session_id"), "missing server hello"
@@ -79,10 +101,13 @@ async def check(url):
             for index, pcm in enumerate(frames):
                 await socket.send(json.dumps({"type": "listen", "state": "start", "mode": "auto", "session_id": session}))
                 await asyncio.sleep(0.5)
-                receiver = asyncio.create_task(receive_turn(socket))
+                timeline = {}
+                receiver = asyncio.create_task(receive_turn(socket, timeline))
                 try:
-                    await send_audio(socket, pcm)
+                    await send_audio(socket, pcm, timeline)
                     result = await asyncio.wait_for(receiver, 60)
+                    if require_stream:
+                        assert result["asr_partials"] > 0 and result["llm_snapshots"] > 0, result
                 finally:
                     if not receiver.done():
                         receiver.cancel()
@@ -94,5 +119,6 @@ async def check(url):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="ws://127.0.0.1:8000/xiaozhi/v1/")
+    parser.add_argument("--require-stream", action="store_true", help="同时要求 ASR 中间结果与模型文字快照")
     args = parser.parse_args()
-    asyncio.run(asyncio.wait_for(check(args.url), 180))
+    asyncio.run(asyncio.wait_for(check(args.url, args.require_stream), 180))

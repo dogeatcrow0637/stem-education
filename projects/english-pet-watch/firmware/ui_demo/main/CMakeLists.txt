@@ -1,11 +1,11 @@
-# 50 行 RGB565 内部单缓冲（约 46KB），启动时预分配，避免 PSRAM 刷屏的临时 DMA 拷贝。
-# 保持较大分块以降低 SPI 提交次数；托管 BSP 更新后仍在配置阶段幂等应用。
+# 两块 24 行 RGB565 内部缓冲（合计约 45KB），DMA 传输与下一块绘制重叠。
+# 总内存小于原 50 行单缓冲；托管 BSP 更新后仍在配置阶段幂等应用。
 set(EPW_BSP_SRC "${CMAKE_CURRENT_LIST_DIR}/../managed_components/waveshare__esp32_s3_touch_amoled_1_75c/esp32_s3_touch_amoled_1_75c.c")
 if(EXISTS "${EPW_BSP_SRC}")
     file(READ "${EPW_BSP_SRC}" _epw_bsp_src)
-    string(REGEX REPLACE "[.]buffer_height = (10|50),[^\r\n]*" ".buffer_height = 50," _epw_bsp_patched "${_epw_bsp_src}")
+    string(REGEX REPLACE "[.]buffer_height = (10|24|50),[^\r\n]*" ".buffer_height = 24," _epw_bsp_patched "${_epw_bsp_src}")
     string(REPLACE ".use_psram = true," ".use_psram = false," _epw_bsp_patched "${_epw_bsp_patched}")
-    string(REPLACE ".require_double_buffer = true," ".require_double_buffer = false," _epw_bsp_patched "${_epw_bsp_patched}")
+    string(REPLACE ".require_double_buffer = false," ".require_double_buffer = true," _epw_bsp_patched "${_epw_bsp_patched}")
     # 双麦立体声的每块 DMA 控制在 480 字节，避免联网后再次申请大块内部 RAM。
     if(NOT _epw_bsp_patched MATCHES "chan_cfg.dma_frame_num = 120;")
         string(REPLACE "chan_cfg.auto_clear = true;" "chan_cfg.dma_frame_num = 120;\n    chan_cfg.auto_clear = true;" _epw_bsp_patched "${_epw_bsp_patched}")
@@ -20,7 +20,7 @@ if(EXISTS "${EPW_BSP_SRC}")
         _epw_bsp_patched "${_epw_bsp_patched}")
     if(NOT _epw_bsp_patched STREQUAL _epw_bsp_src)
         file(WRITE "${EPW_BSP_SRC}" "${_epw_bsp_patched}")
-        message(STATUS "epw: patched BSP to a 50-line internal single draw buffer")
+        message(STATUS "epw: patched BSP to two 24-line internal draw buffers")
     endif()
 endif()
 
@@ -46,7 +46,7 @@ if(EXISTS "${EPW_I2S_SRC}")
 endif()
 
 idf_component_register(
-    SRCS "main.c" "ui.c" "power.c" "wifi.c" "shot.c" "button.c" "doubao_bridge.c"
+    SRCS "main.c" "display_sync.c" "ui.c" "power.c" "wifi.c" "shot.c" "button.c" "doubao_bridge.c"
          "audio.c" "voice_client.c" "voice_barge.c" "weather.c" "nursery.c" "watch_system.c"
          "assets/epw_cjk_16.c" "assets/epw_cjk_20.c" "assets/epw_cjk_28.c" "assets/epw_time_150.c"
          "assets/pip_faces.c"

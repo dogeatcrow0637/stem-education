@@ -1,5 +1,7 @@
 # host · 服务端与网页控制台
 
+Mimi 的 ASR 预览、模型文字推送及 EdgeTTS 增量转码修复，见 [`streaming/README.md`](streaming/README.md)，含部署、验证、备份与回滚。
+
 > 适用版本：xiaozhi-esp32-server（2026-11）　|　最后更新：2026-11-13
 > 本项目没有自研桌面程序；“上位机”= 语音服务端 + 可选的智控台网页。
 

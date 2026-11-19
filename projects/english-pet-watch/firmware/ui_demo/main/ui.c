@@ -72,8 +72,7 @@ extern const lv_font_t epw_time_150;
 #define APP_ROOT_H         APP_ICON_D
 #define APP_ICON_MIN_D     2
 #define APP_GRID_STEP      116
-#define APP_PAN_OVERSHOOT  16
-#define APP_GRID_DRAG_TH   16
+#define APP_GRID_DRAG_TH   8
 
 static const char *TAG = "epw-ui";
 
@@ -212,6 +211,13 @@ static lv_obj_t *s_app_icons[APP_COUNT];
 static lv_draw_buf_t *s_app_art[APP_COUNT];
 static lv_draw_buf_t *s_app_scaled[APP_COUNT];
 static int s_app_pixel_size[APP_COUNT];
+/* 每个尺寸保存逐行 RGB565 游程；只占 PSRAM，不增加拖动期分配。 */
+#define APP_SCALE_CACHE_BYTES (1536 * 1024)
+typedef struct {
+    uint32_t offset[APP_COUNT][APP_ICON_D + 1];
+    uint16_t runs[];
+} app_scale_cache_t;
+static app_scale_cache_t *s_app_scale_cache;
 static lv_obj_t *s_tools, *s_settings_page, *s_timer_page, *s_timer_value, *s_timer_hint;
 static lv_obj_t *s_timer_action, *s_timer_reset_label;
 static lv_obj_t *s_idle_options[6];
@@ -3845,6 +3851,7 @@ static uint16_t app_mix_rgb565(uint16_t a, uint16_t b, unsigned weight)
 static void app_resize_rgb565(const lv_draw_buf_t *src, lv_draw_buf_t *dst, int size)
 {
     uint16_t sample[APP_ICON_D], fraction[APP_ICON_D];
+    uint16_t rows[2][APP_ICON_D], output[APP_ICON_D];
     int width = src->header.w;
     for (int x = 0; x < size; x++) {
         unsigned position = x * (width - 1) * 256u / (size - 1);
@@ -3852,14 +3859,17 @@ static void app_resize_rgb565(const lv_draw_buf_t *src, lv_draw_buf_t *dst, int 
         fraction[x] = position & 255;
     }
     for (int y = 0; y < size; y++) {
-        uint16_t *out = (uint16_t *)(dst->data + y * dst->header.stride);
+        uint8_t *destination = dst->data + y * dst->header.stride;
         if (size == width) {
-            memcpy(out, src->data + y * src->header.stride, size * 2);
+            memcpy(destination, src->data + y * src->header.stride, size * 2);
             continue;
         }
         int row = sample[y], next = row + (row + 1 < width);
-        const uint16_t *top = (const uint16_t *)(src->data + row * src->header.stride);
-        const uint16_t *bottom = (const uint16_t *)(src->data + next * src->header.stride);
+        /* 在内部栈上插值，PSRAM 只做连续行拷贝，避免逐像素随机读写。 */
+        memcpy(rows[0], src->data + row * src->header.stride, width * 2);
+        memcpy(rows[1], src->data + next * src->header.stride, width * 2);
+        const uint16_t *top = rows[0], *bottom = rows[1];
+        uint16_t *out = output;
         for (int x = 0; x < size; x++) {
             int col = sample[x], right = col + (col + 1 < width);
             uint16_t tl = top[col], tr = top[right], bl = bottom[col], br = bottom[right];
@@ -3872,14 +3882,73 @@ static void app_resize_rgb565(const lv_draw_buf_t *src, lv_draw_buf_t *dst, int 
             uint16_t b = app_mix_rgb565(bl, br, fraction[x]);
             out[x] = app_mix_rgb565(a, b, fraction[y]);
         }
+        memcpy(destination, output, size * 2);
     }
+}
+
+static bool app_scale_cache_restore(int i, lv_draw_buf_t *dst, int size)
+{
+    if (!s_app_scale_cache || !s_app_scale_cache->offset[i][size]) return false;
+    const uint16_t *runs = s_app_scale_cache->runs + s_app_scale_cache->offset[i][size];
+    uint16_t row[APP_ICON_D];
+    for (int y = 0; y < size; y++) {
+        int x = 0;
+        while (x < size) {
+            unsigned count = *runs++;
+            uint16_t color = *runs++;
+            for (unsigned n = 0; n < count; n++) row[x++] = color;
+        }
+        memcpy(dst->data + y * dst->header.stride, row, size * 2);
+    }
+    return true;
+}
+
+static void app_scale_cache_build(void)
+{
+    s_app_scale_cache = heap_caps_calloc(1, APP_SCALE_CACHE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_app_scale_cache) return;
+    size_t used = 1;
+    const size_t capacity = (APP_SCALE_CACHE_BYTES - sizeof(*s_app_scale_cache)) / 2;
+    unsigned cached = 0;
+    for (int size = app_icon_size((lv_point_t){CENTER_X, CENTER_Y}); size >= APP_ICON_MIN_D; size--) {
+        for (int i = 0; i < APP_COUNT; i++) {
+            lv_draw_buf_t *dst = s_app_scaled[i];
+            if (!s_app_art[i] || !dst ||
+                !lv_draw_buf_reshape(dst, LV_COLOR_FORMAT_RGB565, size, size, LV_STRIDE_AUTO)) continue;
+            app_resize_rgb565(s_app_art[i], dst, size);
+            size_t start = used;
+            bool fits = true;
+            for (int y = 0; y < size && fits; y++) {
+                uint16_t row[APP_ICON_D];
+                memcpy(row, dst->data + y * dst->header.stride, size * 2);
+                for (int x = 0; x < size; ) {
+                    int end = x + 1;
+                    while (end < size && row[end] == row[x]) end++;
+                    if (used + 2 > capacity) { fits = false; break; }
+                    s_app_scale_cache->runs[used++] = end - x;
+                    s_app_scale_cache->runs[used++] = row[x];
+                    x = end;
+                }
+            }
+            if (fits) {
+                s_app_scale_cache->offset[i][size] = start;
+                cached++;
+            } else used = start;
+        }
+        if (size % 8 == 0) vTaskDelay(1);
+    }
+    /* 预计算复用了当前绘图缓冲，下次布局必须重新填充。 */
+    for (int i = 0; i < APP_COUNT; i++) s_app_pixel_size[i] = 0;
+    ESP_LOGI(TAG, "app scales cached: %u, used=%u bytes, reserved=%u bytes", cached,
+             (unsigned)(sizeof(*s_app_scale_cache) + used * 2), APP_SCALE_CACHE_BYTES);
 }
 
 static void app_art_resize(int i, int size)
 {
     if (!s_app_scaled[i] || s_app_pixel_size[i] == size) return;
     if (!lv_draw_buf_reshape(s_app_scaled[i], LV_COLOR_FORMAT_RGB565, size, size, LV_STRIDE_AUTO)) return;
-    app_resize_rgb565(s_app_art[i], s_app_scaled[i], size);
+    if (!app_scale_cache_restore(i, s_app_scaled[i], size))
+        app_resize_rgb565(s_app_art[i], s_app_scaled[i], size);
     lv_image_cache_drop(s_app_scaled[i]);
     lv_image_set_src(s_app_icons[i], s_app_scaled[i]);
     s_app_pixel_size[i] = size;
@@ -3899,8 +3968,12 @@ static void apps_layout_icons(void)
         lv_obj_remove_flag(icon, LV_OBJ_FLAG_HIDDEN);
         if (s_app_art[i]) {
             app_art_resize(i, size);
+            /* 坐标与尺寸一次提交，避免四次样式刷新。 */
+            lv_obj_enable_style_refresh(false);
             lv_obj_set_size(icon, size, size);
             lv_obj_set_pos(icon, center.x - size / 2, center.y - size / 2);
+            lv_obj_enable_style_refresh(true);
+            lv_obj_refresh_style(icon, LV_PART_MAIN, LV_STYLE_PROP_ANY);
         } else {
             /* 内存不足时保留可用的矢量图标。 */
             int scale = size * 256 / APP_ICON_D;
@@ -3952,13 +4025,12 @@ static void app_open_index(int idx)
     }
 }
 
-/* 只允许中心落在内层 3×3；边缘阻尼，避免拖出空白区域。 */
+/* 按住时不钳制手指位移；松手后才回到内层 3×3 的停靠点。 */
 static int app_pan_bound(int value, bool elastic)
 {
     if (!elastic)
         return LV_CLAMP(-1, (int)lroundf((float)value / APP_GRID_STEP), 1) * APP_GRID_STEP;
-    int bounded = LV_CLAMP(-APP_GRID_STEP, value, APP_GRID_STEP);
-    return bounded + LV_CLAMP(-APP_PAN_OVERSHOOT, (value - bounded) / 4, APP_PAN_OVERSHOOT);
+    return value;
 }
 
 static void app_pan_anim_cb(void *var, int32_t value)
@@ -3983,8 +4055,8 @@ static void apps_settle_bounds(void)
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_apps);
     lv_anim_set_values(&a, 0, 256);
-    lv_anim_set_duration(&a, 180);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_duration(&a, 220);
+    lv_anim_set_path_cb(&a, lv_anim_path_overshoot);
     lv_anim_set_exec_cb(&a, app_pan_anim_cb);
     lv_anim_start(&a);
 }
@@ -4031,8 +4103,11 @@ static void apps_touch_cb(lv_event_t *e)
         if (dx * dx + dy * dy > APP_GRID_DRAG_TH * APP_GRID_DRAG_TH)
             s_app_drag_moved = true;
         if (s_app_drag_moved) {
-            s_app_pan.x = app_pan_bound(s_app_pan_start.x + dx, true);
-            s_app_pan.y = app_pan_bound(s_app_pan_start.y + dy, true);
+            /* 手指位移取九成，增加轻阻尼；不限制越界范围。 */
+            lv_point_t next = {app_pan_bound(s_app_pan_start.x + dx * 9 / 10, true),
+                               app_pan_bound(s_app_pan_start.y + dy * 9 / 10, true)};
+            if (next.x == s_app_pan.x && next.y == s_app_pan.y) return;
+            s_app_pan = next;
             apps_layout_icons();
         }
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
@@ -4043,6 +4118,11 @@ static void apps_touch_cb(lv_event_t *e)
         if (dx * dx + dy * dy > APP_GRID_DRAG_TH * APP_GRID_DRAG_TH)
             s_app_drag_moved = true;
         if (s_app_drag_moved || code == LV_EVENT_PRESS_LOST) {
+            if (code == LV_EVENT_RELEASED) {
+                s_app_pan.x = app_pan_bound(s_app_pan_start.x + dx * 9 / 10, true);
+                s_app_pan.y = app_pan_bound(s_app_pan_start.y + dy * 9 / 10, true);
+                apps_layout_icons();
+            }
             apps_settle_bounds();
         } else {
             apps_open_at(p);
@@ -4147,7 +4227,7 @@ static lv_obj_t *app_icon_create(lv_obj_t *parent, int kind)
     lv_obj_delete(root);
     lv_obj_t *image = lv_image_create(parent);
     lv_image_set_src(image, s_app_scaled[kind] ? s_app_scaled[kind] : s_app_art[kind]);
-    lv_image_set_inner_align(image, LV_IMAGE_ALIGN_STRETCH);
+    lv_image_set_inner_align(image, s_app_scaled[kind] ? LV_IMAGE_ALIGN_CENTER : LV_IMAGE_ALIGN_STRETCH);
     return image;
 }
 
@@ -4173,6 +4253,7 @@ static void build_apps(void)
         s_app_icons[i] = app_icon_create(s_apps, i);
 
     }
+    app_scale_cache_build();
     size_t bytes = 0;
     int cached = 0;
     for (int i = 0; i < APP_COUNT; i++) {
@@ -4806,8 +4887,15 @@ static void pet_text_set(const char *text)
     if (strcmp(s_pet_text, text) == 0) return;
     /* 连续识别或回复追加文字时，保留已显示的进度。 */
     if (strncmp(text, s_pet_text, strlen(s_pet_text)) != 0) {
-        s_pet_text_start = s_pet_text_end = 0;
-        lv_label_set_text(s_pet_bubble_label, "");
+        size_t length = strlen(s_pet_text), dropped;
+        for (dropped = 1; dropped < length; dropped++) {
+            if ((s_pet_text[dropped] & 0xC0) != 0x80 &&
+                strncmp(s_pet_text + dropped, text, length - dropped) == 0) break;
+        }
+        /* 长回答的尾部窗口前移时，沿用重叠部分的显示进度。 */
+        s_pet_text_end = s_pet_text_end > dropped ? s_pet_text_end - dropped : 0;
+        s_pet_text_start = s_pet_text_start > dropped ? s_pet_text_start - dropped : 0;
+        if (!s_pet_text_end) lv_label_set_text(s_pet_bubble_label, "");
     }
     snprintf(s_pet_text, sizeof(s_pet_text), "%s", text);
 }
@@ -4838,16 +4926,12 @@ static void pet_apply(ui_pet_state_t state, const char *text)
     if ((int)state < 0 || state >= UI_PET_STATE_COUNT) {
         state = UI_PET_IDLE;
     }
+    bool same_state = s_pet_state == state;
     s_pet_state = state;
 
     if (s_pet == NULL) {
         return;
     }
-
-    lv_color_t accent = pet_accent(state);
-    lv_image_set_src(s_pet_img, pet_face(state));
-    lv_obj_set_style_text_color(s_pet_mood, accent, 0);
-    lv_label_set_text(s_pet_mood, pet_mood_cn(state));
 
     const char *line = (text != NULL && text[0] != '\0')
                            ? text : pet_default_text(state);
@@ -4856,6 +4940,12 @@ static void pet_apply(ui_pet_state_t state, const char *text)
         line = "喵～ 你好呀！我是 Mimi。";
     }
     pet_text_set(line);
+    /* 流式更新只追加文字，同一状态不重启动画或重绘整张猫脸。 */
+    if (same_state && voice_client_is_active()) return;
+    lv_color_t accent = pet_accent(state);
+    lv_image_set_src(s_pet_img, pet_face(state));
+    lv_obj_set_style_text_color(s_pet_mood, accent, 0);
+    lv_label_set_text(s_pet_mood, pet_mood_cn(state));
     lv_obj_set_style_border_color(s_pet_bubble, accent, 0);
     lv_obj_set_style_bg_color(s_pet_glow, accent, 0);
 
@@ -4885,7 +4975,10 @@ static void pet_anim_timer_cb(lv_timer_t *timer)
         return;
     }
 
-    pet_text_step();
+    voice_client_update_ui();
+    /* 快速到达的文字不应在 80ms/字的动画后排成长队。 */
+    int steps = voice_client_is_active() ? 4 : 1;
+    for (int n = 0; n < steps && s_pet_text[s_pet_text_end]; n++) pet_text_step();
     s_pet_phase++;
     int ph = s_pet_phase;
     int bob = 0;
@@ -4970,13 +5063,16 @@ static void pet_anim_timer_cb(lv_timer_t *timer)
 
 static void pet_touch_cb(lv_event_t *e)
 {
-    if (voice_client_is_active()) return;
     /* 长按触发后 LVGL 还会补发 CLICKED，这里吞掉，避免“想”立刻变“摸头” */
     if (s_pet_long_pressed) {
         s_pet_long_pressed = false;
         return;
     }
     if (tap_ignore(e)) {
+        return;
+    }
+    if (voice_client_is_active()) {
+        voice_client_interrupt();
         return;
     }
     if (s_pet_state == UI_PET_LOVE) {
@@ -6217,6 +6313,8 @@ void ui_init(void)
 
     lv_indev_t *indev = bsp_display_get_input_dev();
     if (indev != NULL) {
+        lv_timer_t *read_timer = lv_indev_get_read_timer(indev);
+        if (read_timer) lv_timer_set_period(read_timer, 10);
         lv_indev_set_long_press_time(indev, 500);
         /* 圆屏上 50px 手势门槛偏低且要求每帧 3px 速度，慢滑常常识别不到；
          * 收到 30px / 1px 后下拉控制中心、右滑关闭等手势更跟手 */

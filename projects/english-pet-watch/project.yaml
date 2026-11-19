@@ -26,6 +26,8 @@ external:
   audio_codec: "https://components.espressif.com/components/espressif/esp_audio_codec"
   audio_frontend: "https://github.com/espressif/esp-sr" # 2.6.2，AEC/VAD，不使用语音模型
   codec_device: "https://github.com/espressif/esp-adf/tree/master/components/esp_codec_dev"
+  edge_tts: "https://github.com/rany2/edge-tts" # 沿用服务端依赖，LGPL-3.0；不复制其源码
+  ffmpeg: "https://ffmpeg.org/legal.html" # 沿用已安装二进制，LGPL/GPL 取决于构建选项
 
 board:
   sku: "esp32-s3-touch-amoled-1.75c"
@@ -42,7 +44,7 @@ board:
 
 license:
   hardware: "开发板为商品；本项目自绘外壳与文档建议 CERN-OHL-W-2.0（待定）"
-  software: "xiaozhi-esp32：MIT；xiaozhi-esp32-server：MIT；cJSON：MIT；esp_codec_dev：Apache-2.0；ESP-SR：Espressif MIT（限 Espressif 产品）；esp_audio_codec：Espressif Modified MIT（限 Espressif 产品，均以组件 LICENSE 为准）"
+  software: "xiaozhi-esp32：MIT；xiaozhi-esp32-server：MIT；cJSON：MIT；esp_codec_dev：Apache-2.0；ESP-SR：Espressif MIT（限 Espressif 产品）；esp_audio_codec：Espressif Modified MIT（限 Espressif 产品）；edge-tts：LGPLv3（字幕模块另有 MIT）；FFmpeg：LGPL/GPL 取决于构建选项，均以组件 LICENSE 为准"
   note: "保留上游版权声明；不引入来源不明的模型权重"
 
 cost:

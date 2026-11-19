@@ -11,6 +11,7 @@
 #include "lvgl.h"
 #include "button.h"
 #include "audio.h"
+#include "display_sync.h"
 #include "doubao_bridge.h"
 #include "nursery.h"
 #include "power.h"
@@ -50,8 +51,9 @@ void app_main(void)
     if (!audio_init()) ESP_LOGW(TAG, "audio preallocation failed; voice will retry on demand");
 
     /* 屏幕 + 触摸 + LVGL */
-    bsp_display_start();
+    lv_display_t *display = bsp_display_start();
     bsp_display_lock(-1);
+    display_sync_init(display);
     ui_boot_logo_show();
     bsp_display_brightness_set(80);
     bsp_display_unlock();

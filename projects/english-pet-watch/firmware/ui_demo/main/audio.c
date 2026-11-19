@@ -152,7 +152,8 @@ int audio_playback_write(const void *pcm, size_t bytes)
         ret = (int)bytes;
         while (remaining) {
             size_t n = remaining < 256 ? remaining : 256;
-            for (size_t i = 0; i < n; i++) stereo[2*i] = stereo[2*i+1] = input[i];
+            /* 静音时连数字输出也置零，避免只依赖编解码器的音量映射。 */
+            for (size_t i = 0; i < n; i++) stereo[2*i] = stereo[2*i+1] = s_play_volume ? input[i] : 0;
             int err = esp_codec_dev_write(s_spk, stereo, (int)(n * 4));
             if (err != ESP_CODEC_DEV_OK) {
                 ESP_LOGW(TAG, "speaker write failed: %d", err);

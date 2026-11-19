@@ -30,6 +30,8 @@
 
 ## 3. 延迟测量（手工版）
 
+自动静默检查：在语音服务器容器内执行 `python data/epw-stream-update/tools/check_voice_chain.py --require-stream`。工具仅发送两句固定合成音频，记录 ASR 中间结果、模型文字快照、最终识别、首音频与 TTS 完成时间并验证 Opus 可完整解码；不采集麦克风、不播放。依赖沿用容器已有的 `edge_tts`、`opuslib_next`、`websockets` 和 ffmpeg。部署及限制见 [`../host/streaming/README.md`](../host/streaming/README.md)。
+
 1. 服务端日志打时间戳；
 2. 说一句 “Hello”，记录“说完”到“听到第一声”的秒数；
 3. 连续 5 次，去掉最高最低，记平均；
