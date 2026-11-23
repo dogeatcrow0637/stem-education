@@ -7,7 +7,7 @@ name_en: "English Pet Watch"
 status: "UI 原型（真机验证）"
 direction: ["语音交互", "大模型", "儿童英语", "可穿戴"]
 created: "2026-11-13"
-updated: "2026-11-18"
+updated: "2026-11-20"
 owner: ""
 
 platform:
@@ -19,6 +19,7 @@ external:
   repo: "https://github.com/78/xiaozhi-esp32"
   wiki: "https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75C"
   video: ""
+  lunar_calendar: "https://www.hko.gov.hk/sc/gts/time/conversion.htm" # 政府天文台日期事实，非商业教学用途，条件见参考资源
   weather: "https://www.nmc.cn/publish/forecast/AZJ/xiaoshan.html"
   power_reference: "https://github.com/lewisxhe/XPowersLib" # MIT，仅寄存器参考，未引入库
   audio_schematic: "https://files.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75C/ESP32-S3-Touch-AMOLED-1.75C-schematic.pdf" # 厂商资料，仅接线参考

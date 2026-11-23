@@ -1063,7 +1063,7 @@ static int play_song(int index)
             .eos = eos,
         };
 
-        while ((int)raw.consumed < read || (eos && idle_rounds < 4)) {
+        while (raw.len > 0 || (eos && idle_rounds < 4)) {
             ev = pump_commands(false);
             if (ev != SONG_CONTINUE) {
                 result = ev;
@@ -1092,6 +1092,16 @@ static int play_song(int index)
                 failed = true;
                 goto out;
             }
+            if (raw.consumed > raw.len ||
+                (raw.len > 0 && raw.consumed == 0 && out.decoded_size == 0)) {
+                status_set("解码失败");
+                failed = true;
+                goto out;
+            }
+            /* consumed 是本次消耗量，下一次只能传尚未解码的输入。 */
+            raw.buffer += raw.consumed;
+            raw.len -= raw.consumed;
+            raw.consumed = 0;
             if (!resampler_ready && out.decoded_size > 0) {
                 if (esp_audio_simple_dec_get_info(s_dec, &info) == ESP_AUDIO_ERR_OK) {
                     resampler_ready = true;

@@ -1,6 +1,7 @@
 /* 宠物页左滑启动，退出停止；上传 Opus，回复文字与语音同步播放。 */
 #include "voice_client.h"
 #include "voice_barge.h"
+#include "watch_control.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -33,6 +34,8 @@ static const char *TAG = "epw-voice";
 #define VOICE_SAMPLE_RATE 16000
 #define VOICE_MAX_PCM     1920
 #define VOICE_MAX_OPUS    2048
+/* 当前服务端每包 60ms，预留 1920ms 吸收网络与流式合成抖动。 */
+#define VOICE_PREBUFFER_PACKETS 32
 /* esp_audio_codec 的编码栈建议约 40KB，放 PSRAM 避免挤占内部 DMA 内存。 */
 #define VOICE_TASK_STACK  (40 * 1024)
 
@@ -56,11 +59,11 @@ static char s_session_id[96];
 /* 仅由 WebSocket 文本回调维护：情绪随首句一起呈现，本轮后续保持不变。 */
 static char s_reply_emotion[32];
 static bool s_reply_presented;
-static bool s_reply_streaming;
 
 typedef struct {
     unsigned epoch;
     bool has_text;
+    bool spoken;
     char emotion[32];
     char text[320];
 } voice_ui_update_t;
@@ -72,12 +75,23 @@ typedef struct {
     uint8_t data[];
 } voice_packet_t;
 static QueueHandle_t s_tts_queue;
+typedef struct {
+    uint32_t at_samples;
+    char emotion[32];
+    char text[];
+} voice_caption_t;
+static QueueHandle_t s_caption_queue;
+static uint32_t s_tts_written_samples;
+/* 仅由 WebSocket 回调维护，拒绝倒序或越界时间戳。 */
+static uint32_t s_caption_received_ms;
 static atomic_bool s_tts_end;
 static atomic_bool s_drop_reply;
 static bool s_barge_ready;
 static void *s_dec;
 static uint8_t *s_tts_pcm;
 static bool s_tts_output;
+static bool s_tts_buffered;
+static bool s_control_complete;
 static void close_audio(void);
 static bool open_audio(void);
 
@@ -123,10 +137,10 @@ static bool send_json(const char *json)
     return esp_websocket_client_send_text(s_ws, json, len, pdMS_TO_TICKS(500)) == len;
 }
 
-static void pet_set(const char *emotion, const char *text)
+static void pet_post(const char *emotion, const char *text, bool spoken)
 {
     if (!session_current() || !s_ui_queue) return;
-    voice_ui_update_t update = {.epoch = s_session_epoch, .has_text = text != NULL};
+    voice_ui_update_t update = {.epoch = s_session_epoch, .has_text = text != NULL, .spoken = spoken};
     snprintf(update.emotion, sizeof(update.emotion), "%s", emotion);
     if (text) {
         /* 保留最新完整 UTF-8 字符，长回答不再被固定缓冲截掉尾部。 */
@@ -137,10 +151,53 @@ static void pet_set(const char *emotion, const char *text)
         voice_ui_update_t pending;
         if (xQueuePeek(s_ui_queue, &pending, 0) == pdTRUE && pending.epoch == update.epoch && pending.has_text) {
             update.has_text = true;
+            update.spoken = pending.spoken;
             memcpy(update.text, pending.text, sizeof(update.text));
         }
     }
     xQueueOverwrite(s_ui_queue, &update);
+}
+
+static void pet_set(const char *emotion, const char *text)
+{
+    pet_post(emotion, text, false);
+}
+
+static bool caption_enqueue(uint32_t at_ms, const char *text)
+{
+    size_t bytes = strlen(text);
+    if (bytes > 300) {
+        text += bytes - 300;
+        while ((*text & 0xC0) == 0x80) text++;
+        bytes = strlen(text);
+    }
+    if (!s_caption_queue || at_ms > 600000 || at_ms < s_caption_received_ms || !bytes || bytes > 300) return false;
+    voice_caption_t *caption = heap_caps_malloc(sizeof(*caption) + bytes + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!caption) return false;
+    caption->at_samples = at_ms * (VOICE_SAMPLE_RATE / 1000);
+    snprintf(caption->emotion, sizeof(caption->emotion), "%s", s_reply_emotion[0] ? s_reply_emotion : "speaking");
+    memcpy(caption->text, text, bytes + 1);
+    if (xQueueSend(s_caption_queue, &caption, 0) != pdTRUE) {free(caption); return false;}
+    s_caption_received_ms = at_ms;
+    return true;
+}
+
+static void caption_pump(void)
+{
+    voice_caption_t *caption;
+    while (s_caption_queue && xQueuePeek(s_caption_queue, &caption, 0) == pdTRUE &&
+           caption->at_samples <= s_tts_written_samples) {
+        if (xQueueReceive(s_caption_queue, &caption, 0) != pdTRUE) break;
+        pet_post(caption->emotion, caption->text, true);
+        free(caption);
+    }
+}
+
+static void captions_clear(void)
+{
+    voice_caption_t *caption;
+    while (s_caption_queue && xQueueReceive(s_caption_queue, &caption, 0) == pdTRUE) free(caption);
+    s_tts_written_samples = 0;
 }
 
 void voice_client_update_ui(void)
@@ -151,6 +208,7 @@ void voice_client_update_ui(void)
          (!atomic_load(&s_requested) && update.epoch + 1 == atomic_load(&s_epoch)))) {
         ui_activity();
         ui_pet_set_state_by_name(update.emotion, update.has_text ? update.text : NULL);
+        if (update.spoken) ui_pet_reveal_text();
     }
 }
 
@@ -198,6 +256,8 @@ static void tts_close(void)
 {
     if (s_tts_output) audio_playback_close();
     s_tts_output = false;
+    s_tts_buffered = false;
+    captions_clear();
     s_barge_ready = false;
     if (s_dec) esp_opus_dec_close(s_dec);
     s_dec = NULL;
@@ -210,6 +270,7 @@ static void tts_close(void)
 
 static bool tts_interrupt(bool with_preroll)
 {
+    watch_control_finish(false);
     atomic_store(&s_drop_reply, true);
     tts_close();
     atomic_store(&s_reply_active, false);
@@ -241,7 +302,10 @@ static bool tts_pump(void)
 {
     if (audio_get_playback_volume() != 0 && !CONFIG_EPW_VOICE_BARGE_IN) s_barge_ready = false;
     voice_packet_t *packet = NULL;
-    if (xQueueReceive(s_tts_queue, &packet, 0) == pdTRUE) {
+    unsigned queued = uxQueueMessagesWaiting(s_tts_queue);
+    if (!queued) s_tts_buffered = false;
+    if (queued >= VOICE_PREBUFFER_PACKETS || atomic_load(&s_tts_end)) s_tts_buffered = true;
+    if (s_tts_buffered && xQueueReceive(s_tts_queue, &packet, 0) == pdTRUE) {
         bool ok = true;
         if (s_dec == NULL) {
             esp_opus_dec_cfg_t cfg = ESP_OPUS_DEC_CONFIG_DEFAULT();
@@ -272,6 +336,10 @@ static bool tts_pump(void)
                 size_t bytes = frame.decoded_size - pos;
                 if (bytes > VOICE_BARGE_SAMPLES * 2) bytes = VOICE_BARGE_SAMPLES * 2;
                 ok = audio_playback_write(s_tts_pcm + pos, bytes) == (int)bytes;
+                if (ok) {
+                    s_tts_written_samples += bytes / 2;
+                    caption_pump();
+                }
                 if (ok && s_barge_ready) {
                     if (esp_codec_dev_read(s_mic, mic, bytes * 2) != ESP_CODEC_DEV_OK) {
                         s_barge_ready = false;
@@ -307,10 +375,14 @@ static bool tts_pump(void)
                 esp_codec_dev_read(s_mic, drain, sizeof(drain));
             }
         }
+        caption_pump();
         tts_close();
         atomic_store(&s_reply_active, false);
         ESP_LOGI(TAG, "TTS playback complete");
-        send_listen_start();
+        if (watch_control_pending()) {
+            s_control_complete = true;
+            voice_client_set_active(false);
+        } else send_listen_start();
         return true;
     }
     if (s_tts_output) {
@@ -349,7 +421,6 @@ static void handle_text(const char *data, size_t len)
             snprintf(s_session_id, sizeof(s_session_id), "%s", id);
             s_reply_emotion[0] = '\0';
             s_reply_presented = false;
-            s_reply_streaming = false;
             atomic_store(&s_drop_reply, false);
             atomic_store(&s_hello, true);
             atomic_store(&s_progress_tick, xTaskGetTickCount());
@@ -368,14 +439,18 @@ static void handle_text(const char *data, size_t len)
         return;
     }
     atomic_store(&s_progress_tick, xTaskGetTickCount());
-    if (strcmp(type, "stt") == 0 && text[0] != '\0') {
+    if (strcmp(type, "mcp") == 0) {
+        if (!watch_control_receive(cJSON_GetObjectItemCaseSensitive(json, "payload")))
+            ESP_LOGW(TAG, "MCP request unavailable");
+    } else if (strcmp(type, "stt") == 0 && !strncmp(text, "% ", 2)) {
+        /* 服务端的工具调试提示不作为新一轮用户语音。 */
+    } else if (strcmp(type, "stt") == 0 && text[0] != '\0') {
         bool partial = cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(json, "final"));
         atomic_store(&s_drop_reply, false);
         atomic_store(&s_reply_active, !partial);
         atomic_store(&s_listening, partial);
         s_reply_emotion[0] = '\0';
         s_reply_presented = false;
-        s_reply_streaming = false;
         pet_set(partial ? "listening" : "thinking", text);
         ESP_LOGI(TAG, "ASR text received");
     } else if (atomic_load(&s_drop_reply)) {
@@ -384,11 +459,6 @@ static void handle_text(const char *data, size_t len)
         const char *emotion = json_string(json, "emotion");
         if (!s_reply_presented && emotion[0] && strlen(emotion) < sizeof(s_reply_emotion))
             snprintf(s_reply_emotion, sizeof(s_reply_emotion), "%s", emotion);
-        if (strcmp(json_string(json, "state"), "partial") == 0 && text[0]) {
-            s_reply_streaming = s_reply_presented = true;
-            atomic_store(&s_have_reply, true);
-            pet_set(s_reply_emotion[0] ? s_reply_emotion : "speaking", text);
-        }
     } else if (strcmp(type, "tts") == 0) {
         const char *state = json_string(json, "state");
         if (strcmp(state, "start") == 0) {
@@ -396,13 +466,22 @@ static void handle_text(const char *data, size_t len)
             atomic_store(&s_reply_active, true);
             atomic_store(&s_tts_end, false);
             s_tts_packets = s_tts_bytes = 0;
+            s_caption_received_ms = 0;
         } else if (strcmp(state, "stop") == 0) {
             ESP_LOGI(TAG, "TTS received: %u packets, %u bytes", s_tts_packets, s_tts_bytes);
             atomic_store(&s_tts_end, true);
         } else if (strcmp(state, "sentence_start") == 0 && text[0] != '\0') {
             atomic_store(&s_have_reply, true);
             s_reply_presented = true;
-            if (!s_reply_streaming) pet_set(s_reply_emotion[0] ? s_reply_emotion : "speaking", text);
+            /* 旧服务端无词时间戳时，至少等对应句子的音频开始播放。 */
+            if (!caption_enqueue(s_tts_packets * 60u, text)) ESP_LOGW(TAG, "sentence caption unavailable");
+        } else if (strcmp(state, "word_boundary") == 0 && text[0]) {
+            const cJSON *at = cJSON_GetObjectItemCaseSensitive(json, "at_ms");
+            if (cJSON_IsNumber(at) && at->valuedouble >= 0 && at->valuedouble <= 600000 &&
+                at->valuedouble == (uint32_t)at->valuedouble && caption_enqueue((uint32_t)at->valuedouble, text)) {
+                atomic_store(&s_have_reply, true);
+                s_reply_presented = true;
+            } else ESP_LOGW(TAG, "invalid or unavailable word caption");
         }
     }
     cJSON_Delete(json);
@@ -426,6 +505,7 @@ static void ws_event_handler(void *arg, esp_event_base_t base, int32_t event_id,
         return;
     }
     if (event_id == WEBSOCKET_EVENT_CONNECTED) {
+        watch_control_new_connection();
         atomic_store(&s_connected, true);
         atomic_store(&s_hello, false);
         atomic_store(&s_listening, false);
@@ -433,7 +513,7 @@ static void ws_event_handler(void *arg, esp_event_base_t base, int32_t event_id,
         atomic_store(&s_have_reply, false);
         s_session_id[0] = '\0';
         send_json("{\"type\":\"hello\",\"version\":1,\"transport\":\"websocket\","
-                  "\"features\":{\"text_stream\":true},"
+                  "\"features\":{\"text_stream\":true,\"audio_text_sync\":true,\"mcp\":true},"
                   "\"audio_params\":{\"format\":\"opus\",\"sample_rate\":16000,"
                   "\"channels\":1,\"frame_duration\":60}}");
     } else if (event_id == WEBSOCKET_EVENT_DATA) {
@@ -594,6 +674,9 @@ static void voice_task(void *arg)
             upload_retries = 0;
             vTaskDelay(pdMS_TO_TICKS(100));
         }
+        watch_control_reset();
+        s_control_complete = false;
+        uint32_t control_since = 0;
         s_session_epoch = atomic_load(&s_epoch);
         s_message = heap_caps_calloc(1, sizeof(*s_message), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         uint8_t *pcm = NULL;
@@ -613,6 +696,16 @@ static void voice_task(void *arg)
         }
         while (ok && session_current() && wifi_get_state() == EPW_WIFI_CONNECTED) {
             uint32_t now = xTaskGetTickCount();
+            watch_control_poll(send_json);
+            if (watch_control_pending()) {
+                if (!control_since) control_since = now;
+                if ((uint32_t)(now - control_since) >= pdMS_TO_TICKS(45000)) {
+                    watch_control_finish(false);
+                    pet_set("sad", "操作等待超时，请重试。");
+                    voice_client_set_active(false);
+                    break;
+                }
+            } else control_since = 0;
             if (voice_wait_expired(now, hello_since)) {
                 pet_set("sad", "语音响应超时，请左滑重试。");
                 voice_client_set_active(false);
@@ -620,6 +713,7 @@ static void voice_task(void *arg)
             }
             if (atomic_load(&s_hello)) hello_since = now;
             if (atomic_exchange(&s_interrupt_requested, false) && atomic_load(&s_reply_active)) {
+                watch_control_finish(false);
                 if (!tts_interrupt(false)) {
                     pet_set("sad", "语音打断失败，请重试。");
                     voice_client_set_active(false);
@@ -723,6 +817,10 @@ static void voice_task(void *arg)
             pet_set("thinking", "等待网络…");
         }
         close_session();
+        /* 扬声器、麦克风和 WebSocket 都释放后，才进入播放器或关机确认页。 */
+        watch_control_finish(s_control_complete && !atomic_load(&s_requested) &&
+                             atomic_load(&s_epoch) == s_session_epoch + 1);
+        watch_control_reset();
         free(pcm);
         if (session_current()) vTaskDelay(pdMS_TO_TICKS(500));
     }
@@ -733,9 +831,14 @@ void voice_client_init(void)
     if (atomic_load(&s_ready) || CONFIG_EPW_VOICE_WS_URL[0] == '\0') {
         return;
     }
+    if (!watch_control_init()) {
+        ESP_LOGE(TAG, "control queue create failed");
+        return;
+    }
     if (s_tts_queue == NULL) s_tts_queue = xQueueCreate(64, sizeof(voice_packet_t *));
     if (s_ui_queue == NULL) s_ui_queue = xQueueCreate(1, sizeof(voice_ui_update_t));
-    if (s_tts_queue == NULL || s_ui_queue == NULL) {
+    if (s_caption_queue == NULL) s_caption_queue = xQueueCreate(32, sizeof(voice_caption_t *));
+    if (s_tts_queue == NULL || s_ui_queue == NULL || s_caption_queue == NULL) {
         ESP_LOGE(TAG, "reply queue create failed");
         return;
     }

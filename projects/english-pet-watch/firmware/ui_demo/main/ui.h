@@ -125,12 +125,22 @@ void ui_demo_toggle_pet(void);
  */
 void ui_pet_set_state(ui_pet_state_t state, const char *text);
 
+/* 立即显示当前文本前缀；仅由语音字幕进度调用，需持有显示锁。 */
+void ui_pet_reveal_text(void);
+
 /**
  * 豆包桥接入口：emotion 取 idle/happy/excited/thinking/speaking/sleepy/sad/love/listening。
  * 只更新宠物状态和台词，不主动打开宠物页；未知值按 idle 处理，text 可为 NULL。
  * 调用前需持有 LVGL 锁。
  */
 void ui_pet_set_state_by_name(const char *emotion, const char *text);
+
+/* 语音设备工具使用；调用方必须持有 LVGL 锁。 */
+int ui_watch_brightness(void);
+bool ui_watch_set_brightness(int value);
+bool ui_watch_open(const char *page);
+bool ui_watch_screen(const char *action);
+bool ui_watch_timer_start(unsigned seconds);
 
 #ifdef __cplusplus
 }

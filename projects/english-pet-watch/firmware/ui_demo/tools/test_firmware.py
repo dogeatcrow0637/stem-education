@@ -31,6 +31,170 @@ def run_c(source, json=False):
 
 
 class FirmwareTests(unittest.TestCase):
+    def test_production_voice_has_no_automatic_test_commands(self):
+        main = (MAIN / 'main.c').read_text()
+        voice = (MAIN / 'voice_client.c').read_text()
+        for source in (main, voice, (MAIN / 'watch_control.c').read_text()):
+            self.assertNotIn('QUICK_QA', source)
+            self.assertNotIn('qa_', source)
+        self.assertNotIn('voice_client_set_active(true)', main)
+        self.assertNotIn(r'\"detect\"', voice)
+
+    def test_lunar_calendar_boundaries_and_leap_month(self):
+        # 香港天文台 T2024e/T2025e/T2026e/T2033e/T2050e.txt 独立日期样例。
+        run_c((MAIN / 'lunar_date.c').read_text() + r"""
+#include <assert.h>
+#include <string.h>
+int main(void){
+ char out[64];
+ struct {int y,m,d;const char *text;} cases[]={
+  {2024,1,1,"农历 冬月二十"},{2024,2,9,"农历 腊月三十"},{2024,2,10,"农历 正月初一"},
+  {2024,2,29,"农历 正月二十"},{2025,1,29,"农历 正月初一"},
+  {2025,7,24,"农历 六月三十"},{2025,7,25,"农历 闰六月初一"},
+  {2025,8,22,"农历 闰六月廿九"},{2025,8,23,"农历 七月初一"},
+  {2026,2,17,"农历 正月初一"},{2026,11,20,"农历 十月十二"},
+  {2033,12,22,"农历 闰冬月初一"},{2050,12,31,"农历 冬月十八"}};
+ for(unsigned i=0;i<sizeof(cases)/sizeof(cases[0]);i++){
+  assert(lunar_date_format(cases[i].y,cases[i].m,cases[i].d,out,sizeof(out)));
+  assert(!strcmp(out,cases[i].text));
+ }
+ assert(!lunar_date_format(2023,12,31,out,sizeof(out)) && !out[0]);
+ assert(!lunar_date_format(2051,1,1,out,sizeof(out)));
+ assert(!lunar_date_format(2025,2,29,out,sizeof(out)));
+ assert(!lunar_date_format(2026,4,31,out,sizeof(out)));
+ assert(!lunar_date_format(2026,13,1,out,sizeof(out)));
+ assert(!lunar_date_format(2026,1,0,out,sizeof(out)));
+ assert(!lunar_date_format(2026,1,1,out,5) && !out[0]);
+ assert(!lunar_date_format(2026,1,1,NULL,0));
+ return 0;
+}
+""")
+
+    def test_dial_loading_orbit_and_pause(self):
+        source = r"""#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <math.h>
+typedef struct {int x,y,w,h,opa;} lv_obj_t;
+typedef int lv_timer_t;
+#define LV_UNUSED(x) (void)(x)
+static lv_obj_t dots[3][3],halo;
+static lv_obj_t *s_time_sparks[3][3],*s_time_halo=&halo,*s_time_loading=&halo;
+static bool s_screen_off,s_sleep_mode,s_center_open,s_home_snap_showing,s_nursery_open,busy,anim,visible=true;
+static int s_last_h=-1,calls;
+static bool pages_busy_except_center(void){return busy;}
+static bool page_anim_busy(void){return anim;}
+static bool lv_obj_is_visible(lv_obj_t *o){return visible;}
+static uint32_t lv_tick_get(void){return 900;}
+static void lv_obj_set_size(lv_obj_t *o,int w,int h){o->w=w;o->h=h;calls++;}
+static void lv_obj_set_pos(lv_obj_t *o,int x,int y){o->x=x;o->y=y;}
+static void lv_obj_set_style_bg_opa(lv_obj_t *o,int v,int p){o->opa=v;}
+"""
+        source += function('ui.c', 'static void dial_loading_frame(uint32_t tick)')
+        source += function('ui.c', 'static void dial_loading_cb(lv_timer_t *timer)')
+        source += r"""
+int main(void){
+ for(int i=0;i<3;i++)for(int j=0;j<3;j++)s_time_sparks[i][j]=&dots[i][j];
+ dial_loading_frame(0);int x=dots[0][0].x,y=dots[0][0].y;
+ dial_loading_frame(900);assert(x!=dots[0][0].x && y!=dots[0][0].y);
+ dial_loading_frame(3600);assert(x==dots[0][0].x && y==dots[0][0].y);
+ for(int t=0;t<3600;t+=50){dial_loading_frame(t);
+  assert(halo.opa>=12 && halo.opa<=32);
+  for(int i=0;i<3;i++)for(int j=0;j<3;j++){
+   assert(dots[i][j].x>=10 && dots[i][j].x+dots[i][j].w<=134);
+   assert(dots[i][j].y>=15 && dots[i][j].y+dots[i][j].h<=85);
+  }
+ }
+ bool *pause[]={&s_screen_off,&s_sleep_mode,&s_center_open,&s_home_snap_showing,&s_nursery_open,&busy,&anim};
+ for(int i=0;i<7;i++){*pause[i]=true;calls=0;dial_loading_cb(0);assert(!calls);*pause[i]=false;}
+ s_last_h=12;calls=0;dial_loading_cb(0);assert(!calls);s_last_h=-1;
+ visible=false;dial_loading_cb(0);assert(!calls);visible=true;
+ dial_loading_cb(0);assert(calls==9);
+ return 0;
+}
+"""
+        run_c(source)
+
+    def test_round_keyboard_shape_and_hit_region(self):
+        ui = (MAIN / 'ui.c').read_text()
+        shapes = ui[ui.index('static const lv_point_precise_t wifi_key_corner'):ui.index('static void wifi_pwd_shape_cb')]
+        run_c(r"""#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+typedef struct {int32_t x,y;} lv_point_precise_t;
+""" + shapes + r"""
+int main(void){
+ lv_point_precise_t p[18], q[18];
+ for(unsigned id=0;id<14;id++){
+  unsigned n=wifi_pwd_key_shape(id,p);
+  if(id>=9 || id%3==1){assert(n==0);continue;}
+  assert(n==18);
+  assert(wifi_pwd_shape_contains(p,n,74,36));
+  assert(!wifi_pwd_shape_contains(p,n,-1,36));
+  assert(!wifi_pwd_shape_contains(p,n,148,36));
+  int ox=id%3==0?8:311, oy=116+(id/3)*81;
+  for(unsigned i=0;i<n;i++){
+   int x=ox+p[i].x-233,y=oy+p[i].y-233;
+   assert(x*x+y*y<227*227);
+  }
+ }
+ wifi_pwd_key_shape(0,p);wifi_pwd_key_shape(8,q);
+ for(int i=0;i<18;i++){assert(p[i].x+q[i].x==147);assert(p[i].y+q[i].y==72);}
+ assert(!wifi_pwd_shape_contains(p,18,0,0));
+ assert(wifi_pwd_shape_contains(p,18,100,30));
+ wifi_pwd_key_shape(3,p);wifi_pwd_key_shape(5,q);
+ for(int i=0;i<18;i++){assert(p[i].x+q[i].x==147);assert(p[i].y==q[i].y);}
+ return 0;
+}
+""")
+
+    def test_nursery_decoder_advances_partial_input_and_rejects_stalls(self):
+        play = function('nursery.c', 'static int play_song(int index)')
+        loop = play[play.index('        while (raw.len > 0'):play.index('\n        if (eos) {')]
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#define SONG_CONTINUE 0
+#define EPW_NURSERY_PAUSED 2
+#define NURSERY_PCM_CAP 16
+#define ESP_AUDIO_ERR_OK 0
+#define ESP_AUDIO_ERR_BUFF_NOT_ENOUGH 1
+typedef int esp_audio_err_t;
+typedef struct {uint8_t *buffer;unsigned len,decoded_size,needed_size;}esp_audio_simple_dec_out_t;
+typedef struct {uint8_t *buffer;unsigned len,consumed;}raw_t;
+static int s_state,s_dec,mode,calls,outputs;
+static uint8_t s_pcm_out[16],input[6]={1,2,3,4,5,6};
+static int pump_commands(bool wait){return 0;}
+static void status_set(const char *s){}
+static int esp_audio_simple_dec_process(int d,raw_t *r,esp_audio_simple_dec_out_t *o){
+ assert(++calls<10);
+ if(mode==1){r->consumed=0;return 0;}
+ if(mode==2){r->consumed=r->len+1;return 0;}
+ if(r->len){assert(r->buffer==input+outputs*2);assert(r->len==6-outputs*2);
+  r->consumed=2;o->decoded_size=4;outputs++;}
+ return 0;
+}
+static int esp_audio_simple_dec_get_info(int d,int *info){return 0;}
+static bool resample_chunk(uint8_t *p,int n,int *info,int *rs){return true;}
+static bool decode(bool eos){
+ raw_t raw={input,6,0};bool failed=false,resampler_ready=false;
+ int idle_rounds=0,ev=0,result=0,info=0,rs=0;
+'''
+        source += loop
+        source += r'''
+out:return !failed;
+}
+int main(void){
+ assert(decode(false) && calls==3 && outputs==3);
+ calls=outputs=0;assert(decode(true) && calls==7 && outputs==3);
+ calls=outputs=0;mode=1;assert(!decode(false) && calls==1);
+ calls=outputs=0;mode=2;assert(!decode(false) && calls==1);
+ return 0;
+}
+'''
+        run_c(source)
+
     def test_audio_dma_failure_does_not_enable_broken_channel(self):
         # Run the actual configure patches on copies, including a second idempotence pass.
         with tempfile.TemporaryDirectory(prefix='epw-audio-patch-') as tmp:
@@ -1355,7 +1519,7 @@ static bool lv_font_get_glyph_dsc(int *font,lv_font_glyph_dsc_t *d,uint32_t cp,i
 '''
         for signature in ('static const char *pet_safe_text(const char *in)',
                           'static void pet_text_set(const char *text)',
-                          'static void pet_text_step(void)'):
+                          'static void pet_text_step(void)', 'void ui_pet_reveal_text(void)'):
             source += function('ui.c', signature)
         source += r'''
 int main(void){
@@ -1715,7 +1879,8 @@ static unsigned s_session_epoch=1;
 static atomic_bool s_requested=true;
 static voice_ui_update_t pending;
 static bool queued;
-static int updates;
+static int updates,reveals;
+static void ui_pet_reveal_text(void){reveals++;}
 static char shown[320],mood[32];
 static bool session_current(void){return s_requested && s_epoch==s_session_epoch;}
 static int xQueueOverwrite(void *q,const voice_ui_update_t *u){pending=*u;queued=true;return 1;}
@@ -1724,6 +1889,7 @@ static int xQueuePeek(void *q,voice_ui_update_t *u,int wait){if(!queued)return 0
 static void ui_activity(void){}
 static void ui_pet_set_state_by_name(const char *e,const char *t){updates++;snprintf(mood,sizeof(mood),"%s",e);if(t)snprintf(shown,sizeof(shown),"%s",t);}
 '''
+        source += function('voice_client.c', 'static void pet_post(const char *emotion, const char *text, bool spoken)')
         source += function('voice_client.c', 'static void pet_set(const char *emotion, const char *text)')
         source += function('voice_client.c', 'void voice_client_update_ui(void)')
         source += r'''
@@ -1732,12 +1898,66 @@ int main(void){
  pet_set("listening",NULL);voice_client_update_ui();assert(updates==1 && !strcmp(shown,"最新文字") && !strcmp(mood,"listening"));
  char long_text[610];for(int i=0;i<200;i++)memcpy(long_text+i*3,"猫",3);strcpy(long_text+600,"结束");
  pet_set("speaking",long_text);voice_client_update_ui();assert(strlen(shown)<=319 && strlen(shown)%3==0 && !strcmp(shown+strlen(shown)-6,"结束"));
+ pet_post("speaking","已说的词",true);pet_set("listening",NULL);voice_client_update_ui();assert(reveals==1 && !strcmp(shown,"已说的词"));
  pet_set("sad","错误提示");s_requested=false;s_epoch=2;voice_client_update_ui();assert(!strcmp(shown,"错误提示"));
  s_requested=true;s_session_epoch=2;pet_set("thinking","上一轮");s_epoch=3;s_session_epoch=3;
  int before=updates;voice_client_update_ui();assert(updates==before);
  s_ui_queue=NULL;pet_set("sad","忽略");voice_client_update_ui();assert(updates==before);
 }
 '''
+        run_c(source)
+
+    def test_spoken_captions_wait_for_pcm_and_clear_on_interrupt(self):
+        original = (MAIN / 'voice_client.c').read_text()
+        start = original.index('typedef struct {\n    uint32_t at_samples;')
+        types = original[start:original.index('static QueueHandle_t s_caption_queue;', start)]
+        source = r"""#include <assert.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#define VOICE_SAMPLE_RATE 16000
+#define MALLOC_CAP_SPIRAM 1
+#define MALLOC_CAP_8BIT 2
+#define pdTRUE 1
+""" + types + r"""
+static void *s_caption_queue=(void*)1;
+static uint32_t s_tts_written_samples,s_caption_received_ms;
+static char s_reply_emotion[32]="happy",shown[320],mood[32];
+static int count,updates,allocated,released;static bool fail;
+static voice_caption_t *queue[32];
+static void *heap_caps_malloc(size_t n,int caps){if(fail)return NULL;allocated++;return malloc(n);}
+static void release(void *p){released++;free(p);}
+#define free release
+static int xQueueSend(void *q,voice_caption_t **p,int wait){if(count==32)return 0;queue[count++]=*p;return 1;}
+static int xQueuePeek(void *q,voice_caption_t **p,int wait){if(!count)return 0;*p=queue[0];return 1;}
+static int xQueueReceive(void *q,voice_caption_t **p,int wait){if(!count)return 0;*p=queue[0];memmove(queue,queue+1,--count*sizeof(*queue));return 1;}
+static void pet_post(const char *e,const char *t,bool spoken){assert(spoken);updates++;snprintf(shown,sizeof(shown),"%s",t);snprintf(mood,sizeof(mood),"%s",e);}
+"""
+        for signature in ('static bool caption_enqueue(uint32_t at_ms, const char *text)',
+                          'static void caption_pump(void)', 'static void captions_clear(void)'):
+            source += function('voice_client.c', signature)
+        source += r"""
+int main(void){
+ assert(caption_enqueue(0,"Hello") && caption_enqueue(600,"Hello world"));assert(!updates);
+ strcpy(s_reply_emotion,"sad");
+ s_tts_written_samples=4800;caption_pump();assert(updates==1 && !strcmp(shown,"Hello") && !strcmp(mood,"happy"));
+ for(int i=0;i<20;i++)caption_pump();assert(updates==1);
+ s_tts_written_samples=9599;caption_pump();assert(updates==1);
+ s_tts_written_samples=9600;caption_pump();assert(updates==2 && !strcmp(shown,"Hello world"));
+ assert(!caption_enqueue(599,"倒序") && !caption_enqueue(600001,"超界") && !caption_enqueue(600,""));
+ for(int i=0;i<32;i++)assert(caption_enqueue(1000+i,"等待"));
+ assert(!caption_enqueue(1032,"满队列"));
+ captions_clear();assert(!count && !s_tts_written_samples && allocated==released);
+ s_caption_received_ms=0;fail=true;assert(!caption_enqueue(100,"内存失败"));fail=false;
+ char text[601];for(int i=0;i<200;i++)memcpy(text+i*3,"猫",3);text[600]=0;
+ assert(caption_enqueue(0,text));s_tts_written_samples=1;caption_pump();
+ assert(strlen(shown)==300 && !strcmp(shown+297,"猫"));
+ captions_clear();assert(allocated==released);
+ return 0;
+}
+"""
         run_c(source)
 
     def test_protocol_and_session(self):
@@ -1753,6 +1973,8 @@ static atomic_bool s_requested, s_ready, s_connected, s_hello, s_listening, s_re
 static atomic_uint s_progress_tick;
 static unsigned s_tts_packets,s_tts_bytes;
 #define ESP_LOGI(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
+static uint32_t s_caption_received_ms;
 static unsigned xTaskGetTickCount(void){return 100;}
 
 static atomic_uint s_epoch;
@@ -1762,15 +1984,20 @@ static int sends,updates,volume;
 static int audio_get_playback_volume(void){return volume;}
 static void audio_set_playback_volume(int v){volume=v;}
 static char mood[32],s_reply_emotion[32];
-static bool s_reply_presented,s_reply_streaming;
+static bool s_reply_presented;
+static char caption[512],caption_mood[32];static uint32_t caption_ms;static int captions;
+static bool caption_enqueue(uint32_t at,const char *text){captions++;caption_ms=at;snprintf(caption,sizeof(caption),"%s",text);snprintf(caption_mood,sizeof(caption_mood),"%s",s_reply_emotion[0]?s_reply_emotion:"speaking");return true;}
+
 static void pet_set(const char *emotion, const char *text) {
     updates++;snprintf(mood,sizeof(mood),"%s",emotion);
     if (text) snprintf(reply, sizeof(reply), "%s", text);
 }
+static void play_caption(void){pet_set(caption_mood,caption);}
 static bool send_json(const char *text) {
     sends++; snprintf(sent, sizeof(sent), "%s", text); return true;
 }
 '''
+        source += 'static bool watch_control_receive(const cJSON *payload){return true;}\n'
         for signature in ('static bool session_current(void)', 'bool voice_client_is_active(void)',
                           'bool voice_client_set_active(bool active)', 'static void send_listen_start(void)',
                           'static const char *json_string(const cJSON *json, const char *key)',
@@ -1825,7 +2052,7 @@ int main(void) {
     const char *tts_start="{\"type\":\"tts\",\"state\":\"start\"}";
     handle_text(tts_start,strlen(tts_start));assert(s_reply_active && !s_listening);
     const char *sentence="{\"type\":\"tts\",\"state\":\"sentence_start\",\"text\":\"继续聊天\"}";
-    handle_text(sentence,strlen(sentence));assert(s_have_reply && !strcmp(reply,"继续聊天") && !strcmp(mood,"happy"));
+    handle_text(sentence,strlen(sentence));assert(s_have_reply && !strcmp(reply,"你好") && caption_ms==0);play_caption();assert(!strcmp(reply,"继续聊天") && !strcmp(mood,"happy"));
     before=updates;
     const char *late="{\"type\":\"llm\",\"emotion\":\"sad\"}";
     handle_text(late,strlen(late));assert(updates==before && !strcmp(mood,"happy"));
@@ -1837,7 +2064,7 @@ int main(void) {
     handle_text(foreign,strlen(foreign));assert(!strcmp(reply,"继续聊天"));
     handle_text(raw,strlen(raw));assert(!strcmp(mood,"thinking") && !s_reply_presented && !s_reply_emotion[0]);
     handle_text(tts_start,strlen(tts_start));
-    handle_text(sentence,strlen(sentence));assert(!strcmp(mood,"speaking"));
+    handle_text(sentence,strlen(sentence));play_caption();assert(!strcmp(mood,"speaking"));
     before=updates;handle_text(late,strlen(late));assert(updates==before && !strcmp(mood,"speaking"));
     s_drop_reply=true;s_reply_active=false;s_listening=true;before=updates;
     handle_text(tts_start,strlen(tts_start));handle_text(sentence,strlen(sentence));
@@ -1849,11 +2076,16 @@ int main(void) {
     handle_text(hello,strlen(hello));assert(!s_reply_presented && !s_reply_emotion[0]);
     handle_text(raw,strlen(raw));
     const char *stream="{\"type\":\"llm\",\"state\":\"partial\",\"text\":\"实时回答\"}";
-    handle_text(stream,strlen(stream));assert(s_reply_streaming && !strcmp(reply,"实时回答"));
-    handle_text(sentence,strlen(sentence));assert(!strcmp(reply,"实时回答"));
+    handle_text(stream,strlen(stream));assert(!strcmp(reply,"你好"));
+    handle_text(sentence,strlen(sentence));assert(!strcmp(reply,"你好") && !strcmp(caption,"继续聊天"));
     const char *revision="{\"type\":\"llm\",\"state\":\"partial\",\"text\":\"实时回答完成\",\"final\":true}";
-    handle_text(revision,strlen(revision));assert(!strcmp(reply,"实时回答完成"));
-    handle_text(hello,strlen(hello));assert(!s_reply_streaming);
+    handle_text(revision,strlen(revision));assert(!strcmp(reply,"你好"));
+    const char *word="{\"type\":\"tts\",\"state\":\"word_boundary\",\"at_ms\":240,\"text\":\"正在说的词\"}";
+    handle_text(word,strlen(word));assert(caption_ms==240 && !strcmp(caption,"正在说的词") && !strcmp(reply,"你好"));
+    int caption_before=captions;
+    const char *invalid="{\"type\":\"tts\",\"state\":\"word_boundary\",\"at_ms\":-1,\"text\":\"错误\"}";
+    handle_text(invalid,strlen(invalid));assert(captions==caption_before);
+    handle_text(hello,strlen(hello));assert(!s_reply_presented);
     const char *empty_hello="{\"type\":\"hello\",\"session_id\":\"\"}";
     handle_text(empty_hello,strlen(empty_hello));assert(!s_requested);
     return 0;
@@ -1890,8 +2122,8 @@ static int fake_indev, point_x, point_y;
 static int s_power_override=-1,s_bat_percent;
 static bool s_charging,s_usb_powered;
 static int s_last_h=-1,s_last_m=-1,s_last_day=-1;
-static lv_obj_t time_obj,date_obj;
-static lv_obj_t *s_time=&time_obj,*s_date=&date_obj;
+static lv_obj_t time_obj,date_obj,lunar_obj,loading_obj;
+static lv_obj_t *s_time=&time_obj,*s_date=&date_obj,*s_lunar=&lunar_obj,*s_time_loading=&loading_obj;
 static const char *s_week_cn[]={"周日","周一","周二","周三","周四","周五","周六"};
 static struct tm fake_tm;
 static time_t fake_time(time_t *t){return 0;}
@@ -1928,6 +2160,7 @@ static lv_obj_t *lv_obj_get_child(lv_obj_t *o,unsigned i){return o->child;}
 static void lv_label_set_text(lv_obj_t *o,const char *s){snprintf(o->text,sizeof(o->text),"%s",s);}
 #define lv_label_set_text_fmt(o,...) snprintf((o)->text,sizeof((o)->text),__VA_ARGS__)
 '''
+        source += (MAIN / 'lunar_date.c').read_text()
         for signature in ('static void home_pull_cb(lv_event_t *e)', 'void ui_demo_toggle_apps(void)',
                           'static void clear_clickable_tree(lv_obj_t *o)',
                           'void ui_update_battery(int percent, bool charging, bool usb_powered)',
@@ -1961,13 +2194,16 @@ int main(void){
     ui_update_battery(50,false,true);assert(!s_charging && s_usb_powered);
     s_home_snap_dirty=false;ui_update_battery(50,false,true);assert(!s_home_snap_dirty);
     ui_update_battery(50,true,true);assert(s_charging && s_usb_powered && s_home_snap_dirty);
-    fake_tm.tm_year=70;time_tick_cb(NULL);assert(time_obj.hidden && !strcmp(date_obj.text,"等待校时"));
+    fake_tm.tm_year=70;time_tick_cb(NULL);assert(time_obj.hidden && !loading_obj.hidden && lunar_obj.hidden && !strcmp(date_obj.text,"正在校时"));
     fake_tm=(struct tm){.tm_year=126,.tm_mon=0,.tm_mday=17,.tm_yday=16,.tm_wday=6,.tm_hour=12};
     time_tick_cb(NULL);assert(!time_obj.hidden && !strcmp(time_obj.text,"12:00"));
     assert(!strcmp(date_obj.text,"1月17日 周六"));
     assert(s_home_snap_dirty);s_home_snap_dirty=false;time_tick_cb(NULL);assert(!s_home_snap_dirty);
     fake_tm.tm_mon=1;fake_tm.tm_yday=47;fake_tm.tm_wday=2;time_tick_cb(NULL);
     assert(!strcmp(date_obj.text,"2月17日 周二"));
+    assert(loading_obj.hidden && !lunar_obj.hidden && !strcmp(lunar_obj.text,"农历 正月初一"));
+    fake_tm.tm_year=151;time_tick_cb(NULL);assert(!time_obj.hidden && lunar_obj.hidden);
+    fake_tm.tm_year=70;time_tick_cb(NULL);assert(time_obj.hidden && !loading_obj.hidden && lunar_obj.hidden);
     return 0;
 }
 '''
@@ -2040,6 +2276,147 @@ int main(void){
         self.assertNotIn("新的提醒会出现在这里", body)
         self.assertNotIn("chip_x", body)
         self.assertNotIn("draw_chat_mini", body)
+
+    def test_wifi_saved_click_tries_before_opening_password(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#define LV_UNUSED(x) ((void)x)
+#define ESP_OK 0
+#define COL_TECH_GREEN 0
+#define COL_CORAL 0
+#define LV_OBJ_FLAG_HIDDEN 0
+typedef int epw_wifi_state_t;
+enum {EPW_WIFI_OFF,EPW_WIFI_CONNECTING,EPW_WIFI_CONNECTED,EPW_WIFI_FAILED};
+typedef int lv_event_t;typedef int lv_obj_t;typedef int lv_timer_t;
+typedef struct {char ssid[33];int8_t rssi;bool secure;}epw_wifi_ap_t;
+static bool s_wifi_open=true,s_wifipwd_open,s_wifipwd_connecting,s_wifipwd_secure,s_wifi_scan_seen=true;
+static int s_wifi_ap_count=1,state=EPW_WIFI_CONNECTING,saved_result,opened,saved_attempts,connected;
+static char s_wifipwd_ssid[33];
+static epw_wifi_ap_t s_wifi_aps[1]={{{0},0,true}};
+static lv_obj_t obj,*s_wifi_scan_hint=&obj,*s_wifipwd_btn_label=&obj,*s_wifipwd_btn=&obj,*s_wifipwd_hint=&obj;
+static bool tap_ignore(void *e){return false;}
+static void *lv_event_get_current_target(void *e){return &obj;}
+static void *lv_obj_get_user_data(void *r){return 0;}
+static bool wifi_scan_busy(void){return false;}
+static void toast_show(const char *t){}
+static void wifi_status_refresh(void){}
+static int wifi_connect_saved(const char *s){assert(!strcmp(s,"known"));saved_attempts++;return saved_result;}
+static int wifi_connect_to(const char *s,const char *p){assert(!*p);connected++;return 0;}
+static void wifi_pwd_open(const epw_wifi_ap_t *ap){assert(!strcmp(ap->ssid,"known"));opened++;s_wifipwd_open=true;}
+static int wifi_get_state(void){return state;}
+static void wifi_populate_list(void){}
+static void lv_label_set_text(void *o,const char *s){}
+static void lv_obj_set_style_bg_color(void *o,int c,int s){}
+static void lv_obj_set_style_text_color(void *o,int c,int s){}
+static void lv_obj_remove_flag(void *o,int f){}
+static void wifi_pwd_close_now(void){s_wifipwd_open=false;}
+static void wifi_close(void){s_wifi_open=false;}
+'''
+        source += function('ui.c', 'static void wifi_row_cb(lv_event_t *e)')
+        source += function('ui.c', 'static void wifi_poll_cb(lv_timer_t *timer)')
+        source += r'''
+int main(void){
+ strcpy(s_wifi_aps[0].ssid,"known");
+ wifi_row_cb(0);assert(saved_attempts==1 && !opened && s_wifipwd_connecting);
+ state=EPW_WIFI_FAILED;wifi_poll_cb(0);assert(opened==1 && s_wifipwd_open && !s_wifipwd_connecting);
+ s_wifipwd_open=false;saved_result=-1;wifi_row_cb(0);assert(opened==2);
+ s_wifipwd_open=false;saved_result=0;wifi_row_cb(0);
+ state=EPW_WIFI_CONNECTED;wifi_poll_cb(0);assert(!s_wifi_open && !s_wifipwd_connecting && opened==2);
+ s_wifi_open=true;s_wifi_aps[0].secure=false;wifi_row_cb(0);
+ assert(connected==1 && !s_wifipwd_secure);
+ return 0;
+}
+'''
+        run_c(source)
+
+    def test_wifi_saved_password_history_migration_and_failure(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#define ESP_OK 0
+#define ESP_FAIL -1
+#define ESP_ERR_NVS_NOT_FOUND -2
+#define ESP_ERR_NOT_FOUND -3
+#define ESP_ERR_INVALID_ARG -4
+#define NVS_READONLY 0
+#define NVS_READWRITE 1
+#define WIFI_NVS_NS "epw_wifi"
+#define WIFI_NVS_SSID "ssid"
+#define WIFI_NVS_PASS "pass"
+#define ESP_LOGW(...) ((void)0)
+typedef int nvs_handle_t;
+typedef int esp_err_t;
+typedef struct {char ssid[33];char password[65];}wifi_saved_cred_t;
+static char legacy_ssid[33]="old",legacy_pass[65]="oldpass1",s_ssid[33]="old";
+static struct {char key[16];wifi_saved_cred_t value;} records[8];
+static int count,commits,connects,error,collision;
+static char connected_ssid[33],connected_pass[65];
+static uint32_t esp_rom_crc32_le(uint32_t seed,const uint8_t *p,size_t n){
+ uint32_t h=seed;while(n--)h=h*33+*p++;return collision?1:h;
+}
+static int nvs_open(const char *ns,int mode,int *h){*h=1;return 0;}
+static void nvs_close(int h){}
+static int nvs_get_str(int h,const char *key,char *out,size_t *len){
+ const char *v=!strcmp(key,"ssid")?legacy_ssid:legacy_pass;
+ if(!v[0])return -2;assert(*len>strlen(v));strcpy(out,v);return 0;
+}
+static int nvs_set_str(int h,const char *key,const char *v){
+ strcpy(!strcmp(key,"ssid")?legacy_ssid:legacy_pass,v);return 0;
+}
+static int nvs_get_blob(int h,const char *key,void *out,size_t *len){
+ for(int i=0;i<count;i++)if(!strcmp(records[i].key,key)){
+  memcpy(out,&records[i].value,sizeof(wifi_saved_cred_t));*len=sizeof(wifi_saved_cred_t);return 0;}
+ return -2;
+}
+static int nvs_set_blob(int h,const char *key,const void *v,size_t len){
+ if(error)return error;int i=0;for(;i<count;i++)if(!strcmp(records[i].key,key))break;
+ if(i==count)count++;assert(count<=8);strcpy(records[i].key,key);memcpy(&records[i].value,v,len);return 0;
+}
+static int nvs_erase_key(int h,const char *key){
+ if(!strcmp(key,"ssid"))legacy_ssid[0]=0;
+ else if(!strcmp(key,"pass"))legacy_pass[0]=0;
+ else for(int i=0;i<count;i++)if(!strcmp(records[i].key,key))records[i]=records[--count];
+ return 0;
+}
+static int nvs_commit(int h){commits++;return 0;}
+static const char *esp_err_to_name(int e){return "error";}
+static int wifi_connect_to(const char *ssid,const char *pass){
+ connects++;strcpy(connected_ssid,ssid);strcpy(connected_pass,pass);return 0;
+}
+'''
+        for signature in ('static void creds_key(const char *ssid, char key[16])',
+                          'static bool creds_read(nvs_handle_t h, const char *ssid, wifi_saved_cred_t *cred)',
+                          'static esp_err_t creds_store(nvs_handle_t h, const wifi_saved_cred_t *cred)',
+                          'static void creds_save(const char *ssid, const char *password)',
+                          'static void creds_erase(void)',
+                          'esp_err_t wifi_connect_saved(const char *ssid)'):
+            source += function('wifi.c', signature)
+        source += r'''
+int main(void){
+ assert(wifi_connect_saved("old")==0 && !strcmp(connected_pass,"oldpass1"));
+ assert(wifi_connect_saved("unknown")==-3 && connects==1);
+ creds_save("new","newpass1");assert(commits==1 && count==2);
+ assert(wifi_connect_saved("old")==0 && !strcmp(connected_pass,"oldpass1"));
+ assert(wifi_connect_saved("new")==0 && !strcmp(connected_pass,"newpass1"));
+ creds_save("old","updated1");assert(count==2);
+ assert(wifi_connect_saved("old")==0 && !strcmp(connected_pass,"updated1"));
+ error=-1;creds_save("third","thirdpass");assert(commits==2 && !strcmp(legacy_ssid,"old"));error=0;
+ creds_erase();assert(wifi_connect_saved("old")==-3);
+ assert(wifi_connect_saved("new")==0 && !strcmp(connected_pass,"newpass1"));
+ assert(wifi_connect_saved(NULL)==-4 && wifi_connect_saved("")==-4);
+ collision=1;creds_save("one","password1");int before=commits;
+ creds_save("two","password2");assert(commits==before);
+ assert(wifi_connect_saved("one")==0 && !strcmp(connected_pass,"password1"));
+ assert(wifi_connect_saved("two")==-3);
+ return 0;
+}
+'''
+        run_c(source)
 
     def test_wifi_save_only_after_success(self):
         source = r'''
@@ -2228,7 +2605,7 @@ static void tts_close(void){}
 static bool open_audio(void){opens++;s_enc=(void*)1;return true;}
 static int esp_opus_enc_get_frame_size(void *enc,int *in,int *out){*in=1920;*out=128;return 0;}
 static int esp_codec_dev_read(void *mic,void *pcm,int len){reads++;assert(len==3840);memset(pcm,1,len);if(mode==1)s_requested=false;if(mode==4 && reads==2)s_listening=true;return mode==3?1:0;}
-static int esp_opus_enc_process(void *enc,esp_audio_enc_in_frame_t *in,esp_audio_enc_out_frame_t *out){encodes++;assert(in->len==1920);out->encoded_bytes=8;return mode==6?-1:0;}
+static int esp_opus_enc_process(void *enc,esp_audio_enc_in_frame_t *in,esp_audio_enc_out_frame_t *out){encodes++;assert(in->len==1920);for(unsigned i=0;i<in->len;i++)assert(in->buffer[i]==1);out->encoded_bytes=8;return mode==6?-1:0;}
 static int esp_websocket_client_send_bin(void *ws,const char *data,int len,int timeout){assert(len==8);sends++;if(mode==7 && sends==1)return -1;if(mode==8)return -1;if((mode==4 || mode==9) && sends==1)s_listening=false;else s_requested=false;return mode==5?-1:len;}
 static void close_audio(void){s_enc=NULL;}
 static void close_session(void){closes++;free(s_message);s_message=NULL;close_audio();}
@@ -2237,6 +2614,7 @@ static void close_session(void){closes++;free(s_message);s_message=NULL;close_au
         source += function('voice_client.c', 'static int pcm_peak(const uint8_t *pcm, size_t bytes)')
         source += function('voice_client.c', 'static bool session_current(void)')
         source += function('voice_client.c', 'static bool voice_wait_expired(uint32_t now, uint32_t hello_since)')
+        source += 'static bool s_control_complete; static void watch_control_reset(void){} static void watch_control_poll(bool (*send)(const char*)){} static bool send_json(const char *s){return true;} static bool watch_control_pending(void){return false;} static void watch_control_finish(bool apply){}\n'
         source += function('voice_client.c', 'static void voice_task(void *arg)')
         source += r'''
 int main(void){
@@ -2611,6 +2989,7 @@ static int esp_opus_enc_process(void *enc,esp_audio_enc_in_frame_t *in,esp_audio
 }
 static int esp_websocket_client_send_bin(void *w,const char *p,unsigned n,int wait){assert(s_listening);sent++;return stage==4?0:n;}
 '''
+        source += 'static void watch_control_finish(bool apply){}\n'
         source += function('voice_client.c', 'static bool tts_interrupt(bool with_preroll)')
         source += r'''
 int main(void){
@@ -2703,6 +3082,7 @@ int main(void){
 #define ESP_LOGW(...) ((void)0)
 #define VOICE_MAX_PCM 1920
 #define VOICE_MAX_OPUS 2048
+#define VOICE_PREBUFFER_PACKETS TEST_PREBUFFER
 #define VOICE_SAMPLE_RATE 16000
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
@@ -2719,8 +3099,11 @@ typedef struct {uint8_t *buffer;size_t len,decoded_size;}esp_audio_dec_out_frame
 typedef int esp_audio_dec_info_t;
 static void *s_tts_queue=(void*)1,*s_dec;
 static uint8_t *s_tts_pcm;
+static uint32_t s_tts_written_samples;
+static void captions_clear(void){s_tts_written_samples=0;}
+static void caption_pump(void){}
 #define CONFIG_EPW_VOICE_BARGE_IN 0
-static bool s_tts_output,active=true,s_barge_ready;
+static bool s_tts_output,active=true,s_barge_ready,s_tts_buffered;
 static void *s_enc=(void*)1;static int s_mic;
 static bool session_current(void){return active;}
 static bool open_audio(void){return true;}
@@ -2732,9 +3115,10 @@ static bool voice_barge_feed(void *m,const void *r,size_t n){
 }
 static bool tts_interrupt(bool with_preroll){return true;}
 static atomic_bool s_tts_end,s_reply_active;
-static voice_packet_t *queue[4];static int queued,writes,listens,closed,dec_closed,mic_closed,failure;
+static voice_packet_t *queue[64];static int queued,writes,listens,closed,dec_closed,mic_closed,failure;
+static unsigned uxQueueMessagesWaiting(void *q){return queued;}
 static void *heap_caps_malloc(size_t n,int caps){return malloc(n);}
-static int xQueueSend(void *q,voice_packet_t **p,int wait){if(queued==4)return 0;queue[queued++]=*p;return 1;}
+static int xQueueSend(void *q,voice_packet_t **p,int wait){if(queued==64)return 0;queue[queued++]=*p;return 1;}
 static int xQueueReceive(void *q,voice_packet_t **p,int wait){if(!queued)return 0;*p=queue[0];memmove(queue,queue+1,--queued*sizeof(*queue));return 1;}
 static void close_audio(void){mic_closed++;}
 static void audio_playback_close(void){closed++;}
@@ -2748,6 +3132,7 @@ static bool voice_client_set_active(bool a){active=a;return a;}
 static void vTaskDelay(int n){}
 static void send_listen_start(void){assert(!s_tts_output && !queued);listens++;}
 '''
+        source += 'static bool s_control_complete,control_pending; static bool watch_control_pending(void){return control_pending;}\n'
         for signature in ('static bool tts_enqueue(const void *data, size_t bytes)',
                           'static void tts_close(void)', 'static bool tts_pump(void)'):
             source += function('voice_client.c', signature)
@@ -2756,19 +3141,31 @@ int main(void){
  char packet[5]={0};assert(!tts_pump());
  assert(!tts_enqueue(packet,0) && !tts_enqueue(packet,2049));
  assert(tts_enqueue(packet,5) && tts_enqueue(packet,5));s_tts_end=true;s_reply_active=true;
- assert(tts_pump() && writes==2 && listens==0);
+ assert(tts_pump() && writes==2 && listens==0 && s_tts_written_samples==960);
  assert(tts_pump() && writes==4 && listens==0);
  assert(tts_pump() && listens==1 && !s_reply_active && closed==1 && dec_closed==1 && mic_closed==0);
- for(int i=0;i<4;i++)assert(tts_enqueue(packet,5));assert(!tts_enqueue(packet,5));
+ for(int i=0;i<64;i++)assert(tts_enqueue(packet,5));assert(!tts_enqueue(packet,5));
  tts_close();assert(!queued && writes==4);
+ assert(tts_enqueue(packet,5));assert(!tts_pump() && queued==1 && writes==4);
+ for(int i=1;i<VOICE_PREBUFFER_PACKETS;i++)assert(tts_enqueue(packet,5));
+ assert(tts_pump() && queued==VOICE_PREBUFFER_PACKETS-1 && writes==6);
+ for(int i=0;i<VOICE_PREBUFFER_PACKETS-1;i++)assert(tts_pump());
+ assert(!queued);assert(tts_pump());
+ int before=writes;assert(tts_enqueue(packet,5));assert(tts_pump() && writes==before);
+ s_tts_end=true;assert(tts_pump() && writes==before+2);assert(tts_pump());
+ tts_close();assert(!s_tts_buffered);
+ control_pending=true;active=true;s_tts_end=true;int old_listens=listens;
+ assert(tts_pump() && s_control_complete && !active && listens==old_listens);
+ control_pending=false;
  for(failure=1;failure<=4;failure++){
-  active=true;assert(tts_enqueue(packet,5));tts_pump();assert(!active);tts_close();
+  active=true;s_tts_end=true;assert(tts_enqueue(packet,5));tts_pump();assert(!active);tts_close();
   assert(!queued && !s_dec && !s_tts_pcm && !s_tts_output);
  }
  return 0;
 }
 '''
-        run_c(source)
+        threshold = re.search(r'#define VOICE_PREBUFFER_PACKETS (\d+)', (MAIN / 'voice_client.c').read_text())[1]
+        run_c(source.replace('TEST_PREBUFFER', threshold))
 
     def test_tts_binary_fragments_are_queued_once(self):
         source = r'''#include <assert.h>
@@ -2796,6 +3193,7 @@ static bool send_json(const char *text){return true;}
 static unsigned xTaskGetTickCount(void){return 123;}
 static void handle_text(const char *data,size_t len){texts++;}
 '''
+        source += 'static void watch_control_new_connection(void){}\n'
         source += function('voice_client.c', 'static void ws_event_handler(void *arg, esp_event_base_t base, int32_t event_id, void *event_data)')
         source += r'''
 int main(void){
@@ -2836,14 +3234,69 @@ int main(void) {
 }
 ''')
 
+    def test_nine_key_multitap_modes_cursor_and_length_limit(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+typedef int lv_event_t;typedef int lv_obj_t;
+enum {KP_LC,KP_UC,KP_NUM,KP_SYMBOL};
+static lv_obj_t obj,*s_wifipwd_kb=&obj,*s_wifipwd_ta=&obj;
+static lv_obj_t *s_wifipwd_key_labels[14],*s_wifipwd_key_letters[9];
+static int s_wifipwd_kb_mode;
+static uint32_t s_wifipwd_tap_key=UINT32_MAX,s_wifipwd_tap_ms,now,selected;
+static unsigned s_wifipwd_tap_index;
+static int32_t s_wifipwd_tap_cursor,cursor;
+static bool s_wifipwd_connecting;static int connects;
+static char text[65];
+static uint32_t lv_tick_get(void){return now;}
+static void *lv_event_get_user_data(void *e){return (void*)(uintptr_t)selected;}
+static void lv_label_set_text(void *o,const char *t){}
+static void lv_obj_set_y(void *o,int y){}
+static int32_t lv_textarea_get_cursor_pos(void *o){return cursor;}
+static void lv_textarea_delete_char(void *o){if(cursor>0){memmove(text+cursor-1,text+cursor,strlen(text)-cursor+1);cursor--;}}
+static void lv_textarea_add_text(void *o,const char *s){
+ if(strlen(text)==64)return;assert(strlen(s)==1);memmove(text+cursor+1,text+cursor,strlen(text)-cursor+1);text[cursor++]=*s;
+}
+static void wifi_pwd_do_connect(void){connects++;}
+'''
+        ui = (MAIN / 'ui.c').read_text()
+        source += ui[ui.index('static const char *const kp_map_lc[]'):ui.index('static void wifi_pwd_kb_apply(void)\n{')]
+        source += function('ui.c', 'static void wifi_pwd_kb_apply(void)')
+        source += function('ui.c', 'static void wifi_pwd_keypad_cb(lv_event_t *e)')
+        source += r'''
+static void key(const char *label){
+ for(selected=0;selected<14;selected++)
+  if(!strcmp(label,wifi_pwd_key_map()[selected]))break;
+ assert(selected<14);now+=100;wifi_pwd_keypad_cb(0);
+}
+static void clear(void){text[0]=0;cursor=0;s_wifipwd_kb_mode=KP_LC;wifi_pwd_kb_apply();}
+int main(void){
+ clear();key("abc");key("abc");key("abc");assert(!strcmp(text,"c"));
+ now+=800;key("abc");assert(!strcmp(text,"ca"));key("def");assert(!strcmp(text,"cad"));
+ key("Aa");key("ABC");key("ABC");assert(!strcmp(text,"cadB"));
+ key("1#");key("2");key("2");assert(!strcmp(text,"cadB22"));
+ key("2#");key("'\"`");key("'\"`");assert(text[6]=='"');
+ key("space");key("Del");assert(strlen(text)==7);key("OK");assert(connects==1);
+ key("a-z");cursor=0;key("abc");key("abc");assert(!strncmp(text,"bcadB22",7));
+ s_wifipwd_connecting=true;key("Del");assert(text[0]=='b');s_wifipwd_connecting=false;
+ clear();now=UINT32_MAX-150;key("abc");key("abc");assert(!strcmp(text,"b"));
+ clear();memset(text,'x',64);text[64]=0;cursor=64;key("abc");key("abc");assert(strlen(text)==64 && text[63]=='x');
+ key("Del");key("abc");key("abc");assert(strlen(text)==64 && text[63]=='b');
+ clear();key("pqrs");key("pqrs");key("pqrs");key("pqrs");key("pqrs");assert(!strcmp(text,"p"));
+ selected=UINT32_MAX;wifi_pwd_keypad_cb(0);assert(!strcmp(text,"p"));
+ return 0;
+}
+'''
+        run_c(source)
+
     def test_keyboard_all_printable_ascii(self):
         source = (MAIN / 'ui.c').read_text()
         characters = {' '}
         for match in re.finditer(r'kp_map_(\w+)\[\] = \{(.*?)\n\};', source, re.S):
             tokens = [ast.literal_eval('"' + v + '"') for v in re.findall(r'"((?:[^"\\]|\\.)*)"', match[2])]
-            characters |= {v for v in tokens if len(v) == 1 and v != '\n'}
-            controls = re.search(r'kp_ctrl_' + match[1] + r'\[\] = \{(.*?)\n\};', source, re.S)
-            self.assertEqual(len(re.findall(r'\b\d+\b', controls[1])), len([v for v in tokens if v not in ('','\n')]))
+            characters |= set(''.join(v for v in tokens if v not in ('', '\n', 'Aa', 'a-z', '1#', '2#', 'space', 'Del', 'OK')))
+            self.assertEqual(len(tokens), 14)
         self.assertEqual(set(map(chr, range(32,127))) - characters, set())
 
 

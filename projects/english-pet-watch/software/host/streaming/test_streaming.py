@@ -164,10 +164,14 @@ class Connection:
             module.patch_connection(source.replace("response_message = []", "renamed = []"))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for folder in ("core", "core/utils", "core/providers/asr", "core/providers/tts"):
+            for folder in ("core", "core/utils", "core/providers/asr", "core/providers/tts", "core/handle"):
                 (root / folder).mkdir(parents=True, exist_ok=True)
             target = root / "core/connection.py"
             target.write_text(source)
+            (root / "core/handle/sendAudioHandle.py").write_text('''async def send_tts_message(conn, state, text=None):
+    if text is None and state == "sentence_start":
+        return
+''')
             module.apply(root)
             module.apply(root)
             self.assertEqual((root / ".epw-stream-backup/core/connection.py").read_text(), source)
@@ -186,6 +190,19 @@ class Connection:
         self.assertEqual(result["TTS"]["EdgeTTSStream"]["voice"], "existing-voice")
         self.assertEqual(result["opaque"], "preserve")
         self.assertEqual(result["ASR"]["FunASRPreview"]["model_dir"], "existing")
+        self.assertEqual(configure(result), result)
+
+    def test_watch_control_config_is_explicit_idempotent_and_preserves_prompt(self):
+        configure = load("configure").configure_watch_control
+        source = {"selected_module": {"Intent": "nointent", "LLM": "existing"},
+                  "prompt": "现有Mimi角色", "Intent": {"nointent": {"type": "nointent"}},
+                  "secret": "unchanged"}
+        result = configure(source)
+        self.assertEqual(result["selected_module"]["Intent"], "EPWWatchControl")
+        self.assertEqual(result["Intent"]["EPWWatchControl"], {"type": "function_call", "functions": []})
+        self.assertTrue(result["prompt"].startswith(source["prompt"]))
+        self.assertEqual(result["secret"], source["secret"])
+        self.assertEqual(source["selected_module"]["Intent"], "nointent")
         self.assertEqual(configure(result), result)
 
     def edge_provider(self, communicate):
@@ -250,19 +267,73 @@ class Connection:
         self.assertTrue(completed)
         self.assertEqual(bytes(output), expected)
 
+    async def test_word_captions_follow_audio_frames_and_reset_per_turn(self):
+        provider = self.edge_provider(None)
+        provider.conn.features["audio_text_sync"] = True
+        packets = []
+
+        async def stream(text, receive, sentence_id, boundary=None):
+            if text == "One two.":
+                boundary({"offset": 0, "text": "One"})
+                boundary({"offset": 6000000, "text": "two"})
+                for i in range(20):
+                    receive(b"opus")
+            else:
+                boundary({"offset": 0, "text": "猫咪"})
+                boundary({"offset": 1200000, "text": "hi"})
+                for i in range(5):
+                    receive(b"opus")
+
+        provider._stream = stream
+        await asyncio.to_thread(provider.to_tts_stream, "One two.", packets.append)
+        await asyncio.to_thread(provider.to_tts_stream, "猫咪 hi!", packets.append)
+        messages = list(provider.tts_audio_queue.queue)
+        self.assertEqual([item[2]["at_ms"] for item in messages], [0, 600, 1200, 1200, 1320, 1500])
+        self.assertEqual([item[2]["text"] for item in messages], ["One", "One two", "One two.", "猫咪", "猫咪 hi", "猫咪 hi!"])
+        self.assertEqual(len(packets), 25)
+        provider.current_sentence_id = provider.conn.sentence_id = "new"
+        await asyncio.to_thread(provider.to_tts_stream, "One two.", packets.append)
+        self.assertEqual(list(provider.tts_audio_queue.queue)[-3][2]["at_ms"], 0)
+        provider.conn.client_abort = True
+        before = provider.tts_audio_queue.qsize()
+        await asyncio.to_thread(provider.to_tts_stream, "One two.", packets.append)
+        self.assertEqual(provider.tts_audio_queue.qsize(), before)
+
+    async def test_caption_send_patch_is_capability_gated_and_idempotent(self):
+        module = load("apply_patch")
+        source = '''async def send_tts_message(conn, state, text=None):
+    if text is None and state == "sentence_start":
+        return
+    await conn.websocket.send(json.dumps({"state": state, "text": text}))
+'''
+        fixed = module.patch_send_audio(source)
+        self.assertEqual(module.patch_send_audio(fixed), fixed)
+        with self.assertRaises(ValueError):
+            module.patch_send_audio("pass")
+        namespace = {"json": json}
+        exec(fixed, namespace)
+        conn = connection()
+        caption = {"state": "word_boundary", "at_ms": 120, "text": "你好"}
+        await namespace["send_tts_message"](conn, "sentence_start", caption)
+        self.assertEqual(conn.messages, [])
+        conn.features["audio_text_sync"] = True
+        await namespace["send_tts_message"](conn, "sentence_start", caption)
+        self.assertEqual(conn.messages[0], {"type": "tts", "state": "word_boundary", "at_ms": 120,
+                                          "text": "你好", "session_id": conn.session_id})
+
     async def test_edge_fallback_only_before_any_audio_is_emitted(self):
         provider = self.edge_provider(None)
         timings = []
         provider.conn.logger.info = timings.append
 
-        async def fail(text, receive, sentence_id):
+        async def fail(text, receive, sentence_id, on_boundary=None):
             raise ConnectionError("unavailable")
 
         provider._stream = fail
         await asyncio.to_thread(provider.to_tts_stream, "test", lambda packet: None)
         self.assertEqual(provider.fallbacks, 1)
 
-        async def partial_failure(text, receive, sentence_id):
+        async def partial_failure(text, receive, sentence_id, on_boundary=None):
             receive(b"opus")
             raise ConnectionError("interrupted")
 

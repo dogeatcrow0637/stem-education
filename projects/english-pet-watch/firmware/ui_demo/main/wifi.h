@@ -57,6 +57,9 @@ int wifi_scan_copy(epw_wifi_ap_t *out, int max);
 /** 请求连接 WPA2/WPA3 或开放热点；获得 IP 后才保存账号。 */
 esp_err_t wifi_connect_to(const char *ssid, const char *password);
 
+/** 用该 SSID 上次成功连接的密码尝试连接；没有记录返回 ESP_ERR_NOT_FOUND。 */
+esp_err_t wifi_connect_saved(const char *ssid);
+
 /** 主动断开，不再自动重连。 */
 void wifi_disconnect(void);
 

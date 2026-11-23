@@ -39,10 +39,11 @@ async def send_audio(socket, pcm, timeline=None):
             timeline.setdefault("speech_end", time.monotonic())
 
 
-async def receive_turn(socket, timeline=None):
+async def receive_turn(socket, timeline=None, require_sync=False):
     result = {"asr": False, "llm_event": False, "tts_start": False,
               "tts_text": False, "tts_stop": False, "opus_packets": 0, "pcm_bytes": 0,
-              "asr_partials": 0, "llm_snapshots": 0}
+              "asr_partials": 0, "llm_snapshots": 0, "caption_events": 0,
+              "caption_last_ms": 0, "caption_max_lag_ms": 0}
     started = time.monotonic()
     times = {}
     decoder = opuslib_next.Decoder(16000, 1)
@@ -72,6 +73,14 @@ async def receive_turn(socket, timeline=None):
                 result["tts_start"] = True
             elif state == "sentence_start":
                 result["tts_text"] |= bool(message.get("text"))
+            elif state == "word_boundary":
+                at = message.get("at_ms")
+                assert type(at) is int and result["caption_last_ms"] <= at <= 600000, "invalid caption timeline"
+                assert message.get("text") and len(message["text"].encode()) <= 300, "invalid caption prefix"
+                result["tts_text"] = True
+                result["caption_events"] += 1
+                result["caption_last_ms"] = at
+                result["caption_max_lag_ms"] = max(result["caption_max_lag_ms"], round(result["pcm_bytes"] / 32) - at)
             elif state == "stop":
                 result["tts_stop"] = True
                 times["tts_complete"] = time.monotonic()
@@ -82,10 +91,14 @@ async def receive_turn(socket, timeline=None):
     if timeline and "speech_end" in timeline:
         result["after_speech_ms"] = {key: round((value - timeline["speech_end"]) * 1000) for key, value in times.items()}
     result["decoded_audio_ms"] = round(result["pcm_bytes"] / 32)
+    if require_sync:
+        assert result["caption_events"] > 0, result
+        assert result["caption_last_ms"] <= result["decoded_audio_ms"] + 60, result
+        assert result["caption_max_lag_ms"] < 1920, result
     return result
 
 
-async def check(url, require_stream=False):
+async def check(url, require_stream=False, require_sync=False):
     # 固定的合成句子，无环境录音、无个人数据。
     questions = ["你好，请只说一句简短的中文问候。", "请告诉我一加一等于几。"]
     with tempfile.TemporaryDirectory(prefix="epw-silent-") as temporary:
@@ -93,7 +106,7 @@ async def check(url, require_stream=False):
         headers = {"Device-Id": "epw-silent-" + uuid.uuid4().hex[:12], "Protocol-Version": "1"}
         async with websockets.connect(url, additional_headers=headers, max_size=65536) as socket:
             await socket.send(json.dumps({"type": "hello", "version": 1, "transport": "websocket",
-                "features": {"text_stream": True},
+                "features": {"text_stream": True, "audio_text_sync": require_sync},
                 "audio_params": {"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60}}))
             hello = json.loads(await asyncio.wait_for(socket.recv(), 15))
             assert hello.get("type") == "hello" and hello.get("session_id"), "missing server hello"
@@ -102,7 +115,7 @@ async def check(url, require_stream=False):
                 await socket.send(json.dumps({"type": "listen", "state": "start", "mode": "auto", "session_id": session}))
                 await asyncio.sleep(0.5)
                 timeline = {}
-                receiver = asyncio.create_task(receive_turn(socket, timeline))
+                receiver = asyncio.create_task(receive_turn(socket, timeline, require_sync))
                 try:
                     await send_audio(socket, pcm, timeline)
                     result = await asyncio.wait_for(receiver, 60)
@@ -120,5 +133,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="ws://127.0.0.1:8000/xiaozhi/v1/")
     parser.add_argument("--require-stream", action="store_true", help="同时要求 ASR 中间结果与模型文字快照")
+    parser.add_argument("--require-sync", action="store_true", help="同时校验语音词时间轴、字幕边界和到达滞后")
     args = parser.parse_args()
-    asyncio.run(asyncio.wait_for(check(args.url, args.require_stream), 180))
+    asyncio.run(asyncio.wait_for(check(args.url, args.require_stream, args.require_sync), 180))

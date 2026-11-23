@@ -18,6 +18,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include "esp_rom_crc.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "epw-wifi";
@@ -54,6 +55,47 @@ static bool s_scan_failed;
 /* NVS 账号                                                                     */
 /* -------------------------------------------------------------------------- */
 
+typedef struct {
+    char ssid[33];
+    char password[65];
+} wifi_saved_cred_t;
+
+static void creds_key(const char *ssid, char key[16])
+{
+    /* NVS 键最多 15 字符；读取时仍核对完整 SSID，避免散列冲突误用密码。 */
+    snprintf(key, 16, "ap%08lx", (unsigned long)esp_rom_crc32_le(0, (const uint8_t *)ssid, strlen(ssid)));
+}
+
+static bool creds_read(nvs_handle_t h, const char *ssid, wifi_saved_cred_t *cred)
+{
+    char key[16];
+    creds_key(ssid, key);
+    size_t len = sizeof(*cred);
+    if (nvs_get_blob(h, key, cred, &len) == ESP_OK &&
+        len == sizeof(*cred) && memchr(cred->ssid, 0, sizeof(cred->ssid)) &&
+        memchr(cred->password, 0, sizeof(cred->password)) && strcmp(cred->ssid, ssid) == 0)
+        return true;
+    /* 兼容旧固件仅保存的最近一次成功连接。 */
+    len = sizeof(cred->ssid);
+    if (nvs_get_str(h, WIFI_NVS_SSID, cred->ssid, &len) != ESP_OK || strcmp(cred->ssid, ssid))
+        return false;
+    len = sizeof(cred->password);
+    return nvs_get_str(h, WIFI_NVS_PASS, cred->password, &len) == ESP_OK;
+}
+
+static esp_err_t creds_store(nvs_handle_t h, const wifi_saved_cred_t *cred)
+{
+    char key[16];
+    creds_key(cred->ssid, key);
+    wifi_saved_cred_t previous;
+    size_t len = sizeof(previous);
+    esp_err_t err = nvs_get_blob(h, key, &previous, &len);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
+    if (err == ESP_OK && (len != sizeof(previous) ||
+        memcmp(previous.ssid, cred->ssid, sizeof(cred->ssid)))) return ESP_FAIL;
+    return nvs_set_blob(h, key, cred, sizeof(*cred));
+}
+
 static void creds_load(void)
 {
     nvs_handle_t h;
@@ -79,7 +121,18 @@ static void creds_save(const char *ssid, const char *password)
         ESP_LOGW(TAG, "cannot open NVS for saving");
         return;
     }
-    esp_err_t err = nvs_set_str(h, WIFI_NVS_SSID, ssid);
+    wifi_saved_cred_t cred = {0}, previous = {0};
+    char previous_ssid[33] = {0};
+    size_t len = sizeof(previous_ssid);
+    esp_err_t err = ESP_OK;
+    /* 切换网络前把旧格式记录迁入历史，失败连接不会覆盖成功密码。 */
+    if (nvs_get_str(h, WIFI_NVS_SSID, previous_ssid, &len) == ESP_OK &&
+        previous_ssid[0] && creds_read(h, previous_ssid, &previous))
+        err = creds_store(h, &previous);
+    snprintf(cred.ssid, sizeof(cred.ssid), "%s", ssid);
+    snprintf(cred.password, sizeof(cred.password), "%s", password != NULL ? password : "");
+    if (err == ESP_OK) err = creds_store(h, &cred);
+    if (err == ESP_OK) err = nvs_set_str(h, WIFI_NVS_SSID, ssid);
     if (err == ESP_OK) {
         err = nvs_set_str(h, WIFI_NVS_PASS, password != NULL ? password : "");
     }
@@ -98,6 +151,13 @@ static void creds_erase(void)
     if (nvs_open(WIFI_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
         return;
     }
+    char key[16];
+    creds_key(s_ssid, key);
+    wifi_saved_cred_t cred;
+    size_t len = sizeof(cred);
+    if (nvs_get_blob(h, key, &cred, &len) == ESP_OK && len == sizeof(cred) &&
+        memchr(cred.ssid, 0, sizeof(cred.ssid)) && strcmp(cred.ssid, s_ssid) == 0)
+        nvs_erase_key(h, key);
     nvs_erase_key(h, WIFI_NVS_SSID);
     nvs_erase_key(h, WIFI_NVS_PASS);
     nvs_commit(h);
@@ -585,6 +645,18 @@ bool wifi_has_credentials(void)
     return s_have_cred;
 }
 
+esp_err_t wifi_connect_saved(const char *ssid)
+{
+    if (ssid == NULL || ssid[0] == 0 || strlen(ssid) > 32) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS_NS, NVS_READONLY, &h) != ESP_OK) return ESP_ERR_NOT_FOUND;
+    wifi_saved_cred_t cred = {0};
+    bool found = creds_read(h, ssid, &cred);
+    nvs_close(h);
+    if (!found) return ESP_ERR_NOT_FOUND;
+    return wifi_connect_to(ssid, cred.password);
+}
+
 esp_err_t wifi_connect_to(const char *ssid, const char *password)
 {
     const char *pass = password != NULL ? password : "";
@@ -665,9 +737,9 @@ void wifi_forget(void)
     s_auto_retry = false;
     s_user_connect = false;
     s_have_cred = false;
+    creds_erase();
     s_ssid[0] = '\0';
     s_pass[0] = '\0';
-    creds_erase();
     esp_wifi_disconnect();
     s_state = EPW_WIFI_OFF;
     snprintf(s_ip, sizeof(s_ip), "--");

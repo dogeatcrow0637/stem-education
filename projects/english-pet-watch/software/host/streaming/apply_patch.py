@@ -43,11 +43,32 @@ def patch_connection(source):
     return source
 
 
+def patch_send_audio(source):
+    marker = '    # EPW: playback-timed word captions.\n'
+    if marker in source:
+        return source
+    old = '    if text is None and state == "sentence_start":\n'
+    if source.count(old) != 1:
+        raise ValueError("上游字幕发送替换点不唯一，停止")
+    new = marker + '''    if state == "sentence_start" and isinstance(text, dict):
+        if (conn.features or {}).get("audio_text_sync"):
+            await conn.websocket.send(json.dumps({
+                "type": "tts", "session_id": conn.session_id,
+                "state": "word_boundary", "at_ms": text["at_ms"], "text": text["text"],
+            }, ensure_ascii=False))
+        return
+'''
+    source = source.replace(old, new + old)
+    ast.parse(source)
+    return source
+
+
 def apply(root):
     here = Path(__file__).resolve().parent
     connection = root / "core/connection.py"
     outputs = {
         connection: patch_connection(connection.read_text()),
+        root / "core/handle/sendAudioHandle.py": patch_send_audio((root / "core/handle/sendAudioHandle.py").read_text()),
         root / "core/providers/asr/fun_local_preview.py": (here / "fun_local_preview.py").read_text(),
         root / "core/utils/epw_text_stream.py": (here / "epw_text_stream.py").read_text(),
         root / "core/providers/tts/edge_stream.py": (here / "edge_stream.py").read_text(),
