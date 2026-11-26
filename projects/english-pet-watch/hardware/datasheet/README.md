@@ -21,7 +21,7 @@
 |---|---|---|
 | 音频采样率 | 24kHz（板级配置） | xiaozhi `config.h` |
 | 扬声器阻抗 / 功率 | 8Ω / 2W | 选型约定 |
-| 电池 | 3.7V LiPo，1500mAh，带保护板 | BOM |
+| 电池 | 3.7V LiPo，702530（7×25×30mm）500mAh，带保护板，MX1.25 2P | BOM / Waveshare 产品图 |
 | 充电 | USB-C 5V/1A | AXP2101 规格 |
 | 屏幕分辨率 | 466×466 | Waveshare 产品页 |
 | 触摸接口 | I2C（CST9217） | Waveshare 产品页 |
