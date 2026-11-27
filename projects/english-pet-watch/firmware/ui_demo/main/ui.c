@@ -195,10 +195,10 @@ static lv_obj_t *s_lunar;
 static lv_obj_t *s_time_loading;
 static lv_obj_t *s_time_sparks[3][3];
 static lv_obj_t *s_time_halo;
-static lv_obj_t *s_weather;
-static lv_obj_t *s_weather_icon;
 /* 表盘装饰层（外环 / 电量 / 天气 / Wi-Fi / 日期）：睡眠模式下整层隐藏，只留时间 */
 static lv_obj_t *s_dial_deco;
+static lv_obj_t *s_weather;
+static lv_obj_t *s_weather_icon;
 static bool s_sleep_mode;
 /* 三色装饰环（常驻） + 底部电量弧（随电量变化，充电时青柠色发光） */
 static lv_obj_t *s_batt_glow;
@@ -207,6 +207,9 @@ static lv_obj_t *s_batt_arc;
 static lv_obj_t *s_batt_pct;
 static lv_obj_t *s_batt_bolt;
 static lv_obj_t *s_home_wifi[4]; /* 3 段弧 + 底部圆点，用颜色表达联网状态 */
+
+/* 天气快照：无数据时整块隐藏，绝不写 --°C。 */
+/* 选择页 */
 
 /* 控制中心睡眠磁贴（用于显示开/关状态） */
 static lv_obj_t *s_cc_sleep;
@@ -225,11 +228,14 @@ typedef struct {
     uint16_t runs[];
 } app_scale_cache_t;
 static app_scale_cache_t *s_app_scale_cache;
-static lv_obj_t *s_tools, *s_settings_page, *s_timer_page, *s_timer_value, *s_timer_hint;
+static lv_obj_t *s_tools, *s_settings_page, *s_timer_page;
+/* 熄屏页：中间大字 + 上下相邻档，右侧六点表示档位。 */
+static lv_obj_t *s_idle_num, *s_idle_unit, *s_idle_prev, *s_idle_next, *s_idle_dots[6];
+/* 计时页：设定层 / 进行层共用一页，按倒计时状态切换。 */
+static lv_obj_t *s_timer_set, *s_timer_set_value, *s_timer_run, *s_timer_arc;
+static lv_obj_t *s_timer_value, *s_timer_hint;
 static lv_obj_t *s_timer_action, *s_timer_reset_label;
-static lv_obj_t *s_idle_options[6];
-static lv_obj_t *s_timer_select, *s_timer_custom, *s_timer_run, *s_timer_arc;
-static lv_obj_t *s_timer_rollers[3];
+static lv_obj_t *s_timer_preset_btn[6], *s_timer_preset_label[6];
 static uint32_t s_timer_total = 60;
 static bool s_tools_open;
 static int s_tools_kind;
@@ -253,6 +259,7 @@ static lv_obj_t *s_pet_glow;
 static lv_obj_t *s_pet_halo;
 static lv_obj_t *s_pet_bubble;
 static lv_obj_t *s_pet_bubble_label;
+static lv_obj_t *s_pet_stop;
 static char s_pet_text[320];
 static size_t s_pet_text_end, s_pet_text_start;
 static lv_obj_t *s_pet_mood;
@@ -264,24 +271,23 @@ static int s_pet_last_bob;
 static bool s_pet_long_pressed; /* 长按已触发，拦截随后的 CLICKED */
 static int s_pet_scene_idx;
 
-/* 3S 英语儿歌：播放器 / 本周曲库两张卡片，同页上下切换。
- * 卡片直接挂在页面下，纵向坐标由 s_nur_card 决定：
- * 播放器 100，本周曲库 522；切换时两张卡同时上移。 */
+/* 3S 英语儿歌：播放器 / 听歌打卡两张卡片，同页上下切换。
+ * 卡片铺满一屏，切换时两张卡同时上移；只有打卡页的曲库列表单独滚动。 */
 #define NUR_CARD_X       44
 #define NUR_CARD_W       378
-#define NUR_CARD_H       300
-#define NUR_CARD_PLAYER_Y 100
+#define NUR_CARD_H       466
+#define NUR_CARD_PLAYER_Y 0
 #define NUR_CARD_WEEK_Y   (SCREEN_H + 56)
 #define NUR_CARD_SHIFT    (NUR_CARD_WEEK_Y - NUR_CARD_PLAYER_Y)
-static int s_nur_card; /* 0 = 播放器，1 = 本周曲库 */
+static int s_nur_card; /* 0 = 播放器，1 = 听歌打卡 */
 static lv_obj_t *s_nur_player_card;
 static lv_obj_t *s_nur_week_card;
 static lv_obj_t *s_nur_arc;
 static lv_obj_t *s_nur_title;
 static lv_obj_t *s_nur_lyric;
-static lv_obj_t *s_nur_library_label;
+static lv_obj_t *s_nur_player_hint;
+static lv_obj_t *s_nur_week_hint;
 static lv_obj_t *s_nur_time;
-static lv_obj_t *s_nur_checkin_time, *s_nur_checkin_bar;
 static lv_obj_t *s_nur_volume;
 static lv_obj_t *s_nur_play_btn;
 static lv_obj_t *s_nur_mode_btn;
@@ -292,13 +298,17 @@ static lv_obj_t *s_nur_icon_pause;
 static lv_obj_t *s_nur_mode_label;
 static lv_obj_t *s_nur_stars[5];
 static lv_obj_t *s_nur_slot[3];
-static lv_obj_t *s_nur_slot_label[3];
+static lv_obj_t *s_nur_slot_name[3];
+static lv_obj_t *s_nur_slot_sub[3];
+static lv_obj_t *s_nur_slot_end[3];
 static lv_obj_t *s_nur_week_stars;
+static lv_obj_t *s_nur_week_list;
 static lv_obj_t *s_nur_week_row[EPW_NURSERY_WEEKLY_MAX];
 static lv_obj_t *s_nur_week_title[EPW_NURSERY_WEEKLY_MAX];
 static lv_obj_t *s_nur_week_meta[EPW_NURSERY_WEEKLY_MAX];
 static lv_obj_t *s_nur_wish_btn;
 static lv_obj_t *s_nur_wish_label;
+static bool s_nur_wish_visible;
 static bool s_nur_catalog_seen;
 static int s_nur_last_done;
 static int s_nur_last_stars;
@@ -435,6 +445,7 @@ static void wifi_pwd_close_now(void);
 static void notice_open(void);
 static void notice_close(void);
 static void notice_close_now(void);
+static void draw_weather_cloud(lv_obj_t *parent, lv_color_t color);
 
 /* -------------------------------------------------------------------------- */
 /* 绘制小工具                                                                  */
@@ -559,8 +570,6 @@ static void draw_sun_duo(lv_obj_t *parent, int cx, int cy, int r,
     }
     mk_circle(parent, cx, cy, r * 2, core_color, LV_OPA_COVER);
 }
-
-
 
 
 /* 儿歌 App 图标：双音符（两个符头 + 符干 + 连梁） */
@@ -2611,7 +2620,6 @@ static void center_status_cb(lv_event_t *e)
 }
 
 
-
 static void center_battery_cb(lv_event_t *e)
 {
     if (tap_ignore(e)) {
@@ -3280,7 +3288,6 @@ static void wifi_pwd_eye_cb(lv_event_t *e)
 }
 
 
-
 /* 九宫格连按选字；控制行保留大小写、数字/符号、空格、删除与连接。 */
 static const char *const kp_map_lc[] = {
     "1", "abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz",
@@ -3888,7 +3895,7 @@ static void build_torch(void)
 /* 应用桌面（紧凑九宫格）                                      */
 /* -------------------------------------------------------------------------- */
 
-/* 九个位置均为现有功能；快捷工具复用控制中心的页面。 */
+/* 九个原有应用 + 第十个「表盘」选择页；不改动原有功能。 */
 enum {
     APP_PET = 0,
     APP_NURSERY,
@@ -3901,7 +3908,6 @@ enum {
     APP_TORCH,
 };
 
-/* 九个真实功能保留初始位置，不补充模拟应用。 */
 static lv_point_t app_icon_center(int i)
 {
     static const lv_point_t positions[APP_COUNT] = {
@@ -4374,58 +4380,175 @@ static void build_apps(void)
     apps_layout_icons();
 }
 
-/* 系统设置和计时器复用同一覆盖页，返回后保留完整应用九宫格。 */
+/* 熄屏 / 计时共用同一覆盖页：去掉返回键，右滑关闭；熄屏页上下滑换档。 */
+static const char *idle_choice_text(uint32_t ms)
+{
+    switch (ms) {
+    case 15000: return "15秒";
+    case 30000: return "30秒";
+    case 60000: return "1分";
+    case 120000: return "2分";
+    case 300000: return "5分";
+    case 0: return "常亮";
+    default: return "30秒";
+    }
+}
+
+static int idle_index(uint32_t timeout)
+{
+    for (int i = 0; i < 6; i++)
+        if (s_idle_choices[i] == timeout) return i;
+    return 1;
+}
+
+static void idle_refresh(void)
+{
+    if (s_idle_num == NULL) return;
+    uint32_t timeout = watch_idle_timeout_ms();
+    int index = idle_index(timeout);
+    for (int i = 0; i < 6; i++) {
+        if (s_idle_dots[i] == NULL) continue;
+        int d = i == index ? 10 : 6;
+        lv_obj_set_size(s_idle_dots[i], d, d);
+        lv_obj_set_pos(s_idle_dots[i], 368 - d / 2, 168 + i * 26 - d / 2);
+        lv_obj_set_style_bg_color(s_idle_dots[i], i == index ? COL_TEAL : COL_LINE, 0);
+    }
+    lv_label_set_text(s_idle_prev, index > 0 ? idle_choice_text(s_idle_choices[index - 1]) : "");
+    lv_label_set_text(s_idle_next, index < 5 ? idle_choice_text(s_idle_choices[index + 1]) : "");
+    if (timeout == 0) {
+        lv_obj_add_flag(s_idle_num, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(s_idle_unit, idle_choice_text(0));
+        lv_obj_align(s_idle_unit, LV_ALIGN_CENTER, 0, -10);
+        return;
+    }
+    char num[8];
+    int value = (int)(timeout >= 60000 ? timeout / 60000 : timeout / 1000);
+    snprintf(num, sizeof(num), "%d", value);
+    lv_label_set_text(s_idle_num, num);
+    lv_obj_remove_flag(s_idle_num, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_idle_unit, timeout >= 60000 ? "分" : "秒");
+    lv_obj_align(s_idle_num, LV_ALIGN_CENTER, -20, -12);
+    lv_obj_align_to(s_idle_unit, s_idle_num, LV_ALIGN_OUT_RIGHT_MID, 2, 14);
+}
+
+static void idle_step(int delta)
+{
+    uint32_t timeout = watch_idle_timeout_ms();
+    int index = idle_index(timeout) + delta;
+    if (index < 0) index = 0;
+    if (index > 5) index = 5;
+    if (s_idle_choices[index] == timeout) return;
+    esp_err_t err = watch_set_idle_timeout_ms(s_idle_choices[index]);
+    toast_show(err == ESP_OK ? "已保存" : "保存失败");
+    ui_activity();
+    idle_refresh();
+}
+
+static void idle_prev_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) return;
+    idle_step(-1);
+}
+
+static void idle_next_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) return;
+    idle_step(1);
+}
+
+static void timer_format(uint32_t seconds, char *out, size_t size)
+{
+    if (seconds >= 3600)
+        snprintf(out, size, "%lu:%02lu:%02lu", (unsigned long)(seconds / 3600),
+                 (unsigned long)(seconds / 60 % 60), (unsigned long)(seconds % 60));
+    else
+        snprintf(out, size, "%02lu:%02lu", (unsigned long)(seconds / 60),
+                 (unsigned long)(seconds % 60));
+}
+
+static uint32_t timer_stepped_total(uint32_t total, int unit, int delta)
+{
+    int64_t next = (int64_t)total + (int64_t)delta * (unit == 0 ? 60 : 1);
+    if (next < 1) next = 1;
+    if (next > 86399) next = 86399;
+    return (uint32_t)next;
+}
+
+static int timer_preset_index(uint32_t seconds)
+{
+    for (int i = 0; i < 6; i++)
+        if (s_timer_choices[i] == seconds) return i;
+    return -1;
+}
+
+static void timer_set_refresh(void)
+{
+    if (s_timer_set_value != NULL) {
+        char text[16];
+        timer_format(s_timer_total, text, sizeof(text));
+        lv_label_set_text(s_timer_set_value, text);
+    }
+    int match = timer_preset_index(s_timer_total);
+    for (int i = 0; i < 6; i++) {
+        if (s_timer_preset_btn[i] == NULL) continue;
+        bool on = i == match;
+        lv_obj_set_style_bg_color(s_timer_preset_btn[i], on ? COL_TEAL : COL_SURF_HI, 0);
+        lv_obj_set_style_text_color(s_timer_preset_label[i], on ? COL_INK : COL_TEXT, 0);
+    }
+}
+
+/* 选中时长只填值，不启动；开始按钮另外处理。 */
+static void timer_set_duration(uint32_t seconds)
+{
+    if (!watch_timer_select(seconds)) return;
+    s_timer_total = seconds;
+    timer_set_refresh();
+}
+
 static void tools_refresh(void)
 {
-    static uint32_t previous_timeout = UINT32_MAX;
-    uint32_t timeout = watch_idle_timeout_ms();
-    if (timeout != previous_timeout) {
-        for (int i = 0; i < 6; i++) {
-            lv_obj_set_style_bg_color(s_idle_options[i], timeout == s_idle_choices[i] ? COL_TEAL : COL_SURF_HI, 0);
-        }
-        previous_timeout = timeout;
-    }
-    watch_timer_state_t state = watch_timer_state();
-    bool active = state != WATCH_TIMER_IDLE;
-    if (active) {
-        lv_obj_add_flag(s_timer_select, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(s_timer_custom, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(s_timer_run, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_timer_run, LV_OBJ_FLAG_HIDDEN);
-        if (lv_obj_has_flag(s_timer_custom, LV_OBJ_FLAG_HIDDEN))
-            lv_obj_remove_flag(s_timer_select, LV_OBJ_FLAG_HIDDEN);
-    }
-    uint32_t seconds = watch_timer_remaining();
     static uint32_t previous_seconds = UINT32_MAX;
     static int previous_state = -1;
-    if (seconds != previous_seconds || (int)state != previous_state) {
-        if (seconds >= 3600)
-            lv_label_set_text_fmt(s_timer_value, "%02lu:%02lu:%02lu",
-                                  (unsigned long)(seconds / 3600),
-                                  (unsigned long)(seconds / 60 % 60), (unsigned long)(seconds % 60));
-        else
-            lv_label_set_text_fmt(s_timer_value, "%02lu:%02lu", (unsigned long)(seconds / 60),
-                                  (unsigned long)(seconds % 60));
-        lv_label_set_text(s_timer_hint, state == WATCH_TIMER_FINISHED ? "时间到" :
-                         state == WATCH_TIMER_PAUSED ? "已暂停" : "倒计时");
-        lv_label_set_text(s_timer_action, state == WATCH_TIMER_RUNNING ? "暂停" :
-                         state == WATCH_TIMER_PAUSED ? "继续" : "再来一次");
-        lv_label_set_text(s_timer_reset_label, state == WATCH_TIMER_FINISHED ? "完成" : "取消");
-        lv_color_t color = state == WATCH_TIMER_FINISHED ? COL_AMBER : COL_TEAL;
-        lv_obj_set_style_text_color(s_timer_hint, color, 0);
-        lv_obj_set_style_arc_color(s_timer_arc, color, LV_PART_INDICATOR);
-        lv_arc_set_angles(s_timer_arc, 0, (uint32_t)((uint64_t)seconds * 360 / s_timer_total));
-        previous_seconds = seconds;
-        previous_state = state;
+    if (s_tools_kind == 0) idle_refresh();
+    watch_timer_state_t state = watch_timer_state();
+    bool active = state != WATCH_TIMER_IDLE;
+    if (!active) {
+        lv_obj_add_flag(s_timer_run, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(s_timer_set, LV_OBJ_FLAG_HIDDEN);
+        uint32_t preset = watch_timer_remaining();
+        if (s_timer_total != preset) {
+            s_timer_total = preset;
+            timer_set_refresh();
+        }
+        previous_seconds = UINT32_MAX;
+        previous_state = -1;
+        return;
     }
+    lv_obj_add_flag(s_timer_set, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_timer_run, LV_OBJ_FLAG_HIDDEN);
+    uint32_t seconds = watch_timer_remaining();
+    if (seconds == previous_seconds && (int)state == previous_state) return;
+    char text[16];
+    timer_format(seconds, text, sizeof(text));
+    lv_label_set_text(s_timer_value, text);
+    lv_label_set_text(s_timer_hint, state == WATCH_TIMER_FINISHED ? "时间到" :
+                     state == WATCH_TIMER_PAUSED ? "已暂停" : "倒计时");
+    lv_label_set_text(s_timer_action, state == WATCH_TIMER_RUNNING ? "暂停" :
+                     state == WATCH_TIMER_PAUSED ? "继续" : "再来一次");
+    lv_label_set_text(s_timer_reset_label, state == WATCH_TIMER_FINISHED ? "完成" : "取消");
+    lv_color_t color = state == WATCH_TIMER_FINISHED ? COL_AMBER : COL_TEAL;
+    lv_obj_set_style_text_color(s_timer_hint, color, 0);
+    lv_obj_set_style_arc_color(s_timer_arc, color, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(lv_obj_get_parent(s_timer_action), color, 0);
+    lv_arc_set_angles(s_timer_arc, 0, (uint32_t)((uint64_t)seconds * 360 / s_timer_total));
+    previous_seconds = seconds;
+    previous_state = state;
 }
 
 static void tools_close(void)
 {
     if (!s_tools_open) return;
     if (watch_timer_state() == WATCH_TIMER_FINISHED) watch_timer_reset();
-    lv_obj_add_flag(s_timer_custom, LV_OBJ_FLAG_HIDDEN);
     s_tools_open = false;
     lv_obj_add_flag(s_tools, LV_OBJ_FLAG_HIDDEN);
 }
@@ -4448,59 +4571,50 @@ static void tools_open(int kind)
     tools_refresh();
 }
 
-static void tools_back_cb(lv_event_t *e)
+static void tools_gesture_cb(lv_event_t *e)
 {
-    if (tap_ignore(e)) return;
-    if (s_tools_kind == 1 && !lv_obj_has_flag(s_timer_custom, LV_OBJ_FLAG_HIDDEN)) {
-        lv_obj_add_flag(s_timer_custom, LV_OBJ_FLAG_HIDDEN);
-        tools_refresh();
-    } else tools_close();
-}
-
-static void idle_choice_cb(lv_event_t *e)
-{
-    if (tap_ignore(e)) return;
-    unsigned i = (uintptr_t)lv_event_get_user_data(e);
-    if (i >= 6) return;
-    esp_err_t err = watch_set_idle_timeout_ms(s_idle_choices[i]);
-    toast_show(err == ESP_OK ? "已保存" : "保存失败");
-    ui_activity();
-    tools_refresh();
-}
-
-static void timer_choice_cb(lv_event_t *e)
-{
-    if (tap_ignore(e)) return;
-    unsigned i = (uintptr_t)lv_event_get_user_data(e);
-    if (i < 6 && watch_timer_select(s_timer_choices[i])) {
-        s_timer_total = s_timer_choices[i];
-        watch_timer_start();
-        tools_refresh();
+    if (lv_event_get_code(e) != LV_EVENT_GESTURE || page_anim_busy()) return;
+    lv_indev_t *indev = lv_event_get_indev(e);
+    if (indev == NULL) return;
+    lv_dir_t dir = lv_indev_get_gesture_dir(indev);
+    if (dir == LV_DIR_RIGHT) {
+        tools_close();
+        return;
+    }
+    if (s_tools_kind == 0) {
+        if (dir == LV_DIR_TOP) idle_step(1);
+        else if (dir == LV_DIR_BOTTOM) idle_step(-1);
     }
 }
 
-static void timer_custom_cb(lv_event_t *e)
-{
-    if (tap_ignore(e) || watch_timer_state() != WATCH_TIMER_IDLE) return;
-    lv_obj_add_flag(s_timer_select, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(s_timer_custom, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void timer_custom_start_cb(lv_event_t *e)
+static void timer_preset_cb(lv_event_t *e)
 {
     if (tap_ignore(e)) return;
-    uint32_t seconds = lv_roller_get_selected(s_timer_rollers[0]) * 3600u +
-                       lv_roller_get_selected(s_timer_rollers[1]) * 60u +
-                       lv_roller_get_selected(s_timer_rollers[2]);
-    if (!seconds) {
+    unsigned i = (uintptr_t)lv_event_get_user_data(e);
+    if (i >= 6 || watch_timer_state() != WATCH_TIMER_IDLE) return;
+    timer_set_duration(s_timer_choices[i]);
+}
+
+static void timer_step_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) return;
+    uintptr_t code = (uintptr_t)lv_event_get_user_data(e);
+    int unit = (int)(code & 0xFF);
+    int delta = (int)(int8_t)((code >> 8) & 0xFF);
+    if (watch_timer_state() != WATCH_TIMER_IDLE) return;
+    timer_set_duration(timer_stepped_total(s_timer_total, unit, delta));
+}
+
+static void timer_start_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) return;
+    if (watch_timer_state() != WATCH_TIMER_IDLE) return;
+    if (s_timer_total == 0) {
         toast_show("请选择时长");
         return;
     }
-    if (watch_timer_select(seconds)) {
-        s_timer_total = seconds;
-        watch_timer_start();
-        tools_refresh();
-    }
+    watch_timer_start();
+    tools_refresh();
 }
 
 static void timer_action_cb(lv_event_t *e)
@@ -4535,7 +4649,7 @@ static lv_obj_t *tools_button(lv_obj_t *parent, int x, int y, int width,
                               const char *text, lv_event_cb_t cb, uintptr_t data)
 {
     lv_obj_t *button = mk_box(parent, x, y, width, 46, COL_SURF_HI, LV_OPA_COVER, 18);
-    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_t *label = mk_label(button, text, &epw_cjk_20, COL_TEXT, 0, 11, width, LV_TEXT_ALIGN_CENTER);
     lv_obj_remove_flag(label, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, (void *)data);
@@ -4543,80 +4657,89 @@ static lv_obj_t *tools_button(lv_obj_t *parent, int x, int y, int width,
     return label;
 }
 
+/* 计时页上下箭头：透明点击区 + 细线三角，避免依赖字体里的箭头字符。 */
+static lv_obj_t *timer_step_button(lv_obj_t *parent, int cx, int cy, bool up, uintptr_t data)
+{
+    lv_obj_t *button = mk_box(parent, cx - 28, cy - 14, 56, 28, COL_BG, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_event_cb(button, timer_step_cb, LV_EVENT_CLICKED, (void *)data);
+    static const lv_point_precise_t up_pts[] = {{28, 4}, {10, 18}, {46, 18}, {28, 4}};
+    static const lv_point_precise_t down_pts[] = {{10, 10}, {46, 10}, {28, 24}, {10, 10}};
+    lv_obj_t *line = lv_line_create(button);
+    lv_line_set_points(line, up ? up_pts : down_pts, 4);
+    lv_obj_set_style_line_width(line, 3, 0);
+    lv_obj_set_style_line_color(line, COL_MUTED, 0);
+    lv_obj_set_style_line_rounded(line, true, 0);
+    return button;
+}
+
 static void build_tools(void)
 {
     s_tools = mk_box(s_screen, 0, 0, SCREEN_W, SCREEN_H, COL_BG, LV_OPA_COVER, 0);
     lv_obj_add_flag(s_tools, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(s_tools, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(s_tools, tools_gesture_cb, LV_EVENT_GESTURE, NULL);
     s_settings_page = mk_box(s_tools, 0, 0, SCREEN_W, SCREEN_H, COL_BG, LV_OPA_COVER, 0);
     s_timer_page = mk_box(s_tools, 0, 0, SCREEN_W, SCREEN_H, COL_BG, LV_OPA_COVER, 0);
-    mk_label(s_settings_page, "系统设置", &epw_cjk_20, COL_TEXT, 0, 52, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-    mk_label(s_settings_page, "熄屏时间", &epw_cjk_20, COL_MUTED, 0, 110, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-    const char *idle_labels[] = {"15 秒", "30 秒", "1 分钟", "2 分钟", "5 分钟", "常亮"};
-    for (int i = 0; i < 6; i++) {
-        lv_obj_t *label = tools_button(s_settings_page, 121 + (i % 2) * 116, 153 + (i / 2) * 60,
-                                       108, idle_labels[i], idle_choice_cb, i);
-        s_idle_options[i] = lv_obj_get_parent(label);
-    }
-    mk_label(s_settings_page, "到点提醒：亮屏", &epw_cjk_20, COL_MUTED, 0, 355, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-    mk_label(s_timer_page, "计时器", &epw_cjk_20, COL_TEXT, 0, 52, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-    s_timer_select = mk_box(s_timer_page, 0, 96, SCREEN_W, 320, COL_BG, LV_OPA_COVER, 0);
-    const char *timer_labels[] = {"1 分钟", "3 分钟", "5 分钟", "10 分钟", "30 分钟", "1 小时"};
-    for (int i = 0; i < 6; i++) {
-        lv_obj_t *label = tools_button(s_timer_select, 89 + (i % 2) * 152, 12 + (i / 2) * 76,
-                                       136, timer_labels[i], timer_choice_cb, i);
-        lv_obj_t *button = lv_obj_get_parent(label);
-        lv_obj_set_height(button, 64);
-        lv_obj_set_y(label, 21);
-    }
-    tools_button(s_timer_select, 129, 250, 208, "自定义", timer_custom_cb, 0);
 
-    s_timer_custom = mk_box(s_timer_page, 0, 96, SCREEN_W, 320, COL_BG, LV_OPA_COVER, 0);
-    const char *units[] = {"时", "分", "秒"};
-    char options[180];
-    for (int i = 0; i < 3; i++) {
-        mk_label(s_timer_custom, units[i], &epw_cjk_20, COL_MUTED,
-                 95 + i * 100, 4, 76, LV_TEXT_ALIGN_CENTER);
-        int length = 0;
-        int count = i == 0 ? 24 : 60;
-        for (int n = 0; n < count; n++)
-            length += snprintf(options + length, sizeof(options) - length,
-                               n == count - 1 ? "%02d" : "%02d\n", n);
-        lv_obj_t *roller = lv_roller_create(s_timer_custom);
-        s_timer_rollers[i] = roller;
-        lv_roller_set_options(roller, options, LV_ROLLER_MODE_NORMAL);
-        lv_obj_set_style_text_font(roller, &lv_font_montserrat_28, 0);
-        lv_obj_set_style_text_color(roller, COL_MUTED, 0);
-        lv_obj_set_style_bg_color(roller, COL_BG, 0);
-        lv_obj_set_style_border_width(roller, 0, 0);
-        lv_obj_set_style_bg_color(roller, COL_SURF_HI, LV_PART_SELECTED);
-        lv_obj_set_style_text_color(roller, COL_TEAL, LV_PART_SELECTED);
-        lv_obj_set_style_text_font(roller, &lv_font_montserrat_28, LV_PART_SELECTED);
-        lv_roller_set_visible_row_count(roller, 3);
-        lv_obj_set_pos(roller, 95 + i * 100, 45);
-        lv_obj_set_width(roller, 76);
-        lv_roller_set_selected(roller, i == 1 ? 1 : 0, LV_ANIM_OFF);
-    }
-    tools_button(s_timer_custom, 153, 250, 160, "开始", timer_custom_start_cb, 0);
-    lv_obj_add_flag(s_timer_custom, LV_OBJ_FLAG_HIDDEN);
+    /* 熄屏：一屏一档，上下滑动或点相邻档切换，松手即保存。 */
+    mk_label(s_settings_page, "熄屏", &epw_cjk_20, COL_MUTED, 0, 56, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    s_idle_prev = mk_label(s_settings_page, "", &epw_cjk_20, COL_MUTED,
+                           0, 148, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    s_idle_num = mk_label(s_settings_page, "", &lv_font_montserrat_48, COL_TEAL,
+                          0, 0, 0, LV_TEXT_ALIGN_CENTER);
+    s_idle_unit = mk_label(s_settings_page, "", &epw_cjk_28, COL_TEAL,
+                           0, 0, 0, LV_TEXT_ALIGN_CENTER);
+    s_idle_next = mk_label(s_settings_page, "", &epw_cjk_20, COL_MUTED,
+                           0, 306, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    lv_obj_add_flag(s_idle_prev, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_idle_prev, idle_prev_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_idle_next, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_idle_next, idle_next_cb, LV_EVENT_CLICKED, NULL);
+    for (int i = 0; i < 6; i++)
+        s_idle_dots[i] = mk_circle(s_settings_page, 368, 168 + i * 26, 6, COL_LINE, LV_OPA_COVER);
 
-    s_timer_run = mk_box(s_timer_page, 0, 92, SCREEN_W, 324, COL_BG, LV_OPA_COVER, 0);
-    mk_arc_seg(s_timer_run, 233, 138, 276, 9, 0, 360, COL_SURF_HI, LV_OPA_COVER);
-    s_timer_arc = mk_arc_prog(s_timer_run, 233, 138, 276, 9, 0, 360, COL_TEAL, LV_OPA_COVER);
+    /* 计时：大号时长可直接上下调，预设只填值，点「开始」才启动。 */
+    mk_label(s_timer_page, "计时", &epw_cjk_20, COL_MUTED, 0, 50, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    s_timer_set = mk_box(s_timer_page, 0, 0, SCREEN_W, SCREEN_H, COL_BG, LV_OPA_TRANSP, 0);
+    s_timer_set_value = mk_label(s_timer_set, "01:00", &lv_font_montserrat_48, COL_TEXT,
+                                 0, 172, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    timer_step_button(s_timer_set, 175, 138, true, ((uintptr_t)1 << 8) | 0);
+    timer_step_button(s_timer_set, 305, 138, true, ((uintptr_t)1 << 8) | 1);
+    timer_step_button(s_timer_set, 175, 258, false, ((uintptr_t)(uint8_t)-1 << 8) | 0);
+    timer_step_button(s_timer_set, 305, 258, false, ((uintptr_t)(uint8_t)-1 << 8) | 1);
+    mk_label(s_timer_set, "分", &epw_cjk_16, COL_MUTED, 145, 268, 60, LV_TEXT_ALIGN_CENTER);
+    mk_label(s_timer_set, "秒", &epw_cjk_16, COL_MUTED, 275, 268, 60, LV_TEXT_ALIGN_CENTER);
+    mk_label(s_timer_set, "到点会亮屏", &epw_cjk_16, COL_MUTED, 0, 86, SCREEN_W,
+             LV_TEXT_ALIGN_CENTER);
+    static const char *timer_labels[] = {"1分", "3分", "5分", "10分", "30分", "1时"};
+    for (int i = 0; i < 6; i++) {
+        lv_obj_t *chip = mk_box(s_timer_set, 89 + (i % 3) * 100, 298 + (i / 3) * 46, 88, 40,
+                                COL_SURF_HI, LV_OPA_COVER, 20);
+        lv_obj_add_flag(chip, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_event_cb(chip, timer_preset_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        s_timer_preset_btn[i] = chip;
+        s_timer_preset_label[i] = mk_label(chip, timer_labels[i], &epw_cjk_20, COL_TEXT,
+                                           0, 8, 88, LV_TEXT_ALIGN_CENTER);
+    }
+    lv_obj_t *start = mk_box(s_timer_set, 149, 394, 168, 48, COL_TEAL, LV_OPA_COVER, 24);
+    lv_obj_add_flag(start, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_event_cb(start, timer_start_cb, LV_EVENT_CLICKED, NULL);
+    mk_label(start, "开始", &epw_cjk_20, COL_INK, 0, 11, 168, LV_TEXT_ALIGN_CENTER);
+
+    s_timer_run = mk_box(s_timer_page, 0, 0, SCREEN_W, SCREEN_H, COL_BG, LV_OPA_COVER, 0);
+    mk_arc_seg(s_timer_run, 233, 198, 296, 10, 0, 360, COL_SURF_HI, LV_OPA_COVER);
+    s_timer_arc = mk_arc_prog(s_timer_run, 233, 198, 296, 10, 0, 360, COL_TEAL, LV_OPA_COVER);
     s_timer_value = mk_label(s_timer_run, "01:00", &lv_font_montserrat_48, COL_TEXT,
-                              0, 94, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+                              0, 162, SCREEN_W, LV_TEXT_ALIGN_CENTER);
     s_timer_hint = mk_label(s_timer_run, "倒计时", &epw_cjk_20, COL_TEAL,
-                             0, 160, SCREEN_W, LV_TEXT_ALIGN_CENTER);
-    s_timer_reset_label = tools_button(s_timer_run, 109, 276, 116, "取消", timer_reset_cb, 0);
-    s_timer_action = tools_button(s_timer_run, 241, 276, 116, "暂停", timer_action_cb, 0);
+                             0, 242, SCREEN_W, LV_TEXT_ALIGN_CENTER);
+    s_timer_reset_label = tools_button(s_timer_run, 109, 376, 116, "取消", timer_reset_cb, 0);
+    s_timer_action = tools_button(s_timer_run, 241, 376, 116, "暂停", timer_action_cb, 0);
     lv_obj_set_style_bg_color(lv_obj_get_parent(s_timer_action), COL_TEAL, 0);
-    lv_obj_set_style_text_color(s_timer_action, COL_BG, 0);
+    lv_obj_set_style_text_color(s_timer_action, COL_INK, 0);
     lv_obj_add_flag(s_timer_run, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_t *back = mk_circle(s_tools, 100, 72, 40, COL_SURF_HI, LV_OPA_COVER);
-    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(back, tools_back_cb, LV_EVENT_CLICKED, NULL);
-    mk_label(back, "<", &epw_cjk_20, COL_TEXT, 0, 6, 40, LV_TEXT_ALIGN_CENTER);
-    clear_clickable_tree(back);
+    timer_set_refresh();
     lv_obj_add_flag(s_tools, LV_OBJ_FLAG_HIDDEN);
     lv_timer_create(tools_tick_cb, 100, NULL);
 }
@@ -5204,6 +5327,11 @@ static void pet_anim_timer_cb(lv_timer_t *timer)
     }
 
     voice_client_update_ui();
+    /* 只在可打断阶段铺满整页，握手/空闲时不挡触摸。 */
+    if (s_pet_stop != NULL) {
+        if (voice_client_can_interrupt()) lv_obj_remove_flag(s_pet_stop, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(s_pet_stop, LV_OBJ_FLAG_HIDDEN);
+    }
     /* 快速到达的文字不应在 80ms/字的动画后排成长队。 */
     int steps = voice_client_is_active() ? 4 : 1;
     for (int n = 0; n < steps && s_pet_text[s_pet_text_end]; n++) pet_text_step();
@@ -5300,7 +5428,7 @@ static void pet_touch_cb(lv_event_t *e)
         return;
     }
     if (voice_client_is_active()) {
-        voice_client_interrupt();
+        if (voice_client_interrupt()) pet_apply(UI_PET_LISTENING, "正在停止…");
         return;
     }
     if (s_pet_state == UI_PET_LOVE) {
@@ -5328,7 +5456,6 @@ static void pet_long_press_cb(lv_event_t *e)
 }
 
 
-
 /* 左滑请求真实语音；没有服务端配置时只给出提示。 */
 static void pet_begin_chat(void)
 {
@@ -5346,6 +5473,8 @@ static void pet_begin_chat(void)
     pet_apply(UI_PET_THINKING, "连接语音…");
 }
 
+static void pet_area_gesture_cb(lv_event_t *e);
+
 /* 空白区与猫咪本体都支持左滑聊天，右滑退出。 */
 static void pet_page_gesture_cb(lv_event_t *e)
 {
@@ -5357,6 +5486,9 @@ static void pet_page_gesture_cb(lv_event_t *e)
         pet_close();
     } else if (indev != NULL && lv_indev_get_gesture_dir(indev) == LV_DIR_LEFT) {
         pet_begin_chat();
+    } else if (voice_client_can_interrupt()) {
+        /* 整页打断层显示时，上下滑冒泡到这里，仍按猫咪区语义处理。 */
+        pet_area_gesture_cb(e);
     }
 }
 
@@ -5388,6 +5520,19 @@ static void pet_area_gesture_cb(lv_event_t *e)
         break;
     default:
         break;
+    }
+}
+
+/* 点一下取消本轮并重新倾听：倾听、思考和说话阶段都生效。 */
+static void pet_stop_cb(lv_event_t *e)
+{
+    if (tap_ignore(e)) {
+        return;
+    }
+    if (voice_client_interrupt()) {
+        pet_apply(UI_PET_LISTENING, "正在停止…");
+    } else {
+        pet_apply(UI_PET_SAD, "语音打断失败，请重试。");
     }
 }
 
@@ -5507,6 +5652,18 @@ static void build_pet(void)
 
     /* 全部交互走手势：宠物区点按/长按/滑，空白区右滑退出 */
 
+    /* 整页透明打断层：只在倾听/回答时由动画定时器显示；
+     * 手势冒泡到 s_pet，左右滑仍退出/聊天。 */
+    s_pet_stop = lv_obj_create(s_pet);
+    lv_obj_remove_style_all(s_pet_stop);
+    lv_obj_remove_flag(s_pet_stop, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_pet_stop, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(s_pet_stop, 0, 0);
+    lv_obj_add_flag(s_pet_stop, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_pet_stop, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_flag(s_pet_stop, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(s_pet_stop, pet_stop_cb, LV_EVENT_CLICKED, NULL);
+
     lv_obj_add_flag(s_pet, LV_OBJ_FLAG_HIDDEN);
     pet_apply(UI_PET_IDLE, NULL);
 }
@@ -5541,7 +5698,6 @@ static void nursery_card_set(int card, bool animate)
         return;
     }
     s_nur_card = card == 1 ? 1 : 0;
-    lv_label_set_text(s_nur_library_label, s_nur_card ? "返回播放" : "曲库 · 打卡");
     int player_to = s_nur_card == 0 ? NUR_CARD_PLAYER_Y
                                     : NUR_CARD_PLAYER_Y - NUR_CARD_SHIFT;
     int week_to = s_nur_card == 0 ? NUR_CARD_WEEK_Y : NUR_CARD_PLAYER_Y;
@@ -5577,6 +5733,11 @@ static void nursery_card_set(int card, bool animate)
 }
 
 /* 本周星星 / 曲库列表 / 愿望卡：只在打开页面、换歌和定时慢刷新时整体重建 */
+static bool nur_wish_visible(int stars, int goal, bool ready, bool redeemed)
+{
+    return redeemed || ready || (goal > 0 && stars + 2 >= goal);
+}
+
 static void nursery_refresh_week(void)
 {
     if (s_nur_week_card == NULL) {
@@ -5593,7 +5754,7 @@ static void nursery_refresh_week(void)
         lv_obj_set_style_line_color(s_nur_stars[i], on ? COL_AMBER : COL_MUTED, 0);
     }
     if (s_nur_week_stars != NULL) {
-        lv_label_set_text_fmt(s_nur_week_stars, "%d/%d 星", stars, goal);
+        lv_label_set_text_fmt(s_nur_week_stars, "%d/%d", stars, goal);
         lv_obj_set_style_text_color(s_nur_week_stars,
                                     stars >= goal ? COL_AMBER : COL_MUTED, 0);
     }
@@ -5622,6 +5783,7 @@ static void nursery_refresh_week(void)
     if (s_nur_wish_btn != NULL) {
         bool ready = nursery_checkin_wish_ready();
         bool redeemed = nursery_checkin_wish_redeemed();
+        s_nur_wish_visible = nur_wish_visible(stars, goal, ready, redeemed);
         lv_obj_set_style_bg_color(s_nur_wish_btn,
                                   ready ? COL_AMBER : COL_SURF, 0);
         lv_obj_set_style_border_color(s_nur_wish_btn,
@@ -5633,25 +5795,27 @@ static void nursery_refresh_week(void)
         } else if (ready) {
             lv_label_set_text(s_nur_wish_label, "兑换愿望卡");
         } else {
-            lv_label_set_text_fmt(s_nur_wish_label, "集满 %d 星换愿望卡", goal);
+            lv_label_set_text_fmt(s_nur_wish_label, "再集 %d 星", goal - stars);
         }
+        if (s_nur_wish_visible && s_nur_card == 1)
+            lv_obj_remove_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
     }
     s_nur_last_stars = stars;
     s_nur_last_done = nursery_checkin_today_done();
 }
 
-/* 活跃场次每秒可见；曲库与星星仍走慢刷新。 */
+/* 三场打卡：进行中直接显示剩余时间，圆钮里给出「结束」。 */
 static void nursery_update_checkin(void)
 {
     static const char *const names[3] = {"早安", "午后", "晚安"};
-    bool active = false;
     for (int i = 0; i < 3; i++) {
         epw_nursery_session_t sess;
         nursery_checkin_session(i, &sess);
-        char text[40];
-        lv_color_t accent = COL_MUTED, bg = COL_BG, border = COL_LINE;
+        char text[32];
+        lv_color_t accent = COL_MUTED, border = COL_LINE;
         if (sess.active) {
-            active = true;
             int total = sess.target_minutes * 60;
             int elapsed = sess.elapsed_seconds < 0 ? 0 : sess.elapsed_seconds;
             if (elapsed > total) elapsed = total;
@@ -5660,30 +5824,28 @@ static void nursery_update_checkin(void)
             nur_format_time((uint32_t)remaining * 1000u, clock, sizeof(clock));
             const char *state = sess.paused || nursery_get_state() == EPW_NURSERY_PAUSED ? "暂停" :
                                 nursery_get_state() == EPW_NURSERY_PLAYING ? "剩余" : "等待";
-            lv_label_set_text_fmt(s_nur_checkin_time, "%s %s %s", names[i], state, clock);
-            lv_bar_set_value(s_nur_checkin_bar, total > 0 ? elapsed * 1000 / total : 0, LV_ANIM_OFF);
-            snprintf(text, sizeof(text), "%s\n%s", names[i], clock);
+            snprintf(text, sizeof(text), "%s %s", state, clock);
             accent = COL_TEAL;
-            bg = COL_BG;
             border = COL_TEAL;
         } else if (sess.done) {
-            snprintf(text, sizeof(text), "%s\n完成", names[i]);
+            snprintf(text, sizeof(text), "完成");
             accent = COL_AMBER;
             border = COL_AMBER;
         } else {
-            snprintf(text, sizeof(text), "%s\n%d分钟", names[i], sess.target_minutes);
+            snprintf(text, sizeof(text), "%d分钟", sess.target_minutes);
         }
-        lv_label_set_text(s_nur_slot_label[i], text);
-        lv_obj_set_style_text_color(s_nur_slot_label[i], accent, 0);
-        lv_obj_set_style_bg_color(s_nur_slot[i], bg, 0);
+        lv_label_set_text(s_nur_slot_name[i], names[i]);
+        lv_label_set_text(s_nur_slot_sub[i], text);
+        lv_obj_set_style_text_color(s_nur_slot_name[i], accent, 0);
+        lv_obj_set_style_text_color(s_nur_slot_sub[i], accent, 0);
         lv_obj_set_style_border_color(s_nur_slot[i], border, 0);
+        if (sess.active) {
+            lv_label_set_text(s_nur_slot_end[i], "结束");
+            lv_obj_remove_flag(s_nur_slot_end[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_nur_slot_end[i], LV_OBJ_FLAG_HIDDEN);
+        }
     }
-    if (!active) {
-        bool done = strcmp(nursery_status_text(), "打卡完成") == 0;
-        lv_label_set_text(s_nur_checkin_time, done ? "打卡完成，你真棒！" : "3S 英语儿歌");
-    }
-    if (active) lv_obj_remove_flag(s_nur_checkin_bar, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(s_nur_checkin_bar, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void nursery_update_ui(void)
@@ -5699,8 +5861,8 @@ static void nursery_update_ui(void)
 
     if (s_nur_volume != NULL) {
         int volume = nursery_get_volume();
-        if (volume == 0) lv_label_set_text(s_nur_volume, "静音 · 调节");
-        else lv_label_set_text_fmt(s_nur_volume, "音量 %d%% · 调节", volume);
+        if (volume == 0) lv_label_set_text(s_nur_volume, "静音");
+        else lv_label_set_text_fmt(s_nur_volume, "音量 %d%%", volume);
     }
     if (s_nur_mode_label != NULL) {
         lv_label_set_text(s_nur_mode_label, nur_mode_text());
@@ -5774,7 +5936,7 @@ static void nursery_update_ui(void)
     }
 
     if (s_nur_wish_btn != NULL) {
-        if (s_nur_card == 1) {
+        if (s_nur_card == 1 && s_nur_wish_visible) {
             lv_obj_remove_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
@@ -5958,6 +6120,25 @@ static void nur_slot_long_cb(lv_event_t *e)
     nursery_update_ui();
 }
 
+/* 圆钮里的「结束」：吞掉点击冒泡，避免同时触发父级的开始/暂停。 */
+static void nur_slot_end_cb(lv_event_t *e)
+{
+    lv_event_stop_bubbling(e);
+    if (tap_ignore(e)) {
+        return;
+    }
+    int slot = (int)(intptr_t)lv_event_get_user_data(e);
+    epw_nursery_session_t sess;
+    nursery_checkin_session(slot, &sess);
+    if (!sess.active) {
+        return;
+    }
+    nursery_checkin_end();
+    toast_show("已结束打卡");
+    s_nur_ui_ms = 0;
+    nursery_update_ui();
+}
+
 static void nur_week_cb(lv_event_t *e)
 {
     if (tap_ignore(e)) {
@@ -6014,14 +6195,14 @@ static void nur_volume_cb(lv_event_t *e)
 static void build_nursery_player(lv_obj_t *card)
 {
     s_nur_title = mk_label(card, "选一首儿歌", &epw_cjk_28, COL_TEXT,
-                           16, 12, NUR_CARD_W - 32, LV_TEXT_ALIGN_CENTER);
+                           16, 40, NUR_CARD_W - 32, LV_TEXT_ALIGN_CENTER);
     lv_label_set_long_mode(s_nur_title, LV_LABEL_LONG_DOT);
     lv_obj_set_height(s_nur_title, 36);
 
-    s_nur_lyric = mk_label(card, "", &epw_cjk_28, COL_TEXT,
-                           20, 64, NUR_CARD_W - 40, LV_TEXT_ALIGN_CENTER);
+    s_nur_lyric = mk_label(card, "", &epw_cjk_20, COL_TEXT,
+                           20, 80, NUR_CARD_W - 40, LV_TEXT_ALIGN_CENTER);
     lv_label_set_long_mode(s_nur_lyric, LV_LABEL_LONG_SCROLL);
-    lv_obj_set_height(s_nur_lyric, 36);
+    lv_obj_set_height(s_nur_lyric, 30);
 
     /* 环形进度：只做视觉反馈，不接收点击 */
     s_nur_arc = lv_arc_create(s_nursery);
@@ -6044,10 +6225,10 @@ static void build_nursery_player(lv_obj_t *card)
     lv_arc_set_angles(s_nur_arc, 0, 0);
 
     /* 小熊耳朵和腮红复用矢量控件，不增加位图缓存。 */
-    mk_circle(card, NUR_CARD_W / 2 - 35, 123, 28, COL_ORANGE, LV_OPA_COVER);
-    mk_circle(card, NUR_CARD_W / 2 + 35, 123, 28, COL_ORANGE, LV_OPA_COVER);
+    mk_circle(card, NUR_CARD_W / 2 - 35, 167, 28, COL_ORANGE, LV_OPA_COVER);
+    mk_circle(card, NUR_CARD_W / 2 + 35, 167, 28, COL_ORANGE, LV_OPA_COVER);
     /* 播放 / 暂停大按钮 */
-    s_nur_play_btn = mk_circle(card, NUR_CARD_W / 2, 166, 104,
+    s_nur_play_btn = mk_circle(card, NUR_CARD_W / 2, 210, 104,
                                COL_AMBER, LV_OPA_COVER);
     mk_circle(s_nur_play_btn, 16, 66, 12, COL_ORANGE, LV_OPA_COVER);
     mk_circle(s_nur_play_btn, 88, 66, 12, COL_ORANGE, LV_OPA_COVER);
@@ -6070,7 +6251,7 @@ static void build_nursery_player(lv_obj_t *card)
     lv_obj_add_flag(s_nur_icon_pause, LV_OBJ_FLAG_HIDDEN);
 
     /* 上一首 / 下一首 */
-    lv_obj_t *prev = mk_circle(card, NUR_CARD_W / 2 - 130, 184, 72,
+    lv_obj_t *prev = mk_circle(card, NUR_CARD_W / 2 - 130, 228, 72,
                                lv_color_hex(0x30456C), LV_OPA_COVER);
     s_nur_prev_btn = prev;
     lv_obj_set_style_border_width(prev, 1, 0);
@@ -6085,7 +6266,7 @@ static void build_nursery_player(lv_obj_t *card)
     lv_obj_set_style_line_rounded(pl, true, 0);
     mk_box(prev, 19, 20, 5, 32, COL_MUTED, LV_OPA_COVER, 2);
 
-    lv_obj_t *next = mk_circle(card, NUR_CARD_W / 2 + 130, 184, 72,
+    lv_obj_t *next = mk_circle(card, NUR_CARD_W / 2 + 130, 228, 72,
                                lv_color_hex(0x40395F), LV_OPA_COVER);
     s_nur_next_btn = next;
     lv_obj_set_style_border_width(next, 1, 0);
@@ -6101,32 +6282,93 @@ static void build_nursery_player(lv_obj_t *card)
     mk_box(next, 49, 20, 5, 32, COL_MUTED, LV_OPA_COVER, 2);
 
     s_nur_time = mk_label(card, "", &epw_cjk_20, COL_TEXT,
-                          8, 238, NUR_CARD_W - 16, LV_TEXT_ALIGN_CENTER);
-    s_nur_volume = mk_label(card, "", &epw_cjk_20, COL_TEAL,
-                            39, 272, 300, LV_TEXT_ALIGN_CENTER);
-    lv_obj_set_height(s_nur_volume, 44);
-    lv_obj_add_event_cb(s_nur_volume, nur_volume_cb, LV_EVENT_CLICKED, NULL);
+                          8, 278, NUR_CARD_W - 16, LV_TEXT_ALIGN_CENTER);
+
+    /* 循环模式搬到播放页：点一下切换 列表 / 单曲 / 随机 */
+    lv_obj_t *mode = mk_box(card, 41, 318, 140, 40, COL_SURF_HI, LV_OPA_COVER, 20);
+    s_nur_mode_btn = mode;
+    lv_obj_set_style_border_width(mode, 1, 0);
+    lv_obj_set_style_border_color(mode, COL_TEAL, 0);
+    lv_obj_set_style_border_opa(mode, LV_OPA_40, 0);
+    lv_obj_add_flag(mode, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(mode, nur_mode_cb, LV_EVENT_CLICKED, NULL);
+    s_nur_mode_label = mk_label(mode, nur_mode_text(), &epw_cjk_20, COL_TEAL,
+                                0, 8, 140, LV_TEXT_ALIGN_CENTER);
+
+    /* 音量只做入口：点开现有音量页，本页不出现滑杆 */
+    lv_obj_t *volume = mk_box(card, 225, 318, 108, 40, COL_SURF_HI, LV_OPA_COVER, 20);
+    lv_obj_set_style_border_width(volume, 1, 0);
+    lv_obj_set_style_border_color(volume, COL_LINE, 0);
+    lv_obj_add_flag(volume, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(volume, nur_volume_cb, LV_EVENT_CLICKED, NULL);
+    s_nur_volume = mk_label(volume, "", &epw_cjk_20, COL_TEAL,
+                            0, 8, 108, LV_TEXT_ALIGN_CENTER);
+
+    /* 上滑去打卡 */
+    lv_obj_t *hint = mk_box(card, 129, 390, 120, 40, COL_BG, LV_OPA_TRANSP, 0);
+    s_nur_player_hint = hint;
+    lv_obj_add_event_cb(hint, nur_library_cb, LV_EVENT_CLICKED, NULL);
+    mk_label(hint, "打卡", &epw_cjk_20, COL_MUTED, 0, 8, 88, LV_TEXT_ALIGN_CENTER);
+    static const lv_point_precise_t carets_up[] = {{6, 2}, {0, 8}, {12, 8}};
+    lv_obj_t *up = lv_line_create(hint);
+    lv_line_set_points(up, carets_up, 3);
+    lv_obj_set_pos(up, 94, 17);
+    lv_obj_set_style_line_width(up, 2, 0);
+    lv_obj_set_style_line_color(up, COL_MUTED, 0);
+    lv_obj_set_style_line_rounded(up, true, 0);
 }
 
 static void build_nursery_week(lv_obj_t *card)
 {
-    lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(card, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_set_scroll_dir(card, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
     mk_label(card, "听歌打卡", &epw_cjk_28, COL_TEXT,
-             18, 8, NUR_CARD_W - 36, LV_TEXT_ALIGN_CENTER);
-    s_nur_week_stars = mk_label(card, "", &epw_cjk_20, COL_MUTED,
-                                18, 48, NUR_CARD_W - 36, LV_TEXT_ALIGN_CENTER);
+             18, 30, NUR_CARD_W - 36, LV_TEXT_ALIGN_CENTER);
 
-    mk_label(card, "本周曲库", &epw_cjk_20, COL_TEXT,
-             18, 264, NUR_CARD_W - 36, LV_TEXT_ALIGN_LEFT);
+    static const lv_point_precise_t star[] = {
+        {12, 0}, {16, 8}, {25, 9}, {18, 16}, {20, 25},
+        {12, 21}, {4, 25}, {6, 16}, {0, 9}, {9, 8}, {12, 0},
+    };
+    for (int i = 0; i < 5; i++) {
+        s_nur_stars[i] = lv_line_create(card);
+        lv_obj_set_pos(s_nur_stars[i], 105 + i * 36, 76);
+        lv_line_set_points(s_nur_stars[i], star, 11);
+        lv_obj_set_style_line_width(s_nur_stars[i], 3, 0);
+        lv_obj_set_style_line_rounded(s_nur_stars[i], true, 0);
+    }
+    s_nur_week_stars = mk_label(card, "", &epw_cjk_16, COL_MUTED,
+                                283, 76, 60, LV_TEXT_ALIGN_CENTER);
+
+    /* 早 / 午 / 晚三场打卡：点按开始或暂停，圆钮里点「结束」或长按结束 */
+    static const int slot_x[3] = {23, 137, 251};
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *chip = mk_box(card, slot_x[i], 120, 104, 104,
+                                COL_BG, LV_OPA_COVER, LV_RADIUS_CIRCLE);
+        lv_obj_set_style_border_width(chip, 2, 0);
+        lv_obj_set_style_border_color(chip, COL_LINE, 0);
+        lv_obj_add_flag(chip, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(chip, nur_slot_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(chip, nur_slot_long_cb, LV_EVENT_LONG_PRESSED,
+                            (void *)(intptr_t)i);
+        s_nur_slot[i] = chip;
+        s_nur_slot_name[i] = mk_label(chip, "", &epw_cjk_20, COL_MUTED,
+                                      0, 20, 104, LV_TEXT_ALIGN_CENTER);
+        s_nur_slot_sub[i] = mk_label(chip, "", &epw_cjk_16, COL_MUTED,
+                                     0, 45, 104, LV_TEXT_ALIGN_CENTER);
+        s_nur_slot_end[i] = mk_label(chip, "结束", &epw_cjk_16, COL_TEAL,
+                                     0, 68, 104, LV_TEXT_ALIGN_CENTER);
+        lv_obj_add_event_cb(s_nur_slot_end[i], nur_slot_end_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)i);
+        lv_obj_add_flag(s_nur_slot_end[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    /* 只让本周五首歌的列表滚动，星星和三场打卡固定在上半屏 */
+    s_nur_week_list = mk_box(card, 26, 236, 326, 150, COL_BG, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(s_nur_week_list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_nur_week_list, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_scroll_dir(s_nur_week_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_nur_week_list, LV_SCROLLBAR_MODE_AUTO);
     for (int i = 0; i < EPW_NURSERY_WEEKLY_MAX; i++) {
-        lv_obj_t *row = mk_box(card, 16, 304 + i * 64, NUR_CARD_W - 32, 58,
+        lv_obj_t *row = mk_box(s_nur_week_list, 0, i * 30, 326, 30,
                                COL_BG, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_border_color(row, COL_LINE, 0);
-        lv_obj_set_style_border_opa(row, LV_OPA_40, 0);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, nur_week_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         lv_obj_add_event_cb(row, nur_week_long_cb, LV_EVENT_LONG_PRESSED,
@@ -6135,25 +6377,36 @@ static void build_nursery_week(lv_obj_t *card)
 
         char no[4];
         snprintf(no, sizeof(no), "%d", i + 1);
-        mk_label(row, no, &epw_cjk_20, COL_MUTED, 10, 16, 22, LV_TEXT_ALIGN_CENTER);
-        s_nur_week_title[i] = mk_label(row, "", &epw_cjk_28, COL_TEXT,
-                                       38, 12, 198, LV_TEXT_ALIGN_LEFT);
+        mk_label(row, no, &epw_cjk_16, COL_MUTED, 0, 6, 24, LV_TEXT_ALIGN_CENTER);
+        s_nur_week_title[i] = mk_label(row, "", &epw_cjk_16, COL_TEXT,
+                                       26, 6, 240, LV_TEXT_ALIGN_LEFT);
         lv_label_set_long_mode(s_nur_week_title[i], LV_LABEL_LONG_DOT);
-        lv_obj_set_height(s_nur_week_title[i], 36);
-        s_nur_week_meta[i] = mk_label(row, "", &epw_cjk_20, COL_MUTED,
-                                      244, 16, 86, LV_TEXT_ALIGN_RIGHT);
+        lv_obj_set_height(s_nur_week_title[i], 20);
+        s_nur_week_meta[i] = mk_label(row, "", &epw_cjk_16, COL_MUTED,
+                                      270, 6, 56, LV_TEXT_ALIGN_RIGHT);
     }
-    /* 模式胶囊：点一下切换 列表 / 单曲 / 随机 */
-    lv_obj_t *mode = mk_box(card, 109, 636, 160, 44, COL_SURF_HI, LV_OPA_COVER, 15);
-    s_nur_mode_btn = mode;
-    lv_obj_set_style_border_width(mode, 1, 0);
-    lv_obj_set_style_border_color(mode, COL_TEAL, 0);
-    lv_obj_set_style_border_opa(mode, LV_OPA_40, 0);
-    lv_obj_add_flag(mode, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(mode, nur_mode_cb, LV_EVENT_CLICKED, NULL);
-    s_nur_mode_label = mk_label(mode, nur_mode_text(), &epw_cjk_20, COL_TEAL,
-                                0, 10, 160, LV_TEXT_ALIGN_CENTER);
 
+    s_nur_wish_btn = mk_box(card, 89, 388, 200, 40, COL_SURF, LV_OPA_COVER, 20);
+    lv_obj_set_style_border_width(s_nur_wish_btn, 1, 0);
+    lv_obj_set_style_border_color(s_nur_wish_btn, COL_LINE, 0);
+    lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_nur_wish_btn, nur_wish_cb, LV_EVENT_CLICKED, NULL);
+    s_nur_wish_label = mk_label(s_nur_wish_btn, "", &epw_cjk_16, COL_MUTED,
+                                0, 10, 200, LV_TEXT_ALIGN_CENTER);
+    lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
+
+    /* 下滑回播放 */
+    lv_obj_t *hint = mk_box(card, 129, 428, 120, 30, COL_BG, LV_OPA_TRANSP, 0);
+    s_nur_week_hint = hint;
+    lv_obj_add_event_cb(hint, nur_library_cb, LV_EVENT_CLICKED, NULL);
+    mk_label(hint, "返回播放", &epw_cjk_16, COL_MUTED, 0, 2, 88, LV_TEXT_ALIGN_CENTER);
+    static const lv_point_precise_t carets_down[] = {{6, 8}, {0, 2}, {12, 2}};
+    lv_obj_t *down = lv_line_create(hint);
+    lv_line_set_points(down, carets_down, 3);
+    lv_obj_set_pos(down, 94, 7);
+    lv_obj_set_style_line_width(down, 2, 0);
+    lv_obj_set_style_line_color(down, COL_MUTED, 0);
+    lv_obj_set_style_line_rounded(down, true, 0);
 }
 
 static void build_nursery(void)
@@ -6175,90 +6428,20 @@ static void build_nursery(void)
     lv_obj_add_event_cb(s_nursery, nursery_page_drag_cb, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(s_nursery, nursery_page_drag_cb, LV_EVENT_PRESS_LOST, NULL);
 
-    static const lv_point_precise_t sparkle[] = {
-        {6, 0}, {7, 5}, {12, 6}, {7, 7}, {6, 12},
-        {5, 7}, {0, 6}, {5, 5}, {6, 0},
-    };
-    static const lv_point_t sparkle_pos[] = {
-        {96, 80}, {354, 78}, {28, 224}, {420, 214}, {76, 348}, {380, 340},
-    };
-    for (size_t i = 0; i < sizeof(sparkle_pos) / sizeof(sparkle_pos[0]); i++) {
-        lv_obj_t *star = lv_line_create(s_nursery);
-        lv_obj_set_pos(star, sparkle_pos[i].x, sparkle_pos[i].y);
-        lv_line_set_points(star, sparkle, 9);
-        lv_obj_set_style_line_width(star, i % 2 ? 1 : 2, 0);
-        lv_obj_set_style_line_color(star, i % 2 ? COL_PURPLE : COL_AMBER, 0);
-        lv_obj_set_style_line_opa(star, LV_OPA_60, 0);
-    }
-
-    s_nur_checkin_time = mk_label(s_nursery, "3S 英语儿歌", &epw_cjk_28, COL_TEXT,
-                                    36, 42, SCREEN_W - 72, LV_TEXT_ALIGN_CENTER);
-    s_nur_checkin_bar = lv_bar_create(s_nursery);
-    lv_obj_set_pos(s_nur_checkin_bar, 134, 84);
-    lv_obj_set_size(s_nur_checkin_bar, 198, 6);
-    lv_obj_set_style_bg_color(s_nur_checkin_bar, COL_LINE, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_nur_checkin_bar, COL_TEAL, LV_PART_INDICATOR);
-    lv_bar_set_range(s_nur_checkin_bar, 0, 1000);
-    lv_obj_add_flag(s_nur_checkin_bar, LV_OBJ_FLAG_HIDDEN);
-
     s_nur_player_card = nur_card_create(s_nursery, NUR_CARD_PLAYER_Y);
     build_nursery_player(s_nur_player_card);
 
     s_nur_week_card = nur_card_create(s_nursery, NUR_CARD_WEEK_Y);
     build_nursery_week(s_nur_week_card);
 
-    mk_label(s_nur_week_card, "本周", &epw_cjk_20, COL_TEXT,
-             18, 218, 60, LV_TEXT_ALIGN_RIGHT);
-    static const lv_point_precise_t star[] = {
-        {12, 0}, {16, 8}, {25, 9}, {18, 16}, {20, 25},
-        {12, 21}, {4, 25}, {6, 16}, {0, 9}, {9, 8}, {12, 0},
-    };
-    for (int i = 0; i < 5; i++) {
-        s_nur_stars[i] = lv_line_create(s_nur_week_card);
-        lv_obj_set_pos(s_nur_stars[i], 96 + i * 36, 218);
-        lv_line_set_points(s_nur_stars[i], star, 11);
-        lv_obj_set_style_line_width(s_nur_stars[i], 3, 0);
-        lv_obj_set_style_line_rounded(s_nur_stars[i], true, 0);
-    }
-
-    /* 早 / 午 / 晚三场打卡：点按开始或暂停，长按结束 */
-    static const int slot_x[3] = {18, 132, 246};
-    for (int i = 0; i < 3; i++) {
-        lv_obj_t *chip = mk_box(s_nur_week_card, slot_x[i], 94, 104, 104,
-                                COL_BG, LV_OPA_COVER, LV_RADIUS_CIRCLE);
-        lv_obj_set_style_border_width(chip, 1, 0);
-        lv_obj_set_style_border_color(chip, COL_LINE, 0);
-        lv_obj_add_flag(chip, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(chip, nur_slot_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        lv_obj_add_event_cb(chip, nur_slot_long_cb, LV_EVENT_LONG_PRESSED,
-                            (void *)(intptr_t)i);
-        s_nur_slot[i] = chip;
-        s_nur_slot_label[i] = mk_label(chip, "", &epw_cjk_28, COL_MUTED,
-                                       0, 18, 104, LV_TEXT_ALIGN_CENTER);
-    }
-
-    s_nur_wish_btn = mk_box(s_nur_week_card, 54, 700, 270, 48,
-                            COL_SURF, LV_OPA_COVER, 18);
-    lv_obj_set_style_border_width(s_nur_wish_btn, 1, 0);
-    lv_obj_set_style_border_color(s_nur_wish_btn, COL_LINE, 0);
-    lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(s_nur_wish_btn, nur_wish_cb, LV_EVENT_CLICKED, NULL);
-    s_nur_wish_label = mk_label(s_nur_wish_btn, "集满 5 星换愿望卡", &epw_cjk_20,
-                                COL_MUTED, 0, 10, 270, LV_TEXT_ALIGN_CENTER);
-    lv_obj_add_flag(s_nur_wish_btn, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *library = mk_box(s_nursery, 129, 410, 208, 44,
-                               COL_BG, LV_OPA_TRANSP, 22);
-    lv_obj_add_event_cb(library, nur_library_cb, LV_EVENT_CLICKED, NULL);
-    s_nur_library_label = mk_label(library, "曲库 · 打卡", &epw_cjk_20, COL_TEXT,
-                                    0, 10, 208, LV_TEXT_ALIGN_CENTER);
-
     /* 装饰容器不拦触摸，让滑动落到整页做翻卡/返回；只保留按钮的点击，
      * 并让按钮上的手势继续冒泡到页面。 */
     clear_clickable_tree(s_nursery);
     lv_obj_t *interactive[] = {
-        library, s_nur_volume, s_nur_mode_btn, s_nur_prev_btn, s_nur_play_btn, s_nur_next_btn,
+        s_nur_player_hint, s_nur_week_hint,
+        s_nur_volume, s_nur_mode_btn, s_nur_prev_btn, s_nur_play_btn, s_nur_next_btn,
         s_nur_slot[0], s_nur_slot[1], s_nur_slot[2],
+        s_nur_slot_end[0], s_nur_slot_end[1], s_nur_slot_end[2],
         s_nur_week_row[0], s_nur_week_row[1], s_nur_week_row[2],
         s_nur_week_row[3], s_nur_week_row[4], s_nur_wish_btn,
     };
@@ -6876,7 +7059,6 @@ static void draw_weather_cloud(lv_obj_t *parent, lv_color_t color)
     mk_circle(parent, 39, 27, 18, color, LV_OPA_COVER);
     mk_box(parent, 7, 26, 40, 10, color, LV_OPA_COVER, 5);
 }
-
 void ui_update_weather(float temperature, epw_weather_kind_t kind)
 {
     if (!s_weather || !s_weather_icon) return;

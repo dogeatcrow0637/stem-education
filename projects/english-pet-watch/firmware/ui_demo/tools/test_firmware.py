@@ -30,6 +30,74 @@ def run_c(source, json=False):
         subprocess.run([str(Path(tmp) / 'test')], check=True)
 
 
+# TTS 泵的最小运行环境：复用生产函数，只替换队列、解码与音频写入。
+TTS_PUMP_HARNESS = r'''#include <assert.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <string.h>
+#define VOICE_BARGE_SAMPLES 512
+#define ESP_CODEC_DEV_OK 0
+#define ESP_LOGW(...) ((void)0)
+#define ESP_LOGI(...) ((void)0)
+#define VOICE_MAX_PCM 1920
+#define VOICE_MAX_OPUS 2048
+#define VOICE_SAMPLE_RATE 16000
+#define MALLOC_CAP_SPIRAM 1
+#define MALLOC_CAP_8BIT 2
+#define ESP_AUDIO_ERR_OK 0
+#define ESP_OPUS_DEC_FRAME_DURATION_120_MS 8
+#define ESP_OPUS_DEC_CONFIG_DEFAULT() {0}
+#define CONFIG_EPW_VOICE_BARGE_IN 0
+#define pdTRUE 1
+#define pdMS_TO_TICKS(x) (x)
+#define VOICE_PREBUFFER_MIN 6
+#define VOICE_PREBUFFER_MAX 16
+#define VOICE_PREBUFFER_STEP 4
+#define VOICE_PREBUFFER_FIRST 3
+typedef struct {size_t bytes;uint8_t data[];} voice_packet_t;
+typedef struct {int sample_rate,channel,frame_duration;}esp_opus_dec_cfg_t;
+typedef struct {uint8_t *buffer;size_t len,consumed;}esp_audio_dec_in_raw_t;
+typedef struct {uint8_t *buffer;size_t len,decoded_size;}esp_audio_dec_out_frame_t;
+typedef int esp_audio_dec_info_t;
+static void *s_tts_queue=(void*)1,*s_dec;
+static uint8_t *s_tts_pcm;
+static uint32_t s_tts_written_samples;
+static bool s_tts_output,s_tts_buffered,s_barge_ready,active=true;
+static atomic_bool s_first_reply;
+static atomic_uint s_prebuffer_target=VOICE_PREBUFFER_MIN;
+static void *s_enc=(void*)1;static int s_mic;
+static atomic_bool s_tts_end,s_reply_active;
+static voice_packet_t *queue[64];static int queued,writes,listens,closed,dec_closed;
+static bool session_current(void){return active;}
+static bool open_audio(void){return true;}
+static int audio_get_playback_volume(void){return 0;}
+static bool voice_barge_begin(void){return true;}
+static int esp_codec_dev_read(int dev,void *p,size_t n){memset(p,0,n);return 0;}
+static bool voice_barge_feed(void *m,const void *r,size_t n){return false;}
+static unsigned uxQueueMessagesWaiting(void *q){return queued;}
+static void *heap_caps_malloc(size_t n,int caps){return malloc(n);}
+static int xQueueSend(void *q,voice_packet_t **p,int wait){if(queued==64)return 0;queue[queued++]=*p;return 1;}
+static int xQueueReceive(void *q,voice_packet_t **p,int wait){if(!queued)return 0;*p=queue[0];memmove(queue,queue+1,--queued*sizeof(*queue));return 1;}
+static void caption_pump(void){}
+static void captions_clear(void){s_tts_written_samples=0;}
+static void audio_playback_close(void){closed++;}
+static int audio_playback_open(void){return 1;}
+static int esp_opus_dec_open(void *cfg,size_t n,void **d){*d=(void*)1;return 0;}
+static int esp_opus_dec_close(void *d){dec_closed++;return 0;}
+static int esp_opus_dec_decode(void *d,esp_audio_dec_in_raw_t *raw,esp_audio_dec_out_frame_t *frame,esp_audio_dec_info_t *info){raw->consumed=raw->len;frame->decoded_size=1920;return 0;}
+static int audio_playback_write(void *pcm,size_t n){assert(n<=1024 && n>0);writes++;return n;}
+static void pet_set(const char *a,const char *b){}
+static bool voice_client_set_active(bool a){active=a;return a;}
+static void vTaskDelay(int n){}
+static void send_listen_start(void){listens++;}
+static bool watch_control_pending(void){return false;}
+static bool s_control_complete;
+static bool tts_interrupt(bool with_preroll){return true;}
+'''
+
+
 class FirmwareTests(unittest.TestCase):
     def test_production_voice_has_no_automatic_test_commands(self):
         main = (MAIN / 'main.c').read_text()
@@ -966,7 +1034,7 @@ typedef struct {int code;} lv_event_t;
 typedef struct {void (*cb)(void *,int32_t);} lv_anim_t;
 #define CENTER_X 233
 #define CENTER_Y 233
-#define APP_REAL_COUNT 9
+#define APP_REAL_COUNT 10
 #define APP_COUNT APP_REAL_COUNT
 #define APP_ICON_D 120
 #define APP_ROOT_W APP_ICON_D
@@ -1130,7 +1198,7 @@ int main(void){
     assert(app_icon_size(app_icon_center(3))==88);
     int visible=0;
     for(int i=0;i<APP_COUNT;i++)if(app_icon_size(app_icon_center(i)))visible++;
-    assert(APP_COUNT==9 && visible==9);
+    assert(APP_COUNT==10 && visible==10);
     int previous[APP_COUNT];
     s_app_pan=(lv_point_t){0,0};
     for(int i=0;i<APP_COUNT;i++)previous[i]=app_icon_size(app_icon_center(i));
@@ -1300,47 +1368,27 @@ int main(void){
 '''
         run_c(source)
 
-    def test_launcher_nine_function_entries(self):
-        source = r'''#include <assert.h>
-#include <stdbool.h>
-enum {APP_PET,APP_NURSERY,APP_STATUS,APP_WIFI,APP_SETTINGS,APP_TIMER,APP_BRIGHT,APP_VOLUME,APP_TORCH};
-#define SLIDER_BRIGHT 0
-#define SLIDER_VOLUME 1
-#define UI_PET_HAPPY 1
-static int opened=-1;static bool busy;
-static bool page_anim_busy(void){return busy;}
-static void ui_pet_set_state(int state,void *text){opened=APP_PET;}
-static void nursery_open(void){opened=APP_NURSERY;}
-static void status_open(void){opened=APP_STATUS;}
-static void wifi_open(void){opened=APP_WIFI;}
-static void tools_open(int kind){opened=kind?APP_TIMER:APP_SETTINGS;}
-static void slider_open(int kind){opened=kind?APP_VOLUME:APP_BRIGHT;}
-static void torch_open(void){opened=APP_TORCH;}
-#define NULL ((void *)0)
-'''
-        source += function('ui.c', 'static void app_open_index(int idx)')
-        source += r'''
-int main(void){
-    for(int i=0;i<9;i++){app_open_index(i);assert(opened==i);}
-    opened=-1;app_open_index(9);assert(opened==-1);
-    busy=true;app_open_index(0);assert(opened==-1);return 0;
-}
-'''
-        run_c(source)
-
-    def test_timer_preset_custom_and_controls(self):
+    def test_timer_preset_fills_only_then_start_button_runs(self):
         source = r'''#include <assert.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 typedef int lv_event_t;
+typedef int lv_color_t;
+typedef struct {int unused;} lv_obj_t;
 enum {WATCH_TIMER_IDLE,WATCH_TIMER_RUNNING,WATCH_TIMER_PAUSED,WATCH_TIMER_FINISHED};
-#define LV_OBJ_FLAG_HIDDEN 1
+#define COL_TEAL 1
+#define COL_SURF_HI 2
+#define COL_INK 3
+#define COL_TEXT 4
 static int state,ignored,refreshes,starts,pauses,resets,toasts;
-static int s_timer_select,s_timer_custom;
-static int rollers[3],*s_timer_rollers[]={rollers,rollers+1,rollers+2};
 static uint32_t selected,s_timer_total=60;
 static const uint32_t s_timer_choices[]={60,180,300,600,1800,3600};
+static lv_obj_t objects[13];
+static lv_obj_t *s_timer_set_value=&objects[0];
+static lv_obj_t *s_timer_preset_btn[6]={&objects[1],&objects[2],&objects[3],&objects[4],&objects[5],&objects[6]};
+static lv_obj_t *s_timer_preset_label[6]={&objects[7],&objects[8],&objects[9],&objects[10],&objects[11],&objects[12]};
 static bool tap_ignore(lv_event_t *e){return ignored;}
 static void *lv_event_get_user_data(lv_event_t *e){return (void *)(uintptr_t)*e;}
 static int watch_timer_state(void){return state;}
@@ -1350,33 +1398,58 @@ static void watch_timer_pause(void){pauses++;state=WATCH_TIMER_PAUSED;}
 static void watch_timer_reset(void){resets++;state=WATCH_TIMER_IDLE;}
 static void tools_refresh(void){refreshes++;}
 static void toast_show(const char *s){toasts++;}
-static int lv_roller_get_selected(int *r){return *r;}
-static void lv_obj_add_flag(int o,int f){}
-static void lv_obj_remove_flag(int o,int f){}
+static void lv_label_set_text(lv_obj_t *o,const char *t){}
+static void lv_obj_set_style_bg_color(lv_obj_t *o,lv_color_t c,int p){}
+static void lv_obj_set_style_text_color(lv_obj_t *o,lv_color_t c,int p){}
 '''
-        for signature in ('static void timer_choice_cb(lv_event_t *e)',
-                          'static void timer_custom_cb(lv_event_t *e)',
-                          'static void timer_custom_start_cb(lv_event_t *e)',
+        source += function('ui.c', 'static void timer_format(uint32_t seconds, char *out, size_t size)')
+        source += function('ui.c', 'static uint32_t timer_stepped_total(uint32_t total, int unit, int delta)')
+        source += function('ui.c', 'static int timer_preset_index(uint32_t seconds)')
+        source += function('ui.c', 'static void timer_set_refresh(void)')
+        for signature in ('static void timer_set_duration(uint32_t seconds)',
+                          'static void timer_preset_cb(lv_event_t *e)',
+                          'static void timer_step_cb(lv_event_t *e)',
+                          'static void timer_start_cb(lv_event_t *e)',
                           'static void timer_action_cb(lv_event_t *e)',
                           'static void timer_reset_cb(lv_event_t *e)'):
             source += function('ui.c', signature)
         source += r'''
 int main(void){
-    int event=2;ignored=1;timer_choice_cb(&event);assert(!starts);
-    ignored=0;timer_choice_cb(&event);assert(starts==1 && selected==300 && s_timer_total==300);
-    event=0;timer_choice_cb(&event);assert(starts==1 && selected==300);
+    int event=2;ignored=1;timer_preset_cb(&event);assert(!starts && selected==0);
+    ignored=0;timer_preset_cb(&event);
+    assert(selected==300 && s_timer_total==300 && starts==0);
+    /* 预设只填值：再点一次同一个预设也不能开跑 */
+    timer_preset_cb(&event);assert(starts==0 && s_timer_total==300);
+    /* 分钟 +1 / 秒 -1 只改设定值 */
+    event=(1<<8)|0;timer_step_cb(&event);assert(selected==360 && s_timer_total==360 && starts==0);
+    event=(((uintptr_t)(uint8_t)-1<<8)&0xffff)|1;timer_step_cb(&event);
+    assert(selected==359 && starts==0);
+    /* 上下限：1 秒 / 23:59:59 */
+    s_timer_total=1;event=(((uintptr_t)(uint8_t)-1<<8)&0xffff)|0;timer_step_cb(&event);
+    assert(selected==1);s_timer_total=300;
+    s_timer_total=86399;event=(1<<8)|1;timer_step_cb(&event);assert(selected==86399);
+    /* 没选时长点开始：只提示，不启动 */
+    s_timer_total=0;timer_start_cb(&event);assert(starts==0 && toasts==1);
+    s_timer_total=300;timer_start_cb(&event);assert(starts==1 && state==WATCH_TIMER_RUNNING);
+    /* 运行中预设和步进都锁住 */
+    timer_preset_cb(&(int){0});assert(starts==1 && s_timer_total==300);
+    timer_step_cb(&(int){(1<<8)|0});assert(s_timer_total==300);
+    /* 暂停 / 继续 / 完成后再来一次 / 取消 */
     timer_action_cb(&event);assert(pauses==1 && state==WATCH_TIMER_PAUSED);
     timer_action_cb(&event);assert(starts==2 && state==WATCH_TIMER_RUNNING);
-    timer_reset_cb(&event);assert(resets==1 && state==WATCH_TIMER_IDLE);
-    timer_custom_start_cb(&event);assert(toasts==1 && starts==2);
-    rollers[0]=23;rollers[1]=59;rollers[2]=59;
-    timer_custom_start_cb(&event);assert(starts==3 && selected==86399 && s_timer_total==86399);
-    state=WATCH_TIMER_FINISHED;timer_action_cb(&event);assert(starts==4);
-    state=WATCH_TIMER_FINISHED;timer_reset_cb(&event);assert(state==WATCH_TIMER_IDLE);
-    event=6;timer_choice_cb(&event);assert(starts==4);return 0;
+    state=WATCH_TIMER_FINISHED;timer_action_cb(&event);assert(starts==3);
+    state=WATCH_TIMER_FINISHED;timer_reset_cb(&event);assert(resets==1 && state==WATCH_TIMER_IDLE);
+    return 0;
 }
 '''
         run_c(source)
+        tools_build = function('ui.c', 'static void build_tools(void)')
+        self.assertIn('"熄屏"', tools_build)
+        self.assertIn('"到点会亮屏"', tools_build)
+        self.assertNotIn('"系统设置"', tools_build)
+        self.assertNotIn('"到点提醒', tools_build)
+        preset = function('ui.c', 'static void timer_preset_cb(lv_event_t *e)')
+        self.assertNotIn('watch_timer_start', preset)
 
     def test_timer_monotonic_pause_resume_and_one_shot_alarm(self):
         source = r'''#include <assert.h>
@@ -1974,7 +2047,10 @@ static atomic_uint s_progress_tick;
 static unsigned s_tts_packets,s_tts_bytes;
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
+#define VOICE_PREBUFFER_MIN 6
 static uint32_t s_caption_received_ms;
+static atomic_uint s_prebuffer_target;
+static atomic_bool s_first_reply;
 static unsigned xTaskGetTickCount(void){return 100;}
 
 static atomic_uint s_epoch;
@@ -2599,7 +2675,7 @@ static int wifi_get_state(void){return EPW_WIFI_CONNECTED;}
 static void vTaskDelay(int ticks){if(!s_requested)longjmp(finished,1);if(ticks!=500)s_requested=false;}
 static void pet_set(const char *emotion,const char *text){}
 static bool voice_client_set_active(bool value){s_requested=value;return value;}
-static bool ws_start(void){s_connected=true;s_hello=mode!=2;s_listening=mode!=10;s_reply_active=mode==9 || mode==10;s_interrupt_requested=mode==10;return true;}
+static bool ws_start(void){s_connected=true;s_hello=mode!=2;s_listening=mode==11 || mode!=10;s_reply_active=mode==9 || mode==10;s_interrupt_requested=mode==10 || mode==11;return true;}
 static bool tts_pump(void){return false;}
 static void tts_close(void){}
 static bool open_audio(void){opens++;s_enc=(void*)1;return true;}
@@ -2618,7 +2694,7 @@ static void close_session(void){closes++;free(s_message);s_message=NULL;close_au
         source += function('voice_client.c', 'static void voice_task(void *arg)')
         source += r'''
 int main(void){
-    for(mode=0;mode<11;mode++){
+    for(mode=0;mode<12;mode++){
         reads=encodes=sends=opens=closes=interrupts=0;s_requested=true;s_epoch=1;s_enc=NULL;
         if(setjmp(finished)==0)voice_task(NULL);
         assert(closes==(mode==7?2:mode==8?3:1));
@@ -2626,6 +2702,7 @@ int main(void){
         else if(mode==8){assert(sends==3 && opens==3);}
         else if(mode==9){assert(reads==3 && encodes==2 && sends==2 && interrupts==1);}
         else if(mode==10){assert(reads==1 && sends==1 && interrupts==1 && !s_interrupt_requested);}
+        else if(mode==11){assert(reads==1 && encodes==1 && sends==1 && interrupts==1 && s_listening && !s_requested);}
         else if(mode==0){assert(reads==1 && encodes==1 && sends==1);}
         else if(mode==4){assert(reads==3 && encodes==2 && sends==2);}
         else if(mode==5){assert(reads==1 && encodes==1 && sends==1);}
@@ -2638,27 +2715,39 @@ int main(void){
 '''
         run_c(source)
 
-    def test_chat_tap_interrupt_is_async_and_only_during_reply(self):
+    def test_voice_interrupt_allowed_while_listening_or_replying_only(self):
         source = r'''#include <assert.h>
 #include <stdbool.h>
 #include <stdatomic.h>
-static atomic_bool s_requested,s_reply_active,s_interrupt_requested;
+static atomic_bool s_requested,s_connected,s_hello,s_listening,s_reply_active,s_interrupt_requested;
 static bool voice_client_is_active(void){return s_requested;}
 '''
-        source += function('voice_client.c', 'void voice_client_interrupt(void)')
+        source += function('voice_client.c', 'bool voice_client_can_interrupt(void)')
+        source += function('voice_client.c', 'bool voice_client_interrupt(void)')
         source += r'''
 int main(void){
- voice_client_interrupt();assert(!s_interrupt_requested);
- s_requested=true;voice_client_interrupt();assert(!s_interrupt_requested);
- s_reply_active=true;voice_client_interrupt();assert(s_interrupt_requested);
- s_interrupt_requested=false;s_requested=false;voice_client_interrupt();assert(!s_interrupt_requested);
+ s_requested=true;s_connected=true;s_hello=true;
+ assert(!voice_client_can_interrupt());
+ assert(!voice_client_interrupt() && !s_interrupt_requested);
+ s_listening=true;assert(voice_client_can_interrupt());
+ assert(voice_client_interrupt() && s_interrupt_requested);
+ s_interrupt_requested=false;s_listening=false;s_reply_active=true;
+ assert(voice_client_can_interrupt() && voice_client_interrupt() && s_interrupt_requested);
+ s_interrupt_requested=false;s_connected=false;
+ assert(!voice_client_can_interrupt() && !voice_client_interrupt() && !s_interrupt_requested);
+ s_connected=true;s_hello=false;assert(!voice_client_can_interrupt());
+ s_hello=true;s_reply_active=false;s_listening=true;s_requested=false;
+ assert(!voice_client_can_interrupt() && !voice_client_interrupt());
  return 0;
 }
 '''
         run_c(source)
         touch = function('ui.c', 'static void pet_touch_cb(lv_event_t *e)')
-        self.assertIn('voice_client_interrupt();', touch)
-        self.assertLess(touch.index('tap_ignore(e)'), touch.index('voice_client_interrupt();'))
+        self.assertIn('voice_client_interrupt()', touch)
+        self.assertLess(touch.index('tap_ignore(e)'), touch.index('voice_client_interrupt()'))
+        stop = function('ui.c', 'static void pet_stop_cb(lv_event_t *e)')
+        self.assertIn('voice_client_interrupt()', stop)
+        self.assertLess(stop.index('tap_ignore(e)'), stop.index('voice_client_interrupt()'))
 
     def test_voice_wait_timeouts_and_tick_wrap(self):
         source = r'''#include <assert.h>
@@ -2745,65 +2834,161 @@ static void initialize(void){
         self.assertEqual(catalog.count('vTaskDeleteWithCaps(NULL)'), 2)
         self.assertNotIn('vTaskDelete(NULL)', catalog)
 
-    def test_nursery_checkin_countdown_display(self):
+    def test_nursery_checkin_slot_states(self):
         source = r'''#include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdarg.h>
 #include <string.h>
 #include "nursery.h"
 typedef int lv_color_t;
-typedef struct {char text[100]; int value; bool hidden;} lv_obj_t;
-static lv_obj_t objects[8], *s_nur_checkin_time=&objects[0], *s_nur_checkin_bar=&objects[1];
-static lv_obj_t *s_nur_slot_label[3]={&objects[2],&objects[3],&objects[4]};
-static lv_obj_t *s_nur_slot[3]={&objects[5],&objects[6],&objects[7]};
-#define COL_BG 0
+typedef struct {char text[100]; bool hidden;} lv_obj_t;
+static lv_obj_t objects[12];
+static lv_obj_t *s_nur_slot_name[3]={&objects[0],&objects[1],&objects[2]};
+static lv_obj_t *s_nur_slot_sub[3]={&objects[3],&objects[4],&objects[5]};
+static lv_obj_t *s_nur_slot_end[3]={&objects[6],&objects[7],&objects[8]};
+static lv_obj_t *s_nur_slot[3]={&objects[9],&objects[10],&objects[11]};
 #define COL_MUTED 1
-#define COL_SURF 2
-#define COL_LINE 3
-#define COL_TEAL 4
-#define COL_AMBER 5
-#define LV_ANIM_OFF 0
+#define COL_LINE 2
+#define COL_TEAL 3
+#define COL_AMBER 4
 #define LV_OBJ_FLAG_HIDDEN 1
-static lv_color_t lv_color_hex(int c){return c;}
 static void lv_label_set_text(lv_obj_t *o,const char *t){snprintf(o->text,sizeof(o->text),"%s",t);}
-static void lv_label_set_text_fmt(lv_obj_t *o,const char *fmt,...){va_list ap;va_start(ap,fmt);vsnprintf(o->text,sizeof(o->text),fmt,ap);va_end(ap);}
-static void lv_bar_set_value(lv_obj_t *o,int v,int a){o->value=v;}
 static void lv_obj_set_style_text_color(lv_obj_t *o,int c,int p){}
-static void lv_obj_set_style_bg_color(lv_obj_t *o,int c,int p){}
 static void lv_obj_set_style_border_color(lv_obj_t *o,int c,int p){}
 static void lv_obj_add_flag(lv_obj_t *o,int f){o->hidden=true;}
 static void lv_obj_remove_flag(lv_obj_t *o,int f){o->hidden=false;}
 static epw_nursery_session_t sessions[3];
 static epw_nursery_state_t state=EPW_NURSERY_PLAYING;
-static const char *status="";
 static void nursery_checkin_session_mock(int i,epw_nursery_session_t *out){*out=sessions[i];}
 #define nursery_checkin_session nursery_checkin_session_mock
 static epw_nursery_state_t nursery_get_state_mock(void){return state;}
 #define nursery_get_state nursery_get_state_mock
-static const char *nursery_status_text_mock(void){return status;}
-#define nursery_status_text nursery_status_text_mock
 '''
         source += function('ui.c', 'static void nur_format_time(uint32_t ms, char *out, size_t size)')
         source += function('ui.c', 'static void nursery_update_checkin(void)')
         source += r'''int main(void){
     for(int i=0;i<3;i++)sessions[i].target_minutes=15;
-    nursery_update_checkin();assert(s_nur_checkin_bar->hidden);
+    nursery_update_checkin();
+    assert(strcmp(s_nur_slot_name[0]->text,"早安")==0);
+    assert(strcmp(s_nur_slot_name[1]->text,"午后")==0);
+    assert(strcmp(s_nur_slot_name[2]->text,"晚安")==0);
+    assert(strcmp(s_nur_slot_sub[0]->text,"15分钟")==0);
+    assert(s_nur_slot_end[0]->hidden);
     sessions[0].active=true;sessions[0].elapsed_seconds=1;
-    nursery_update_checkin();assert(strstr(s_nur_checkin_time->text,"剩余 14:59"));
-    assert(strstr(s_nur_slot_label[0]->text,"14:59") && !s_nur_checkin_bar->hidden);
-    sessions[0].elapsed_seconds=2;nursery_update_checkin();assert(strstr(s_nur_checkin_time->text,"14:58"));
-    sessions[0].elapsed_seconds=450;nursery_update_checkin();assert(s_nur_checkin_bar->value==500);
-    sessions[0].paused=true;nursery_update_checkin();assert(strstr(s_nur_checkin_time->text,"暂停 7:30"));
-    sessions[0].paused=false;state=EPW_NURSERY_PAUSED;nursery_update_checkin();assert(strstr(s_nur_checkin_time->text,"暂停"));
-    state=EPW_NURSERY_LOADING;nursery_update_checkin();assert(strstr(s_nur_checkin_time->text,"等待"));
-    sessions[0].elapsed_seconds=9999;nursery_update_checkin();assert(strstr(s_nur_checkin_time->text,"0:00") && s_nur_checkin_bar->value==1000);
-    sessions[0].active=false;sessions[0].done=true;status="打卡完成";
-    nursery_update_checkin();assert(strstr(s_nur_checkin_time->text,"你真棒") && s_nur_checkin_bar->hidden);
-    assert(strstr(s_nur_slot_label[0]->text,"完成"));
+    nursery_update_checkin();
+    assert(strcmp(s_nur_slot_sub[0]->text,"剩余 14:59")==0 && !s_nur_slot_end[0]->hidden);
+    assert(s_nur_slot_end[1]->hidden);
+    sessions[0].elapsed_seconds=2;nursery_update_checkin();
+    assert(strcmp(s_nur_slot_sub[0]->text,"剩余 14:58")==0);
+    sessions[0].paused=true;nursery_update_checkin();
+    assert(strcmp(s_nur_slot_sub[0]->text,"暂停 14:58")==0);
+    sessions[0].paused=false;state=EPW_NURSERY_PAUSED;nursery_update_checkin();
+    assert(strcmp(s_nur_slot_sub[0]->text,"暂停 14:58")==0);
+    state=EPW_NURSERY_LOADING;nursery_update_checkin();
+    assert(strcmp(s_nur_slot_sub[0]->text,"等待 14:58")==0);
+    state=EPW_NURSERY_PLAYING;sessions[0].elapsed_seconds=9999;nursery_update_checkin();
+    assert(strcmp(s_nur_slot_sub[0]->text,"剩余 0:00")==0 && !s_nur_slot_end[0]->hidden);
+    sessions[0].active=false;sessions[0].done=true;nursery_update_checkin();
+    assert(strcmp(s_nur_slot_sub[0]->text,"完成")==0 && s_nur_slot_end[0]->hidden);
+    return 0;
 }'''
         run_c(source)
+
+    def test_nursery_checkin_end_button_and_wish_visibility(self):
+        wish = function('ui.c', 'static bool nur_wish_visible(int stars, int goal, bool ready, bool redeemed)')
+        run_c(r'''#include <assert.h>
+#include <stdbool.h>
+''' + wish + r'''
+int main(void){
+    assert(!nur_wish_visible(0,5,false,false));
+    assert(!nur_wish_visible(2,5,false,false));
+    assert(nur_wish_visible(3,5,false,false));
+    assert(nur_wish_visible(5,5,false,false));
+    assert(nur_wish_visible(0,5,true,false));
+    assert(nur_wish_visible(0,5,false,true));
+    assert(!nur_wish_visible(0,0,false,false));
+    assert(!nur_wish_visible(4,0,false,false));
+    return 0;
+}''')
+
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#include "nursery.h"
+typedef int lv_event_t;
+static int ends,toasts,updates;
+static uint32_t s_nur_ui_ms;
+static epw_nursery_session_t sessions[3];
+static bool tap_ignore(lv_event_t *e){return false;}
+static void lv_event_stop_bubbling(lv_event_t *e){}
+static void *lv_event_get_user_data(lv_event_t *e){return (void *)(uintptr_t)*e;}
+static void nursery_checkin_session_mock(int i,epw_nursery_session_t *out){*out=sessions[i];}
+#define nursery_checkin_session nursery_checkin_session_mock
+static void nursery_checkin_end_mock(void){ends++;}
+#define nursery_checkin_end nursery_checkin_end_mock
+static void toast_show(const char *s){toasts++;}
+static void nursery_update_ui(void){updates++;}
+'''
+        source += function('ui.c', 'static void nur_slot_end_cb(lv_event_t *e)')
+        source += r'''int main(void){
+    int slot=(int)(intptr_t)1;
+    sessions[1].active=false;
+    nur_slot_end_cb(&slot);assert(ends==0 && updates==0);
+    sessions[1].active=true;
+    nur_slot_end_cb(&slot);assert(ends==1 && toasts==1 && updates==1);
+    return 0;
+}'''
+        run_c(source)
+
+    def test_settings_and_timer_swipe_back(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#define LV_EVENT_GESTURE 0
+#define LV_DIR_RIGHT 1
+#define LV_DIR_LEFT 2
+#define LV_DIR_TOP 3
+#define LV_DIR_BOTTOM 4
+enum {WATCH_TIMER_IDLE,WATCH_TIMER_RUNNING};
+typedef int lv_event_t;
+typedef int lv_indev_t;
+typedef int lv_dir_t;
+#define NULL ((void *)0)
+static int closes,steps,step_dir,code=LV_EVENT_GESTURE,dir=LV_DIR_RIGHT;
+static bool busy;
+static int s_tools_kind;
+static int timer_state;
+static bool page_anim_busy(void){return busy;}
+static int lv_event_get_code(lv_event_t *e){return code;}
+static lv_indev_t *lv_event_get_indev(lv_event_t *e){return (lv_indev_t *)1;}
+static int lv_indev_get_gesture_dir(lv_indev_t *i){return dir;}
+static void tools_close(void){closes++;}
+static void idle_step(int delta){steps++;step_dir=delta;}
+static int watch_timer_state(void){return timer_state;}
+'''
+        source += function('ui.c', 'static void tools_gesture_cb(lv_event_t *e)')
+        source += r'''
+int main(void){
+    busy=true;tools_gesture_cb(&(int){0});assert(!closes);
+    busy=false;code=1;tools_gesture_cb(&(int){0});assert(!closes);
+    code=LV_EVENT_GESTURE;dir=LV_DIR_RIGHT;s_tools_kind=0;tools_gesture_cb(&(int){0});
+    assert(closes==1 && steps==0);
+    s_tools_kind=1;tools_gesture_cb(&(int){0});assert(closes==2 && steps==0);
+    s_tools_kind=0;timer_state=WATCH_TIMER_IDLE;
+    dir=LV_DIR_TOP;tools_gesture_cb(&(int){0});assert(steps==1 && step_dir==1);
+    dir=LV_DIR_BOTTOM;tools_gesture_cb(&(int){0});assert(steps==2 && step_dir==-1);
+    dir=LV_DIR_LEFT;tools_gesture_cb(&(int){0});assert(steps==2);
+    timer_state=WATCH_TIMER_RUNNING;dir=LV_DIR_TOP;tools_gesture_cb(&(int){0});assert(steps==3);
+    s_tools_kind=1;dir=LV_DIR_TOP;tools_gesture_cb(&(int){0});assert(steps==3);
+    return 0;
+}'''
+        run_c(source)
+        build = function('ui.c', 'static void build_tools(void)')
+        self.assertIn('lv_obj_add_event_cb(s_tools, tools_gesture_cb, LV_EVENT_GESTURE', build)
+        self.assertIn('timer_start_cb', build)
+        self.assertIn('timer_preset_cb', build)
 
     def test_nursery_player_commands_resume_checkin(self):
         source = r'''#include <assert.h>
@@ -3082,7 +3267,10 @@ int main(void){
 #define ESP_LOGW(...) ((void)0)
 #define VOICE_MAX_PCM 1920
 #define VOICE_MAX_OPUS 2048
-#define VOICE_PREBUFFER_PACKETS TEST_PREBUFFER
+#define VOICE_PREBUFFER_MIN 6
+#define VOICE_PREBUFFER_MAX 16
+#define VOICE_PREBUFFER_STEP 4
+#define VOICE_PREBUFFER_FIRST 3
 #define VOICE_SAMPLE_RATE 16000
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
@@ -3104,6 +3292,8 @@ static void captions_clear(void){s_tts_written_samples=0;}
 static void caption_pump(void){}
 #define CONFIG_EPW_VOICE_BARGE_IN 0
 static bool s_tts_output,active=true,s_barge_ready,s_tts_buffered;
+static atomic_bool s_first_reply;
+static atomic_uint s_prebuffer_target=VOICE_PREBUFFER_MIN;
 static void *s_enc=(void*)1;static int s_mic;
 static bool session_current(void){return active;}
 static bool open_audio(void){return true;}
@@ -3146,14 +3336,16 @@ int main(void){
  assert(tts_pump() && listens==1 && !s_reply_active && closed==1 && dec_closed==1 && mic_closed==0);
  for(int i=0;i<64;i++)assert(tts_enqueue(packet,5));assert(!tts_enqueue(packet,5));
  tts_close();assert(!queued && writes==4);
+ s_first_reply=false;s_prebuffer_target=VOICE_PREBUFFER_MIN;s_tts_end=false;
  assert(tts_enqueue(packet,5));assert(!tts_pump() && queued==1 && writes==4);
- for(int i=1;i<VOICE_PREBUFFER_PACKETS;i++)assert(tts_enqueue(packet,5));
- assert(tts_pump() && queued==VOICE_PREBUFFER_PACKETS-1 && writes==6);
- for(int i=0;i<VOICE_PREBUFFER_PACKETS-1;i++)assert(tts_pump());
+ for(int i=1;i<VOICE_PREBUFFER_MIN;i++)assert(tts_enqueue(packet,5));
+ assert(tts_pump() && queued==VOICE_PREBUFFER_MIN-1 && writes==6);
+ for(int i=0;i<VOICE_PREBUFFER_MIN-1;i++)assert(tts_pump());
  assert(!queued);assert(tts_pump());
- int before=writes;assert(tts_enqueue(packet,5));assert(tts_pump() && writes==before);
+ int before=writes;
+ assert(tts_enqueue(packet,5));assert(tts_pump() && writes==before && s_prebuffer_target==VOICE_PREBUFFER_MIN+VOICE_PREBUFFER_STEP);
  s_tts_end=true;assert(tts_pump() && writes==before+2);assert(tts_pump());
- tts_close();assert(!s_tts_buffered);
+ tts_close();assert(!s_tts_buffered && !s_first_reply);
  control_pending=true;active=true;s_tts_end=true;int old_listens=listens;
  assert(tts_pump() && s_control_complete && !active && listens==old_listens);
  control_pending=false;
@@ -3164,8 +3356,7 @@ int main(void){
  return 0;
 }
 '''
-        threshold = re.search(r'#define VOICE_PREBUFFER_PACKETS (\d+)', (MAIN / 'voice_client.c').read_text())[1]
-        run_c(source.replace('TEST_PREBUFFER', threshold))
+        run_c(source)
 
     def test_tts_binary_fragments_are_queued_once(self):
         source = r'''#include <assert.h>
@@ -3298,6 +3489,289 @@ int main(void){
             characters |= set(''.join(v for v in tokens if v not in ('', '\n', 'Aa', 'a-z', '1#', '2#', 'space', 'Del', 'OK')))
             self.assertEqual(len(tokens), 14)
         self.assertEqual(set(map(chr, range(32,127))) - characters, set())
+
+
+    def _tts_pump_source(self, extra):
+        source = TTS_PUMP_HARNESS
+        for signature in ('static bool tts_enqueue(const void *data, size_t bytes)',
+                          'static void tts_close(void)',
+                          'static bool tts_pump(void)'):
+            source += function('voice_client.c', signature)
+        return source + extra
+
+    def test_prebuffer_adaptive_raises_on_underrun_and_caps(self):
+        voice = (MAIN / 'voice_client.c').read_text()
+        for name, value in (('VOICE_PREBUFFER_MIN', 6), ('VOICE_PREBUFFER_MAX', 16),
+                            ('VOICE_PREBUFFER_STEP', 4), ('VOICE_PREBUFFER_FIRST', 3)):
+            self.assertEqual(int(re.search(r'#define %s\s+(\d+)' % name, voice)[1]), value)
+        self.assertNotIn('VOICE_PREBUFFER_PACKETS', voice)
+        source = self._tts_pump_source(r'''
+int main(void){
+ char packet[5]={0};
+ int t1=VOICE_PREBUFFER_MIN,t2=t1+VOICE_PREBUFFER_STEP,t3=t2+VOICE_PREBUFFER_STEP,t4=VOICE_PREBUFFER_MAX;
+ int before;
+ /* 首轮按最小目标 6 包起播 */
+ for(int i=0;i<t1-1;i++)assert(tts_enqueue(packet,5));
+ assert(!tts_pump() && queued==t1-1 && writes==0);
+ assert(tts_enqueue(packet,5));
+ assert(tts_pump() && queued==t1-1 && writes==2);
+ for(int i=0;i<t1-1;i++)assert(tts_pump());
+ assert(!queued);
+ assert(tts_pump() && s_prebuffer_target==t2);
+ /* 欠载后升到 10：9 包仍不起播 */
+ before=writes;
+ for(int i=0;i<t2-1;i++)assert(tts_enqueue(packet,5));
+ assert(tts_pump() && writes==before);
+ assert(tts_enqueue(packet,5));
+ assert(tts_pump() && writes==before+2);
+ for(int i=0;i<t2-1;i++)assert(tts_pump());
+ assert(!queued);
+ assert(tts_pump() && s_prebuffer_target==t3);
+ /* 14+4 越界，封顶 16 */
+ before=writes;
+ for(int i=0;i<t3-1;i++)assert(tts_enqueue(packet,5));
+ assert(tts_pump() && writes==before);
+ assert(tts_enqueue(packet,5));
+ assert(tts_pump() && writes==before+2);
+ for(int i=0;i<t3-1;i++)assert(tts_pump());
+ assert(!queued);
+ assert(tts_pump() && s_prebuffer_target==t4);
+ /* 16 包封顶，欠载不再升档 */
+ before=writes;
+ for(int i=0;i<t4-1;i++)assert(tts_enqueue(packet,5));
+ assert(tts_pump() && writes==before);
+ assert(tts_enqueue(packet,5));
+ assert(tts_pump() && writes==before+2);
+ for(int i=0;i<t4-1;i++)assert(tts_pump());
+ assert(!queued);
+ assert(tts_pump() && s_prebuffer_target==t4);
+ /* 结束标记即使只剩 1 包也起播并恢复倾听 */
+ before=writes;
+ assert(tts_enqueue(packet,5));s_tts_end=true;
+ assert(tts_pump() && writes==before+2 && listens==0);
+ assert(tts_pump() && listens==1 && !s_reply_active && !s_tts_output);
+ return 0;
+}
+''')
+        run_c(source)
+
+    def test_short_reply_starts_on_end(self):
+        source = self._tts_pump_source(r'''
+int main(void){
+ char packet[5]={0};
+ s_first_reply=true;
+ assert(tts_enqueue(packet,5) && tts_enqueue(packet,5));
+ assert(!tts_pump() && writes==0 && queued==2);
+ s_tts_end=true;
+ assert(tts_pump() && writes==2 && !s_first_reply);
+ return 0;
+}
+''')
+        run_c(source)
+
+    def test_prebuffer_target_resets_on_new_session(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#define VOICE_PREBUFFER_MIN 6
+static atomic_bool s_requested,s_ready;
+static atomic_uint s_epoch;
+static atomic_uint s_prebuffer_target=16;
+'''
+        source += function('voice_client.c', 'bool voice_client_set_active(bool active)')
+        source += r'''
+int main(void){
+ s_ready=true;s_requested=true;s_prebuffer_target=16;
+ assert(voice_client_set_active(true) && s_prebuffer_target==16);
+ assert(!voice_client_set_active(false) && s_prebuffer_target==16);
+ assert(voice_client_set_active(true) && s_prebuffer_target==VOICE_PREBUFFER_MIN && s_epoch==2);
+ s_ready=false;assert(!voice_client_set_active(true));
+ return 0;
+}
+'''
+        run_c(source)
+
+    def test_first_reply_starts_after_three_packets(self):
+        source = self._tts_pump_source(r'''
+int main(void){
+ char packet[5]={0};
+ s_first_reply=true;
+ assert(tts_enqueue(packet,5) && tts_enqueue(packet,5));
+ assert(!tts_pump() && writes==0 && queued==2);
+ assert(tts_enqueue(packet,5));
+ assert(tts_pump() && writes==2 && queued==2 && !s_first_reply);
+ assert(tts_pump() && tts_pump() && !queued);
+ /* 首句快起只作用于起播；队列见底后仍按自适应目标加长 */
+ assert(tts_pump() && s_prebuffer_target==VOICE_PREBUFFER_MIN+VOICE_PREBUFFER_STEP);
+ tts_close();
+ s_first_reply=true;s_prebuffer_target=VOICE_PREBUFFER_MIN;
+ int before=writes;
+ assert(tts_enqueue(packet,5) && tts_enqueue(packet,5));
+ assert(!tts_pump() && writes==before);
+ assert(tts_enqueue(packet,5));
+ assert(tts_pump() && writes==before+2);
+ return 0;
+}
+''')
+        run_c(source)
+
+    def test_early_start_keeps_caption_in_sync(self):
+        source = r'''#include <assert.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#define ESP_CODEC_DEV_OK 0
+#define ESP_LOGW(...) ((void)0)
+#define ESP_LOGI(...) ((void)0)
+#define VOICE_BARGE_SAMPLES 512
+#define VOICE_MAX_PCM 1920
+#define VOICE_MAX_OPUS 2048
+#define VOICE_SAMPLE_RATE 16000
+#define MALLOC_CAP_SPIRAM 1
+#define MALLOC_CAP_8BIT 2
+#define ESP_AUDIO_ERR_OK 0
+#define ESP_OPUS_DEC_FRAME_DURATION_120_MS 8
+#define ESP_OPUS_DEC_CONFIG_DEFAULT() {0}
+#define CONFIG_EPW_VOICE_BARGE_IN 0
+#define pdTRUE 1
+#define pdMS_TO_TICKS(x) (x)
+#define VOICE_PREBUFFER_MIN 6
+#define VOICE_PREBUFFER_MAX 16
+#define VOICE_PREBUFFER_STEP 4
+#define VOICE_PREBUFFER_FIRST 3
+typedef struct {size_t bytes;uint8_t data[];} voice_packet_t;
+typedef struct {uint32_t at_samples;char emotion[32];char text[];}voice_caption_t;
+typedef struct {int sample_rate,channel,frame_duration;}esp_opus_dec_cfg_t;
+typedef struct {uint8_t *buffer;size_t len,consumed;}esp_audio_dec_in_raw_t;
+typedef struct {uint8_t *buffer;size_t len,decoded_size;}esp_audio_dec_out_frame_t;
+typedef int esp_audio_dec_info_t;
+static void *s_tts_queue=(void*)1,*s_caption_queue=(void*)2,*s_dec;
+static uint8_t *s_tts_pcm;
+static uint32_t s_tts_written_samples,s_caption_received_ms;
+static bool s_tts_output,s_tts_buffered,s_barge_ready,active=true;
+static atomic_bool s_first_reply;
+static atomic_uint s_prebuffer_target=VOICE_PREBUFFER_MIN;
+static void *s_enc=(void*)1;static int s_mic;
+static atomic_bool s_tts_end,s_reply_active;
+static char s_reply_emotion[32],shown[64];static int updates;
+static voice_packet_t *queue[64];static int queued,writes,closed,dec_closed;
+static voice_caption_t *cq[8];static int cq_count;
+static bool session_current(void){return active;}
+static bool open_audio(void){return true;}
+static int audio_get_playback_volume(void){return 0;}
+static bool voice_barge_begin(void){return true;}
+static int esp_codec_dev_read(int dev,void *p,size_t n){memset(p,0,n);return 0;}
+static bool voice_barge_feed(void *m,const void *r,size_t n){return false;}
+static unsigned uxQueueMessagesWaiting(void *q){return queued;}
+static void *heap_caps_malloc(size_t n,int caps){return malloc(n);}
+static int xQueueSend(void *q,void *p,int wait){
+ if(q==s_tts_queue){if(queued==64)return 0;queue[queued++]=*(voice_packet_t**)p;return 1;}
+ if(cq_count==8)return 0;cq[cq_count++]=*(voice_caption_t**)p;return 1;
+}
+static int xQueuePeek(void *q,void *p,int wait){
+ if(!cq_count)return 0;*(voice_caption_t**)p=cq[0];return 1;
+}
+static int xQueueReceive(void *q,void *p,int wait){
+ if(q==s_tts_queue){if(!queued)return 0;*(voice_packet_t**)p=queue[0];memmove(queue,queue+1,--queued*sizeof(*queue));return 1;}
+ if(!cq_count)return 0;*(voice_caption_t**)p=cq[0];memmove(cq,cq+1,--cq_count*sizeof(*cq));return 1;
+}
+static void pet_post(const char *e,const char *t,bool spoken){assert(spoken);updates++;snprintf(shown,sizeof(shown),"%s",t);}
+static void audio_playback_close(void){closed++;}
+static int audio_playback_open(void){return 1;}
+static int esp_opus_dec_open(void *cfg,size_t n,void **d){*d=(void*)1;return 0;}
+static int esp_opus_dec_close(void *d){dec_closed++;return 0;}
+static int esp_opus_dec_decode(void *d,esp_audio_dec_in_raw_t *raw,esp_audio_dec_out_frame_t *frame,esp_audio_dec_info_t *info){raw->consumed=raw->len;frame->decoded_size=1920;return 0;}
+static int audio_playback_write(void *pcm,size_t n){assert(n<=1024 && n>0);writes++;return n;}
+static void pet_set(const char *a,const char *b){}
+static bool voice_client_set_active(bool a){active=a;return a;}
+static void vTaskDelay(int n){}
+static void send_listen_start(void){}
+static bool watch_control_pending(void){return false;}
+static bool s_control_complete;
+static bool tts_interrupt(bool with_preroll){return true;}
+'''
+        for signature in ('static bool caption_enqueue(uint32_t at_ms, const char *text)',
+                          'static void caption_pump(void)',
+                          'static void captions_clear(void)',
+                          'static bool tts_enqueue(const void *data, size_t bytes)',
+                          'static void tts_close(void)',
+                          'static bool tts_pump(void)'):
+            source += function('voice_client.c', signature)
+        source += r'''
+int main(void){
+ char packet[5]={0};
+ s_first_reply=true;
+ assert(caption_enqueue(120,"Hi"));
+ assert(tts_enqueue(packet,5) && tts_enqueue(packet,5) && tts_enqueue(packet,5));
+ /* 首句虽然 3 包就起播，字幕仍要等对应 PCM 真正写入 */
+ assert(tts_pump() && writes==2 && updates==0 && s_tts_written_samples==960);
+ assert(tts_pump() && writes==4 && updates==1 && !strcmp(shown,"Hi") && s_tts_written_samples==1920);
+ return 0;
+}
+'''
+        run_c(source)
+
+    def test_listening_interrupt_branch_aborts_and_relistens(self):
+        voice = (MAIN / 'voice_client.c').read_text()
+        start = voice.index('if (atomic_exchange(&s_interrupt_requested, false)')
+        branch = voice[start:voice.index('continue;', start)]
+        self.assertIn('s_listening', branch)
+        self.assertIn('s_reply_active', branch)
+        self.assertIn('tts_interrupt(false)', branch)
+
+    def test_pet_stop_overlay_is_transparent_gesture_passthrough_and_interrupts(self):
+        ui = (MAIN / 'ui.c').read_text()
+        self.assertIn('static lv_obj_t *s_pet_stop;', ui)
+        build = function('ui.c', 'static void build_pet(void)')
+        layer = build.index('s_pet_stop = lv_obj_create(s_pet)')
+        self.assertGreater(layer, build.index('s_pet_img = lv_image_create(s_pet)'))
+        self.assertIn('lv_obj_remove_style_all(s_pet_stop)', build)
+        self.assertIn('lv_obj_add_flag(s_pet_stop, LV_OBJ_FLAG_CLICKABLE)', build)
+        self.assertIn('lv_obj_add_flag(s_pet_stop, LV_OBJ_FLAG_GESTURE_BUBBLE)', build)
+        self.assertIn('lv_obj_add_flag(s_pet_stop, LV_OBJ_FLAG_HIDDEN)', build)
+        self.assertIn('lv_obj_add_event_cb(s_pet_stop, pet_stop_cb, LV_EVENT_CLICKED, NULL)', build)
+        timer = function('ui.c', 'static void pet_anim_timer_cb(lv_timer_t *timer)')
+        self.assertIn('voice_client_can_interrupt()', timer)
+        self.assertIn('s_pet_stop', timer)
+        # 透明层冒泡到 s_pet：左右滑退出/聊天，上下滑在可打断阶段沿用猫咪语义。
+        page = function('ui.c', 'static void pet_page_gesture_cb(lv_event_t *e)')
+        self.assertIn('voice_client_can_interrupt()', page)
+        self.assertIn('pet_area_gesture_cb(e)', page)
+        area = function('ui.c', 'static void pet_area_gesture_cb(lv_event_t *e)')
+        self.assertIn('LV_DIR_BOTTOM', area)
+        self.assertIn('voice_client_set_active(false)', area)
+
+
+    def test_launcher_nine_function_entries(self):
+        source = r'''#include <assert.h>
+#include <stdbool.h>
+enum {APP_PET,APP_NURSERY,APP_STATUS,APP_WIFI,APP_SETTINGS,APP_TIMER,APP_BRIGHT,APP_VOLUME,APP_TORCH};
+#define SLIDER_BRIGHT 0
+#define SLIDER_VOLUME 1
+#define UI_PET_HAPPY 1
+static int opened=-1;static bool busy;
+static bool page_anim_busy(void){return busy;}
+static void ui_pet_set_state(int state,void *text){opened=APP_PET;}
+static void nursery_open(void){opened=APP_NURSERY;}
+static void status_open(void){opened=APP_STATUS;}
+static void wifi_open(void){opened=APP_WIFI;}
+static void tools_open(int kind){opened=kind?APP_TIMER:APP_SETTINGS;}
+static void slider_open(int kind){opened=kind?APP_VOLUME:APP_BRIGHT;}
+static void torch_open(void){opened=APP_TORCH;}
+#define NULL ((void *)0)
+'''
+        source += function('ui.c', 'static void app_open_index(int idx)')
+        source += r'''
+int main(void){
+    for(int i=0;i<9;i++){app_open_index(i);assert(opened==i);}
+    opened=-1;app_open_index(9);assert(opened==-1);
+    busy=true;app_open_index(0);assert(opened==-1);return 0;
+}
+'''
+        run_c(source)
 
 
 if __name__ == '__main__':

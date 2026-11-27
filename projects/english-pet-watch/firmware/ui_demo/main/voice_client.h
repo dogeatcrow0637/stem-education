@@ -15,8 +15,11 @@ bool voice_client_set_active(bool active);
 /** 是否有用户请求的语音会话（包含等待网络的状态）。 */
 bool voice_client_is_active(void);
 
-/** 请求打断当前回答并恢复收音，由语音任务执行，不阻塞 UI。 */
-void voice_client_interrupt(void);
+/** 当前是否处于可打断阶段：握手完成且正在倾听、思考或回答。 */
+bool voice_client_can_interrupt(void);
+
+/** 请求打断当前回答并恢复收音；不可打断时返回 false，不阻塞 UI。 */
+bool voice_client_interrupt(void);
 
 /** 由 LVGL 线程消费最新语音状态，网络回调不等待界面锁。 */
 void voice_client_update_ui(void);

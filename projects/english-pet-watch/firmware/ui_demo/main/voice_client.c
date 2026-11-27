@@ -34,8 +34,11 @@ static const char *TAG = "epw-voice";
 #define VOICE_SAMPLE_RATE 16000
 #define VOICE_MAX_PCM     1920
 #define VOICE_MAX_OPUS    2048
-/* 当前服务端每包 60ms，预留 1920ms 吸收网络与流式合成抖动。 */
-#define VOICE_PREBUFFER_PACKETS 32
+/* 服务端每包 60ms：首句 3 包先播，之后按欠载情况在 6~16 包之间自适应。 */
+#define VOICE_PREBUFFER_MIN    6
+#define VOICE_PREBUFFER_MAX   16
+#define VOICE_PREBUFFER_STEP   4
+#define VOICE_PREBUFFER_FIRST  3
 /* esp_audio_codec 的编码栈建议约 40KB，放 PSRAM 避免挤占内部 DMA 内存。 */
 #define VOICE_TASK_STACK  (40 * 1024)
 
@@ -92,6 +95,9 @@ static uint8_t *s_tts_pcm;
 static bool s_tts_output;
 static bool s_tts_buffered;
 static bool s_control_complete;
+/* 预缓冲目标按会话保留：首句早播，出现欠载后逐档加长。 */
+static atomic_uint s_prebuffer_target = VOICE_PREBUFFER_MIN;
+static atomic_bool s_first_reply;
 static void close_audio(void);
 static bool open_audio(void);
 
@@ -118,14 +124,24 @@ bool voice_client_set_active(bool active)
     if (!atomic_load(&s_requested)) {
         atomic_fetch_add(&s_epoch, 1);
         atomic_store(&s_requested, true);
+        atomic_store(&s_prebuffer_target, VOICE_PREBUFFER_MIN);
     }
     return true;
 }
 
-void voice_client_interrupt(void)
+bool voice_client_can_interrupt(void)
 {
-    if (voice_client_is_active() && atomic_load(&s_reply_active))
-        atomic_store(&s_interrupt_requested, true);
+    return voice_client_is_active() && atomic_load(&s_connected) && atomic_load(&s_hello) &&
+           (atomic_load(&s_reply_active) || atomic_load(&s_listening));
+}
+
+bool voice_client_interrupt(void)
+{
+    if (!voice_client_can_interrupt()) {
+        return false;
+    }
+    atomic_store(&s_interrupt_requested, true);
+    return true;
 }
 
 static bool send_json(const char *json)
@@ -257,6 +273,7 @@ static void tts_close(void)
     if (s_tts_output) audio_playback_close();
     s_tts_output = false;
     s_tts_buffered = false;
+    atomic_store(&s_first_reply, false);
     captions_clear();
     s_barge_ready = false;
     if (s_dec) esp_opus_dec_close(s_dec);
@@ -303,8 +320,19 @@ static bool tts_pump(void)
     if (audio_get_playback_volume() != 0 && !CONFIG_EPW_VOICE_BARGE_IN) s_barge_ready = false;
     voice_packet_t *packet = NULL;
     unsigned queued = uxQueueMessagesWaiting(s_tts_queue);
-    if (!queued) s_tts_buffered = false;
-    if (queued >= VOICE_PREBUFFER_PACKETS || atomic_load(&s_tts_end)) s_tts_buffered = true;
+    if (!queued) {
+        /* 播放中队列见底说明预缓冲不够，下一段起播多等一档。 */
+        unsigned target = atomic_load(&s_prebuffer_target);
+        if (s_tts_output && !atomic_load(&s_tts_end) && s_tts_buffered && target < VOICE_PREBUFFER_MAX) {
+            target += VOICE_PREBUFFER_STEP;
+            if (target > VOICE_PREBUFFER_MAX) target = VOICE_PREBUFFER_MAX;
+            atomic_store(&s_prebuffer_target, target);
+        }
+        s_tts_buffered = false;
+    }
+    unsigned threshold = atomic_load(&s_first_reply) ? VOICE_PREBUFFER_FIRST
+                                                     : atomic_load(&s_prebuffer_target);
+    if (queued >= threshold || atomic_load(&s_tts_end)) s_tts_buffered = true;
     if (s_tts_buffered && xQueueReceive(s_tts_queue, &packet, 0) == pdTRUE) {
         bool ok = true;
         if (s_dec == NULL) {
@@ -357,6 +385,7 @@ static bool tts_pump(void)
                 pos += bytes;
             }
         }
+        if (ok) atomic_store(&s_first_reply, false);
         free(packet);
         if (interrupted) ok = tts_interrupt(true);
         if (!ok) {
@@ -467,6 +496,7 @@ static void handle_text(const char *data, size_t len)
             atomic_store(&s_tts_end, false);
             s_tts_packets = s_tts_bytes = 0;
             s_caption_received_ms = 0;
+            atomic_store(&s_first_reply, true);
         } else if (strcmp(state, "stop") == 0) {
             ESP_LOGI(TAG, "TTS received: %u packets, %u bytes", s_tts_packets, s_tts_bytes);
             atomic_store(&s_tts_end, true);
@@ -712,7 +742,8 @@ static void voice_task(void *arg)
                 break;
             }
             if (atomic_load(&s_hello)) hello_since = now;
-            if (atomic_exchange(&s_interrupt_requested, false) && atomic_load(&s_reply_active)) {
+            if (atomic_exchange(&s_interrupt_requested, false) &&
+                (atomic_load(&s_reply_active) || atomic_load(&s_listening))) {
                 watch_control_finish(false);
                 if (!tts_interrupt(false)) {
                     pet_set("sad", "语音打断失败，请重试。");
